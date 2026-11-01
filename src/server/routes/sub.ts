@@ -10,6 +10,7 @@ import { generateLoonConfig, nodeToLoonProxy } from '../../core/generators/loon-
 import { generateQuantumultXConfig, nodeToQuantumultXProxy } from '../../core/generators/quantumultx-generator.js';
 import { generateEgernConfig, nodeToEgernProxy } from '../../core/generators/egern-generator.js';
 import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../../core/generators/shadowrocket-generator.js';
+import { UnsupportedProxyGroupError } from '../../core/generators/errors.js';
 import {
   getEffectiveNodes,
   getEffectiveNodesForProfile,
@@ -21,11 +22,25 @@ import {
 
 export const subRouter = express.Router();
 
+subRouter.get('/s/:subToken/rules/:ruleId/qx', async (req, res) => {
+  const config = getAppConfig();
+  const profile = config.profiles?.find(p => p.enabled !== false && p.token === req.params.subToken);
+  const rule = profile && getEffectiveRulesForProfile(profile).find(r =>
+    r.id === req.params.ruleId && r.enabled && r.kind === 'remote' && r.behavior === 'classical');
+  if (!rule) return res.status(404).type('text/plain').send('404 Not Found');
+  try {
+    const { getQuantumultXRules } = await import('../services/qx-rules.js');
+    res.type('text/plain').send(await getQuantumultXRules(rule));
+  } catch {
+    res.status(502).type('text/plain').send('Rule set unavailable');
+  }
+});
+
 async function handlePrivateSubRequest(req: express.Request, res: express.Response, forcedType?: ClientType) {
   const tokenParam = req.params.subToken;
   const appConfig = getAppConfig();
 
-  if (!tokenParam) {
+  if (typeof tokenParam !== 'string' || !tokenParam) {
     res.removeHeader('X-Powered-By');
     return res.status(404).type('text/plain').send('404 Not Found');
   }
@@ -127,6 +142,9 @@ async function handlePrivateSubRequest(req: express.Request, res: express.Respon
     }
 
   } catch (err: any) {
+    if (err instanceof UnsupportedProxyGroupError) {
+      return res.status(422).type('text/plain').send(err.message);
+    }
     console.error('Subscription generation error:', err);
     res.status(500).send(`Generation error: ${err.message || err}`);
   }
@@ -137,7 +155,7 @@ async function handleSourceSubRequest(req: express.Request, res: express.Respons
   const sourceIdParam = req.params.sourceId;
   const appConfig = getAppConfig();
 
-  if (!tokenParam || !sourceIdParam) {
+  if (typeof tokenParam !== 'string' || !tokenParam || typeof sourceIdParam !== 'string' || !sourceIdParam) {
     res.removeHeader('X-Powered-By');
     return res.status(404).type('text/plain').send('404 Not Found');
   }

@@ -45,6 +45,11 @@ export function parseProxyGroupsText(text: string): ProxyGroupItem[] {
               url: item.url,
               tolerance: item.tolerance,
               interval: item.interval,
+              includeAll: item.includeAll ?? item['include-all'],
+              strategy: item.strategy,
+              lazy: item.lazy,
+              hidden: item.hidden,
+              icon: item.icon,
             });
           }
         });
@@ -78,6 +83,11 @@ export function parseProxyGroupsText(text: string): ProxyGroupItem[] {
               url: item.url,
               tolerance: item.tolerance,
               interval: item.interval,
+              includeAll: item.includeAll ?? item['include-all'],
+              strategy: item.strategy,
+              lazy: item.lazy,
+              hidden: item.hidden,
+              icon: item.icon,
             });
           }
         });

@@ -102,6 +102,7 @@ export function adaptRulesetForMihomo(r: UnifiedRuleItem, idx?: number): Adapted
   }
 
   const ext = format === 'mrs' ? 'mrs' : (format === 'text' ? 'text' : 'yaml');
+  if (r.behavior) behavior = r.behavior;
   return {
     tag,
     url,

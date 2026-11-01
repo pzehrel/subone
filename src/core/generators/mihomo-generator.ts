@@ -2,6 +2,8 @@ import yaml from 'js-yaml';
 import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index.js';
 
 import { adaptRulesetForMihomo, formatRuleTag } from './ruleset-adapter.js';
+import { resolveGroupNodes } from './group-nodes.js';
+import { UnsupportedProxyGroupError } from './errors.js';
 import { resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag } from './common.js';
 
 export function nodeToMihomoProxy(node: ProxyNode): any {
@@ -356,7 +358,6 @@ export function injectUnifiedToMihomo(
 
   const customNodes = nodes.filter(n => n.sourceId === 'custom' || n.sourceId?.startsWith('custom') || !n.sourceId);
   const customNodeNames = customNodes.map(n => n.name);
-  const allNodeNames = nodes.map(n => n.name);
 
   // 1. Inject Proxy Providers for network subscriptions and internal sources
   const allActiveRemoteSources: SubscriptionSource[] = [];
@@ -427,12 +428,10 @@ export function injectUnifiedToMihomo(
   }));
 
   const validGroupNames = new Set(effectiveGroups.map(g => g.name));
-  const validNodeNames = new Set(allNodeNames);
-  sources.forEach(s => {
-    if (Array.isArray(s.nodes)) {
-      s.nodes.forEach(n => validNodeNames.add(n.name));
-    }
-  });
+  // Provider nodes are resolved through `use`, not the static proxy map.
+  const validNodeNames = new Set<string>(
+    Array.isArray(doc.proxies) ? doc.proxies.map((proxy: any) => String(proxy.name)) : []
+  );
 
   const isBuiltinClashProxy = (t: string) => {
     const upper = t.trim().toUpperCase();
@@ -466,13 +465,7 @@ export function injectUnifiedToMihomo(
     }
 
     if (grp.type === 'relay') {
-      const grpObj: any = {
-        name: grp.name,
-        type: 'relay',
-        proxies: grp.proxies && grp.proxies.length > 0 ? [...grp.proxies] : ['DIRECT'],
-      };
-      generatedGroups.push(grpObj);
-      return;
+      throw new UnsupportedProxyGroupError('Mihomo', grp.name);
     }
 
     const groupType = grp.type === 'urltest' ? 'url-test' : (grp.type === 'load-balance' ? 'load-balance' : grp.type);
@@ -480,6 +473,15 @@ export function injectUnifiedToMihomo(
       name: grp.name,
       type: groupType,
     };
+
+    for (const key of ['icon', 'hidden', 'lazy', 'url', 'interval'] as const) {
+      if (grp[key] !== undefined) grpObj[key] = grp[key];
+    }
+    if (groupType === 'load-balance') {
+      grpObj.strategy = grp.strategy || 'consistent-hashing';
+      grpObj.url = grp.url || 'https://www.gstatic.com/generate_204';
+      grpObj.interval = grp.interval || 300;
+    }
 
     if (groupType === 'url-test' || groupType === 'fallback') {
       grpObj.url = grp.url || 'https://www.google.com/generate_204';
@@ -490,6 +492,16 @@ export function injectUnifiedToMihomo(
     // 匹配来源
     const combinedProxies = new Set<string>(grp.proxies || []);
     const groupUses = grp.use || grp.sources || [];
+
+    const acceptsNodes = grp.includeAll || Boolean(grp.filter) || groupUses.length > 0 ||
+      ['👉 手动选择', '♻️ 自动选择'].includes(grp.name);
+    if (options?.expandNodes && acceptsNodes) {
+      resolveGroupNodes(grp, nodes, sources).forEach(n => combinedProxies.add(n.name));
+      grpObj.proxies = Array.from(combinedProxies).filter(p => p !== grp.name);
+      if (!grpObj.proxies.length) grpObj.proxies = ['REJECT'];
+      generatedGroups.push(grpObj);
+      return;
+    }
 
     // 检查是否有对应的 remote provider
     const matchedProviders: string[] = [];
@@ -535,18 +547,23 @@ export function injectUnifiedToMihomo(
     if (matchedProviders.length > 0) {
       grpObj.use = Array.from(new Set(matchedProviders));
     }
+    if (grp.includeAll && !grpObj.use && groupUses.length === 0 && !selfMatchedSource && allProviderNames.length) {
+      grpObj.use = allProviderNames;
+    }
 
     // 处理 filter 正则
     if (grp.filter) {
       grpObj.filter = grp.filter;
-      // 如果没有指定特定的 provider，且有可用的 remote providers，挂载所有 providers
-      if (!grpObj.use && allProviderNames.length > 0) {
+      // 未选择节点来源时，才包含所有远程 providers。
+      if (!grpObj.use && groupUses.length === 0 && !selfMatchedSource && allProviderNames.length > 0) {
         grpObj.use = allProviderNames;
       }
       // 对于 manual 节点，应用 filter
       try {
-        const reg = new RegExp(grp.filter);
-        const candidateManual = matchedManualNodes.length > 0 ? matchedManualNodes : allNodeNames;
+        const reg = new RegExp(grp.filter.replace(/\(\?i\)/g, ''), 'i');
+        const candidateManual = matchedManualNodes.length > 0
+          ? matchedManualNodes
+          : (groupUses.length > 0 || selfMatchedSource ? [] : Array.from(validNodeNames));
         candidateManual.filter(name => reg.test(name)).forEach(name => combinedProxies.add(name));
       } catch {
         matchedManualNodes.forEach(name => combinedProxies.add(name));
@@ -608,42 +625,28 @@ export function injectUnifiedToMihomo(
   const fallbackGroup = (doc['proxy-groups'] || []).find((g: any) => g.name === '🚀 节点选择')?.name || doc['proxy-groups']?.[0]?.name || 'DIRECT';
 
   const generatedRules: string[] = [];
-  localRules.forEach(r => {
+  activeRules.forEach((r, idx) => {
     const safeOutbound = resolveSafeOutbound(r.outbound, availableGroupNames, fallbackGroup);
-    if (r.type === 'FINAL') {
-      // final rule at the end
-    } else if (r.payload.includes(',')) {
-      r.payload.split(',').forEach(p => {
-        const item = p.trim();
-        if (item) {
-          if (r.type === 'SRC-IP-CIDR') {
-            generatedRules.push(`SRC-IP-CIDR,${formatCidr(item)},${safeOutbound}`);
-          } else {
-            generatedRules.push(`${r.type},${item},${safeOutbound}`);
-          }
-        }
-      });
-    } else {
-      const item = r.payload.trim();
-      if (r.type === 'SRC-IP-CIDR') {
-        generatedRules.push(`SRC-IP-CIDR,${formatCidr(item)},${safeOutbound}`);
-      } else {
-        generatedRules.push(`${r.type},${item},${safeOutbound}`);
-      }
+    if (r.type === 'FINAL') return; // final rule at the end
+    const suffix = r.noResolve ? ',no-resolve' : '';
+    if (r.kind === 'remote') {
+      generatedRules.push(`RULE-SET,${formatRuleTag(r, remoteRules.indexOf(r))},${safeOutbound}${suffix}`);
+      return;
     }
-  });
-
-  remoteRules.forEach((r, idx) => {
-    const tag = formatRuleTag(r, idx);
-    const safeOutbound = resolveSafeOutbound(r.outbound, availableGroupNames, fallbackGroup);
-    generatedRules.push(`RULE-SET,${tag},${safeOutbound}`);
+    r.payload.split(/[,;\n]+/).map(p => p.trim()).filter(Boolean).forEach(item => {
+      const value = r.type === 'SRC-IP-CIDR' ? formatCidr(item) : item;
+      generatedRules.push(`${r.type},${value},${safeOutbound}${suffix}`);
+    });
   });
 
   const existingRules = Array.isArray(doc.rules) ? doc.rules : [];
   const existingPreRules = existingRules.filter((r: any) => typeof r === 'string' && !r.trim().toUpperCase().startsWith('MATCH,'));
   const existingMatch = existingRules.find((r: any) => typeof r === 'string' && r.trim().toUpperCase().startsWith('MATCH,'));
 
-  const finalMatch = existingMatch || (availableGroupNames.has('🐟 漏网之鱼') ? 'MATCH,🐟 漏网之鱼' : `MATCH,${fallbackGroup}`);
+  const finalRule = activeRules.find(r => r.type === 'FINAL');
+  const finalMatch = finalRule
+    ? `MATCH,${resolveSafeOutbound(finalRule.outbound, availableGroupNames, fallbackGroup)}`
+    : existingMatch || (availableGroupNames.has('🐟 漏网之鱼') ? 'MATCH,🐟 漏网之鱼' : `MATCH,${fallbackGroup}`);
 
   const postRules = Array.isArray(doc.post_rules)
     ? doc.post_rules

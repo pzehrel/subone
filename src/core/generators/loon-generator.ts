@@ -193,7 +193,7 @@ export function generateLoonConfig(
   nodes: ProxyNode[],
   proxyGroups: ProxyGroupItem[] = [],
   rulesList: UnifiedRuleItem[] = [],
-  sources: any[] = [],
+  sources: SubscriptionSource[] = [],
   options?: LoonGeneratorOptions
 ): string {
   const expandNodes = Boolean(options?.expandNodes);

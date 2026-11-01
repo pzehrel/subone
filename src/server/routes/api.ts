@@ -2,7 +2,7 @@ import express from 'express';
 import crypto from 'crypto';
 import yaml from 'js-yaml';
 import { appConfig, getBaseUrl, setGlobalNodesCache, getGlobalNodesCache } from '../context.js';
-import { saveConfig, saveServerConfig } from '../../storage/db.js';
+import { saveConfig, saveServerConfig, generateRandomSubToken } from '../../storage/db.js';
 import { fetchAndParseSource, parseRawContent } from '../../core/parser/fetcher.js';
 import {
   parseProxyGroupsText,
@@ -41,6 +41,7 @@ import { generateEgernConfig, nodeToEgernProxy } from '../../core/generators/ege
 import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../../core/generators/shadowrocket-generator.js';
 import { detectClientType, ClientType } from '../../core/parser/ua-detector.js';
 import { applyExtractionRules } from '../../core/filter/extractor.js';
+import { UnsupportedProxyGroupError } from '../../core/generators/errors.js';
 import {
   ensureCustomSource,
   ensureCustomProxyGroup,
@@ -53,7 +54,6 @@ import {
   getEffectiveSourcesForProfile,
   getEffectiveRulesForProfile,
   getEffectiveTemplateForProfile,
-  computeFilterSourceNodes,
 } from '../services/profile-service.js';
 
 export const apiRouter = express.Router();
@@ -85,7 +85,7 @@ apiRouter.get('/api/custom-nodes', (req, res) => {
     return res.json({ success: true, count: target?.nodes?.length || 0, data: target?.nodes || [] });
   }
   const customSrc = ensureCustomSource(appConfig);
-  res.json({ success: true, count: customSrc.nodes?.length || 0, data: customSrc.nodes || [] });
+  res.json({ success: true, count: customSrc?.nodes?.length || 0, data: customSrc?.nodes || [] });
 });
 
 apiRouter.post('/api/custom-nodes/import', (req, res) => {
@@ -100,6 +100,9 @@ apiRouter.post('/api/custom-nodes/import', (req, res) => {
     : null;
   if (!targetSrc) {
     targetSrc = ensureCustomSource(appConfig);
+  }
+  if (!targetSrc) {
+    return res.status(404).json({ success: false, message: '请先创建一个独立节点组' });
   }
 
   if (replaceAll && !text.trim()) {
@@ -156,6 +159,9 @@ apiRouter.post('/api/custom-nodes', (req, res) => {
     : null;
   if (!targetSrc) {
     targetSrc = ensureCustomSource(appConfig);
+  }
+  if (!targetSrc) {
+    return res.status(404).json({ success: false, message: '请先创建一个独立节点组' });
   }
 
   const newNode: ProxyNode = {
@@ -358,7 +364,7 @@ apiRouter.post('/api/sources', async (req, res) => {
       nodes: [],
     };
 
-    if (newSource.url.startsWith('http://') || newSource.url.startsWith('https://')) {
+    if (sourceUrl.startsWith('http://') || sourceUrl.startsWith('https://')) {
       try {
         console.log(`[Fetcher] Fetching nodes for [${sourceName}]: ${sourceUrl}`);
         const nodes = await fetchAndParseSource(newSource, appConfig.countryRules);
@@ -473,13 +479,6 @@ apiRouter.delete('/api/sources/:id', (req, res) => {
       if (grp.use) grp.use = grp.use.filter(u => !matchesSource(u));
       if (grp.sources) grp.sources = grp.sources.filter(s => !matchesSource(s));
       if (grp.proxies) grp.proxies = grp.proxies.filter(p => !matchesSource(p));
-    });
-
-    // Clean up parentSourceIds references in filter sources
-    appConfig.sources.forEach(s => {
-      if (s.type === 'filter' && s.filterConfig?.parentSourceIds) {
-        s.filterConfig.parentSourceIds = s.filterConfig.parentSourceIds.filter(id => id !== req.params.id);
-      }
     });
 
     // Clean up sourceIds references in profiles
@@ -677,6 +676,11 @@ apiRouter.post('/api/groups', (req, res) => {
     tolerance: req.body.tolerance,
     interval: req.body.interval,
     url: req.body.url,
+    includeAll: req.body.includeAll,
+    strategy: req.body.strategy,
+    lazy: req.body.lazy,
+    hidden: req.body.hidden,
+    icon: req.body.icon,
   };
   appConfig.proxyGroups.push(newGroup);
   saveConfig(appConfig);
@@ -1101,12 +1105,6 @@ apiRouter.post('/api/profiles/:id/refresh-token', (req, res) => {
   res.json({ success: true, data: profile });
 });
 
-function getBaseUrl(req: express.Request): string {
-  const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
-  const host = (req.headers['x-forwarded-host'] as string) || req.get('host') || `localhost:${PORT}`;
-  return `${proto}://${host}`;
-}
-
 // 8. Live Preview
 apiRouter.post('/api/generate/preview', async (req, res) => {
   try {
@@ -1196,7 +1194,9 @@ apiRouter.post('/api/generate/preview', async (req, res) => {
     }
 
     res.json({ success: true, nodeCount: nodes.length, data: output });
-  } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message || 'Generation failed' });
+  } catch (err) {
+    const status = err instanceof UnsupportedProxyGroupError ? 422 : 500;
+    const message = err instanceof Error ? err.message : 'Generation failed';
+    res.status(status).json({ success: false, message });
   }
 });

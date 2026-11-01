@@ -11,6 +11,8 @@
     "build:server": "tsup src/server/index.ts --format cjs --clean --out-dir dist/server",
     "build:web": "cd web && npm run build",
     "build": "npm run build:server && npm run build:web",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
     "start": "node dist/server/index.js"
   },
   "keywords": ["singbox", "mihomo", "clash", "loon", "subscription", "proxy"],

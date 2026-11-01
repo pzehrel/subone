@@ -1,4 +1,6 @@
 import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index.js';
+import { resolveGroupNodes } from './group-nodes.js';
+import { UnsupportedProxyGroupError } from './errors.js';
 import { adaptRulesetForQuantumultX, formatRuleTag } from './ruleset-adapter.js';
 import { resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag, resolveGroupIcon, DEFAULT_QX_ICON_BASE } from './common.js';
 
@@ -333,6 +335,7 @@ export function injectUnifiedToQuantumultX(
   // 确保所有启用的源（包括 filter 源与物理源）都有对应的策略组；去重时彻底剥离各种 emoji（✨/🖥️/⚡️ 等），避免重复生成第二套组
   const activeSources = sources.filter(s => s.enabled);
   activeSources.forEach(s => {
+    if (proxyGroups.some(g => g.includeAll)) return;
     const sClean = cleanSourceOrGroupName(s.name).toLowerCase();
     const targetTag = formatSourceGroupTag(s);
 
@@ -359,6 +362,7 @@ export function injectUnifiedToQuantumultX(
 
   // 2. Build [policy]
   const validGroupNames = new Set(effectiveGroups.map(g => g.name));
+  const supportedNodeNames = new Set(allNodeNames);
   const validNodeNames = new Set(allNodeNames);
   sources.forEach(s => {
     if (Array.isArray(s.nodes)) {
@@ -381,20 +385,59 @@ export function injectUnifiedToQuantumultX(
   };
 
   effectiveGroups.forEach(grp => {
+    if (grp.type === 'relay') {
+      throw new UnsupportedProxyGroupError('Quantumult X', grp.name);
+    }
+    if (grp.includeAll) {
+      const groupType = grp.type === 'load-balance'
+        ? (grp.strategy === 'consistent-hashing' ? 'dest-hash' : 'round-robin')
+        : grp.type === 'urltest' ? 'url-latency-benchmark' : grp.type === 'fallback' ? 'available' : 'static';
+      const explicitMembers = (grp.proxies || []).flatMap(value => {
+        const member = value.trim();
+        if (!member || member === grp.name) return [];
+        if (/^(DIRECT|REJECT)$/i.test(member)) return [member.toLowerCase()];
+        if (validGroupNames.has(member)) return [member];
+        const nodeName = member.replace(/[=,]/g, '_');
+        return supportedNodeNames.has(nodeName) ? [nodeName] : [];
+      });
+      if (expandNodes) {
+        const matchedNodes = resolveGroupNodes(grp, qxSupportedNodes, sources).map(n => n.name.replace(/[=,]/g, '_'));
+        const members = Array.from(new Set([...explicitMembers, ...matchedNodes]));
+        addGroupLine(`${groupType}=${grp.name}, ${members.length ? members.join(', ') : 'reject'}`, grp);
+      } else {
+        const normalize = (value: string) => cleanSourceOrGroupName(value).trim().toLowerCase();
+        const wanted = new Set((grp.sources || grp.use || []).map(normalize));
+        const selectedSources = sources.filter(s => s.enabled && (
+          wanted.size === 0 || wanted.has(normalize(s.id)) || wanted.has(normalize(s.name))
+        ));
+        const selectedRemoteSources = allActiveRemoteSources.filter(s => selectedSources.some(selected => selected.id === s.id));
+        const resourceTag = (source: SubscriptionSource) => source.name.replace(/[=,]/g, '_').trim();
+        const selectedTags = new Set(selectedRemoteSources.map(resourceTag));
+        if (allActiveRemoteSources.some(s => !selectedRemoteSources.some(selected => selected.id === s.id) && selectedTags.has(resourceTag(s)))) {
+          throw new Error(`Quantumult X 无法区分策略组「${grp.name}」的订阅来源：订阅名称冲突，请为这些订阅设置不同名称后重试。`);
+        }
+        const selectedInlineSources = selectedSources.filter(s => !selectedRemoteSources.some(remote => remote.id === s.id));
+        const inlineNodes = qxSupportedNodes.filter(n => selectedInlineSources.some(s =>
+          n.sourceId === s.id || n.sourceName === s.name || s.nodes?.some(saved => saved.id === n.id)
+        ) || (wanted.size === 0 && !n.sourceId && !n.sourceName));
+        const matchedNodes = resolveGroupNodes({ ...grp, sources: [], use: [] }, inlineNodes, [])
+          .map(n => n.name.replace(/[=,]/g, '_'));
+        const members = Array.from(new Set([...explicitMembers, ...matchedNodes]));
+        const resourceTags = Array.from(selectedTags).map(tag => tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        const pattern = grp.filter ? `(?i)${grp.filter.replace(/\(\?i\)/g, '')}` : '.*';
+        if (resourceTags.length) {
+          members.push(`resource-tag-regex=^(?:${resourceTags.join('|')})$, server-tag-regex=${pattern}`);
+        }
+        addGroupLine(`${groupType}=${grp.name}, ${members.length ? members.join(', ') : 'reject'}`, grp);
+      }
+      return;
+    }
     if (grp.type === 'direct') {
       addGroupLine(`static=${grp.name}, direct`, grp);
       return;
     }
     if (grp.type === 'reject') {
       addGroupLine(`static=${grp.name}, reject`, grp);
-      return;
-    }
-
-    if (grp.type === 'relay') {
-      const members = grp.proxies && grp.proxies.length > 0
-        ? grp.proxies.map(p => p.replace(/[=,]/g, '_'))
-        : ['direct'];
-      addGroupLine(`relay=${grp.name}, ${members.join(', ')}`, grp);
       return;
     }
 
@@ -584,7 +627,9 @@ export function injectUnifiedToQuantumultX(
   const seenRemoteUrls = new Set<string>();
 
   remoteRules.forEach((r, idx) => {
-    const adapted = adaptRulesetForQuantumultX(r, idx);
+    const adapted = r.behavior === 'classical' && options?.baseUrl && options?.subToken
+      ? { tag: formatRuleTag(r, idx), url: `${options.baseUrl}/s/${encodeURIComponent(options.subToken)}/rules/${encodeURIComponent(r.id)}/qx` }
+      : adaptRulesetForQuantumultX(r, idx);
     const targetGroup = resolveSafeOutbound(r.outbound, availableGroupNames, fallbackGroup);
     const out = targetGroup === '🎯 本地直连' || targetGroup.toUpperCase() === 'DIRECT'
       ? 'direct'
@@ -626,7 +671,7 @@ export function injectUnifiedToQuantumultX(
         formattedPayload = p.toLowerCase();
       }
 
-      localRuleLines.push(`${qxRuleType}, ${formattedPayload}, ${out}`);
+      localRuleLines.push(`${qxRuleType}, ${formattedPayload}, ${out}${r.noResolve ? ', no-resolve' : ''}`);
     });
   });
 

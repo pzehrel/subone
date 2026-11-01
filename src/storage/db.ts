@@ -21,8 +21,6 @@ import {
   DEFAULT_MIHOMO_TEMPLATE,
   DEFAULT_LOON_TEMPLATE,
 } from './default-templates.js';
-import { aggregateRules } from '../core/parser/rules-parser.js';
-
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const DATA_CONFIG_FILE = path.join(DATA_DIR, 'subone_data.json');
@@ -166,40 +164,13 @@ export function loadConfig(): AppConfig {
         }
       }
 
-      const proxyGroups: ProxyGroupItem[] = Array.isArray(parsed.proxyGroups) && parsed.proxyGroups.length > 0
+      const proxyGroups: ProxyGroupItem[] = Array.isArray(parsed.proxyGroups)
         ? parsed.proxyGroups
         : INITIAL_PROXY_GROUPS;
 
-      let rulesList: UnifiedRuleItem[] = Array.isArray(parsed.rulesList) && parsed.rulesList.length > 0
-        ? aggregateRules(parsed.rulesList)
+      const rulesList: UnifiedRuleItem[] = Array.isArray(parsed.rulesList)
+        ? parsed.rulesList
         : INITIAL_RULES_LIST;
-
-      // Ensure essential default rules exist if missing from existing user database
-      const hasTelegramIp = rulesList.some(r => r.id === 'r-telegram-ip' || r.payload?.includes('geoip/telegram'));
-      if (!hasTelegramIp) {
-        const tgRuleIndex = rulesList.findIndex(r => r.id === 'r-telegram-remote');
-        const telegramIpRule = INITIAL_RULES_LIST.find(r => r.id === 'r-telegram-ip');
-        if (telegramIpRule) {
-          if (tgRuleIndex >= 0) {
-            rulesList.splice(tgRuleIndex + 1, 0, telegramIpRule);
-          } else {
-            rulesList.push(telegramIpRule);
-          }
-        }
-      }
-
-      const hasForeignDomainProxy = rulesList.some(r => r.id === 'r-proxy-domain-remote' || r.payload?.includes('geolocation-!cn'));
-      if (!hasForeignDomainProxy) {
-        const cnDomainIndex = rulesList.findIndex(r => r.id === 'r-cn-domain-remote');
-        const foreignRule = INITIAL_RULES_LIST.find(r => r.id === 'r-proxy-domain-remote');
-        if (foreignRule) {
-          if (cnDomainIndex >= 0) {
-            rulesList.splice(cnDomainIndex, 0, foreignRule);
-          } else {
-            rulesList.push(foreignRule);
-          }
-        }
-      }
 
       const countryRules = Array.isArray(parsed.countryRules) && parsed.countryRules.length > 0
         ? parsed.countryRules
