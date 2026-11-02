@@ -1,4 +1,5 @@
-import express from 'express';
+import { Hono, type Handler } from 'hono';
+import type { BodyEnv } from '../middlewares/body';
 import crypto from 'crypto';
 import yaml from 'js-yaml';
 import { appConfig, getBaseUrl, setGlobalNodesCache, getGlobalNodesCache } from '../context';
@@ -57,17 +58,18 @@ import {
   getEffectiveTemplateForProfile,
 } from '../services/profile-service';
 
-export const apiRouter = express.Router();
+export const apiRouter = new Hono<BodyEnv>({ strict: false });
 
 // 1. Config & Settings
-apiRouter.get('/api/config', (req, res) => {
+apiRouter.get('/config', (c) => {
   ensureCustomSource(appConfig);
-  res.json({ success: true, data: appConfig });
+  return c.json({ success: true, data: appConfig });
 });
 
 
-apiRouter.post('/api/config/settings', (req, res) => {
-  const { settings } = req.body;
+apiRouter.post('/config/settings', (c) => {
+  const body = c.get('body');
+  const { settings } = body;
   if (settings) {
     appConfig.settings = { ...appConfig.settings, ...settings };
     ensureCustomSource(appConfig);
@@ -75,24 +77,25 @@ apiRouter.post('/api/config/settings', (req, res) => {
     ensureAllSourceProxyGroups(appConfig);
     saveConfig(appConfig);
   }
-  res.json({ success: true, data: appConfig.settings, proxyGroups: appConfig.proxyGroups });
+  return c.json({ success: true, data: appConfig.settings, proxyGroups: appConfig.proxyGroups });
 });
 
 // 2. Custom Nodes Management (独立节点组专区)
-apiRouter.get('/api/custom-nodes', (req, res) => {
-  const sourceId = req.query.sourceId as string | undefined;
+apiRouter.get('/custom-nodes', (c) => {
+  const sourceId = c.req.query('sourceId') as string | undefined;
   if (sourceId) {
     const target = appConfig.sources.find(s => s.id === sourceId && (s.type === 'custom' || s.type === 'manual' || s.id === 'custom' || !s.url));
-    return res.json({ success: true, count: target?.nodes?.length || 0, data: target?.nodes || [] });
+    return c.json({ success: true, count: target?.nodes?.length || 0, data: target?.nodes || [] });
   }
   const customSrc = ensureCustomSource(appConfig);
-  res.json({ success: true, count: customSrc?.nodes?.length || 0, data: customSrc?.nodes || [] });
+  return c.json({ success: true, count: customSrc?.nodes?.length || 0, data: customSrc?.nodes || [] });
 });
 
-apiRouter.post('/api/custom-nodes/import', (req, res) => {
-  const { text, replaceAll, sourceId } = req.body;
+apiRouter.post('/custom-nodes/import', (c) => {
+  const body = c.get('body');
+  const { text, replaceAll, sourceId } = body;
   if (text === undefined || typeof text !== 'string') {
-    return res.status(400).json({ success: false, message: 'Text content required' });
+    return c.json({ success: false, message: 'Text content required' }, 400);
   }
 
   // Find target custom source
@@ -103,7 +106,7 @@ apiRouter.post('/api/custom-nodes/import', (req, res) => {
     targetSrc = ensureCustomSource(appConfig);
   }
   if (!targetSrc) {
-    return res.status(404).json({ success: false, message: '请先创建一个独立节点组' });
+    return c.json({ success: false, message: '请先创建一个独立节点组' }, 404);
   }
 
   if (replaceAll && !text.trim()) {
@@ -114,7 +117,7 @@ apiRouter.post('/api/custom-nodes/import', (req, res) => {
     saveConfig(appConfig);
     setGlobalNodesCache(collectNodesFromSources(appConfig));
 
-    return res.json({
+    return c.json({
       success: true,
       count: 0,
       added: 0,
@@ -127,7 +130,7 @@ apiRouter.post('/api/custom-nodes/import', (req, res) => {
   const parsedNodes: ProxyNode[] = parseRawContent(text, targetSrc.id, targetSrc.name, undefined, appConfig.countryRules);
 
   if (parsedNodes.length === 0) {
-    return res.status(400).json({ success: false, message: '未能从粘贴文本中识别到有效节点 (支持 URI 链接, Clash YAML, Singbox JSON, Base64)' });
+    return c.json({ success: false, message: '未能从粘贴文本中识别到有效节点 (支持 URI 链接, Clash YAML, Singbox JSON, Base64)' }, 400);
   }
 
   if (replaceAll) {
@@ -144,7 +147,7 @@ apiRouter.post('/api/custom-nodes/import', (req, res) => {
   saveConfig(appConfig);
   setGlobalNodesCache(collectNodesFromSources(appConfig));
 
-  res.json({
+  return c.json({
     success: true,
     count: targetSrc.nodes.length,
     added: parsedNodes.length,
@@ -154,28 +157,29 @@ apiRouter.post('/api/custom-nodes/import', (req, res) => {
   });
 });
 
-apiRouter.post('/api/custom-nodes', (req, res) => {
-  let targetSrc = req.body.sourceId
-    ? appConfig.sources.find(s => s.id === req.body.sourceId && (s.type === 'custom' || s.type === 'manual' || s.id === 'custom' || !s.url))
+apiRouter.post('/custom-nodes', (c) => {
+  const body = c.get('body');
+  let targetSrc = body.sourceId
+    ? appConfig.sources.find(s => s.id === body.sourceId && (s.type === 'custom' || s.type === 'manual' || s.id === 'custom' || !s.url))
     : null;
   if (!targetSrc) {
     targetSrc = ensureCustomSource(appConfig);
   }
   if (!targetSrc) {
-    return res.status(404).json({ success: false, message: '请先创建一个独立节点组' });
+    return c.json({ success: false, message: '请先创建一个独立节点组' }, 404);
   }
 
   const newNode: ProxyNode = {
     id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     sourceId: targetSrc.id,
     sourceName: targetSrc.name,
-    name: req.body.name || '独立节点',
-    type: req.body.type || 'vless',
-    server: req.body.server || '',
-    port: Number(req.body.port) || 443,
-    countryCode: req.body.countryCode || 'OTHER',
-    countryEmoji: req.body.countryEmoji || '🌐',
-    ...req.body,
+    name: body.name || '独立节点',
+    type: body.type || 'vless',
+    server: body.server || '',
+    port: Number(body.port) || 443,
+    countryCode: body.countryCode || 'OTHER',
+    countryEmoji: body.countryEmoji || '🌐',
+    ...body,
   };
   if (!newNode.detour) {
     delete newNode.detour;
@@ -187,7 +191,7 @@ apiRouter.post('/api/custom-nodes', (req, res) => {
   saveConfig(appConfig);
   setGlobalNodesCache(collectNodesFromSources(appConfig));
 
-  res.json({
+  return c.json({
     success: true,
     data: newNode,
     count: targetSrc.nodes.length,
@@ -196,13 +200,14 @@ apiRouter.post('/api/custom-nodes', (req, res) => {
   });
 });
 
-const updateNodeHandler = (req: any, res: any) => {
-  const { name, text, rawContent, raw, detour, ...directFields } = req.body || {};
+const updateNodeHandler: Handler<BodyEnv, '/:id'> = (c) => {
+  const body = c.get('body');
+  const { name, text, rawContent, raw, detour, ...directFields } = body || {};
   const configText = (typeof text === 'string' ? text : typeof rawContent === 'string' ? rawContent : typeof raw === 'string' ? raw : '').trim();
 
   for (const s of appConfig.sources) {
     if (s.nodes) {
-      const idx = s.nodes.findIndex(n => n.id === req.params.id);
+      const idx = s.nodes.findIndex(n => n.id === c.req.param('id'));
       if (idx !== -1) {
         let updatedNode: ProxyNode = { ...s.nodes[idx], ...directFields };
 
@@ -215,7 +220,7 @@ const updateNodeHandler = (req: any, res: any) => {
               updatedNode = {
                 ...s.nodes[idx],
                 ...newParsed,
-                id: req.params.id, // Preserve original unique node ID
+                id: c.req.param('id'), // Preserve original unique node ID
                 sourceId: s.id,
                 sourceName: s.name,
                 raw: configText,
@@ -225,7 +230,7 @@ const updateNodeHandler = (req: any, res: any) => {
               updatedNode.raw = configText;
             }
           } catch (err: any) {
-            console.warn(`[NodeUpdate] Failed to parse config text for node ${req.params.id}:`, err.message);
+            console.warn(`[NodeUpdate] Failed to parse config text for node ${c.req.param('id')}:`, err.message);
             updatedNode.raw = configText;
           }
         }
@@ -236,7 +241,7 @@ const updateNodeHandler = (req: any, res: any) => {
         }
 
         // Explicitly handle detour
-        if ('detour' in req.body) {
+        if ('detour' in body) {
           const detourVal = typeof detour === 'string' ? detour.trim() : '';
           if (detourVal) {
             updatedNode.detour = detourVal;
@@ -254,18 +259,18 @@ const updateNodeHandler = (req: any, res: any) => {
         s.nodes[idx] = updatedNode;
         saveConfig(appConfig);
         setGlobalNodesCache(collectNodesFromSources(appConfig));
-        return res.json({ success: true, data: s.nodes[idx] });
+        return c.json({ success: true, data: s.nodes[idx] });
       }
     }
   }
-  return res.status(404).json({ success: false, message: 'Node not found' });
+  return c.json({ success: false, message: 'Node not found' }, 404);
 };
 
-apiRouter.put('/api/custom-nodes/:id', updateNodeHandler);
-apiRouter.put('/api/nodes/:id', updateNodeHandler);
+apiRouter.put('/custom-nodes/:id', updateNodeHandler);
+apiRouter.put('/nodes/:id', updateNodeHandler);
 
-const deleteNodeHandler = (req: any, res: any) => {
-  const nodeId = req.params.id;
+const deleteNodeHandler: Handler<BodyEnv, '/:id'> = (c) => {
+  const nodeId = c.req.param('id');
   let deleted = false;
   let remainingCount = 0;
   let affectedNodes: ProxyNode[] = [];
@@ -287,39 +292,40 @@ const deleteNodeHandler = (req: any, res: any) => {
   if (deleted) {
     saveConfig(appConfig);
     setGlobalNodesCache(collectNodesFromSources(appConfig));
-    return res.json({ success: true, count: remainingCount, data: affectedNodes, message: 'Node deleted' });
+    return c.json({ success: true, count: remainingCount, data: affectedNodes, message: 'Node deleted' });
   }
 
-  return res.status(404).json({ success: false, message: 'Node not found' });
+  return c.json({ success: false, message: 'Node not found' }, 404);
 };
 
-apiRouter.delete('/api/custom-nodes/:id', deleteNodeHandler);
-apiRouter.delete('/api/nodes/:id', deleteNodeHandler);
+apiRouter.delete('/custom-nodes/:id', deleteNodeHandler);
+apiRouter.delete('/nodes/:id', deleteNodeHandler);
 
-apiRouter.post('/api/sources/:id/clear-nodes', (req, res) => {
-  const source = appConfig.sources.find(s => s.id === req.params.id);
+apiRouter.post('/sources/:id/clear-nodes', (c) => {
+  const source = appConfig.sources.find(s => s.id === c.req.param('id'));
   if (!source) {
-    return res.status(404).json({ success: false, message: 'Source not found' });
+    return c.json({ success: false, message: 'Source not found' }, 404);
   }
   source.nodes = [];
   source.nodeCount = 0;
   source.lastUpdated = new Date().toISOString();
   saveConfig(appConfig);
   setGlobalNodesCache(collectNodesFromSources(appConfig));
-  res.json({ success: true, message: 'Nodes cleared' });
+  return c.json({ success: true, message: 'Nodes cleared' });
 });
 
 // 3. Network Sources Management (网络订阅源与自建节点组)
-apiRouter.get('/api/sources', (req, res) => {
+apiRouter.get('/sources', (c) => {
   ensureCustomSource(appConfig);
-  res.json({ success: true, data: appConfig.sources });
+  return c.json({ success: true, data: appConfig.sources });
 });
 
 // Add source: remote network subscription or manual node group
-apiRouter.post('/api/sources', async (req, res) => {
+apiRouter.post('/sources', async (c) => {
+  const body = c.get('body');
   try {
-    const sourceName = (req.body.name || '新节点组').trim();
-    const isManual = req.body.type === 'manual' || req.body.type === 'custom';
+    const sourceName = (body.name || '新节点组').trim();
+    const isManual = body.type === 'manual' || body.type === 'custom';
 
     // 1. Create manual node group
     if (isManual) {
@@ -327,7 +333,7 @@ apiRouter.post('/api/sources', async (req, res) => {
         id: `manual-${Date.now()}`,
         name: sourceName,
         url: '',
-        enabled: req.body.enabled !== false,
+        enabled: body.enabled !== false,
         type: 'manual',
         nodeCount: 0,
         nodes: [],
@@ -335,7 +341,7 @@ apiRouter.post('/api/sources', async (req, res) => {
       };
       appConfig.sources.push(newSource);
 
-      if (req.body.createGroup) {
+      if (body.createGroup) {
         appConfig.proxyGroups.push({
           id: `grp-${newSource.id}`,
           name: newSource.name,
@@ -346,29 +352,29 @@ apiRouter.post('/api/sources', async (req, res) => {
 
       saveConfig(appConfig);
       setGlobalNodesCache(collectNodesFromSources(appConfig));
-      return res.json({ success: true, count: 0, data: newSource });
+      return c.json({ success: true, count: 0, data: newSource });
     }
 
     // 2. Create remote network subscription
-    const sourceUrl = (req.body.url || '').trim();
+    const sourceUrl = (body.url || '').trim();
     if (!sourceUrl) {
-      return res.status(400).json({ success: false, message: '订阅链接不能为空' });
+      return c.json({ success: false, message: '订阅链接不能为空' }, 400);
     }
 
     try {
-      validateInfoRegex(req.body);
+      validateInfoRegex(body);
     } catch (err: any) {
-      return res.status(400).json({ success: false, message: err.message });
+      return c.json({ success: false, message: err.message }, 400);
     }
 
     const newSource: SubscriptionSource = {
       id: `src-${Date.now()}`,
       name: sourceName,
       url: sourceUrl,
-      enabled: req.body.enabled !== false,
+      enabled: body.enabled !== false,
       type: 'remote',
-      trafficNodeRegex: req.body.trafficNodeRegex?.trim(),
-      expiryNodeRegex: req.body.expiryNodeRegex?.trim(),
+      trafficNodeRegex: body.trafficNodeRegex?.trim(),
+      expiryNodeRegex: body.expiryNodeRegex?.trim(),
       nodeCount: 0,
       nodes: [],
     };
@@ -388,7 +394,7 @@ apiRouter.post('/api/sources', async (req, res) => {
 
     appConfig.sources.push(newSource);
 
-    if (req.body.createGroup) {
+    if (body.createGroup) {
       appConfig.proxyGroups.push({
         id: `grp-${newSource.id}`,
         name: newSource.name,
@@ -403,25 +409,26 @@ apiRouter.post('/api/sources', async (req, res) => {
     saveConfig(appConfig);
     setGlobalNodesCache(collectNodesFromSources(appConfig));
 
-    res.json({ success: true, count: newSource.nodeCount, data: newSource });
+    return c.json({ success: true, count: newSource.nodeCount, data: newSource });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message || 'Failed to add subscription source' });
+    return c.json({ success: false, message: err.message || 'Failed to add subscription source' }, 500);
   }
 });
 
-apiRouter.put('/api/sources/:id', async (req, res) => {
-  const index = appConfig.sources.findIndex(s => s.id === req.params.id);
+apiRouter.put('/sources/:id', async (c) => {
+  const body = c.get('body');
+  const index = appConfig.sources.findIndex(s => s.id === c.req.param('id'));
   if (index === -1) {
-    return res.status(404).json({ success: false, message: 'Source not found' });
+    return c.json({ success: false, message: 'Source not found' }, 404);
   }
   const oldSource = appConfig.sources[index];
   try {
-    validateInfoRegex(req.body);
+    validateInfoRegex(body);
   } catch (err: any) {
-    return res.status(400).json({ success: false, message: err.message });
+    return c.json({ success: false, message: err.message }, 400);
   }
   const oldName = cleanSourceOrGroupName(oldSource.name || '');
-  const newName = req.body.name ? cleanSourceOrGroupName(req.body.name) : oldName;
+  const newName = body.name ? cleanSourceOrGroupName(body.name) : oldName;
 
   // If source name changed, update nodes and references in proxyGroups
   if (newName && newName !== oldName) {
@@ -444,27 +451,27 @@ apiRouter.put('/api/sources/:id', async (req, res) => {
   }
 
   // Re-fetch if remote subscription URL changed
-  const urlChanged = req.body.url && req.body.url.trim() !== oldSource.url;
+  const urlChanged = body.url && body.url.trim() !== oldSource.url;
   if (urlChanged && oldSource.type !== 'manual' && oldSource.type !== 'custom') {
-    const updatedUrl = (req.body.url ? req.body.url.trim() : oldSource.url) || '';
+    const updatedUrl = (body.url ? body.url.trim() : oldSource.url) || '';
     if (updatedUrl.startsWith('http://') || updatedUrl.startsWith('https://')) {
       try {
         console.log(`[Fetcher] Fetching nodes for updated source [${newName || oldSource.name}]: ${updatedUrl}`);
-        const tempSource = { ...oldSource, ...req.body, name: newName || oldSource.name, url: updatedUrl };
+        const tempSource = { ...oldSource, ...body, name: newName || oldSource.name, url: updatedUrl };
         const nodes = await fetchAndParseSource(tempSource, appConfig.countryRules);
-        req.body.nodes = nodes;
-        req.body.nodeCount = nodes.length;
-        req.body.lastUpdated = new Date().toISOString();
-        req.body.infoNodes = tempSource.infoNodes;
-        req.body.subscriptionUserinfo = tempSource.subscriptionUserinfo;
-        req.body.subscriptionInfo = tempSource.subscriptionInfo;
+        body.nodes = nodes;
+        body.nodeCount = nodes.length;
+        body.lastUpdated = new Date().toISOString();
+        body.infoNodes = tempSource.infoNodes;
+        body.subscriptionUserinfo = tempSource.subscriptionUserinfo;
+        body.subscriptionInfo = tempSource.subscriptionInfo;
       } catch (err: any) {
         console.error(`[Fetcher] Failed to fetch updated source URL:`, err.message || err);
       }
     }
   }
 
-  appConfig.sources[index] = { ...appConfig.sources[index], ...req.body };
+  appConfig.sources[index] = { ...appConfig.sources[index], ...body };
   const updatedSource = appConfig.sources[index];
   if (updatedSource.type !== 'manual' && updatedSource.type !== 'custom') {
     updatedSource.nodes = applySubscriptionInfo(updatedSource, [
@@ -475,15 +482,15 @@ apiRouter.put('/api/sources/:id', async (req, res) => {
   }
   saveConfig(appConfig);
   setGlobalNodesCache(collectNodesFromSources(appConfig));
-  res.json({ success: true, data: appConfig.sources[index], proxyGroups: appConfig.proxyGroups });
+  return c.json({ success: true, data: appConfig.sources[index], proxyGroups: appConfig.proxyGroups });
 });
 
-apiRouter.delete('/api/sources/:id', (req, res) => {
-  if (req.params.id === 'custom') {
-    return res.status(400).json({ success: false, message: '默认独立节点组不能删除，可清空组内节点' });
+apiRouter.delete('/sources/:id', (c) => {
+  if (c.req.param('id') === 'custom') {
+    return c.json({ success: false, message: '默认独立节点组不能删除，可清空组内节点' }, 400);
   }
-  const deletedSource = appConfig.sources.find(s => s.id === req.params.id);
-  appConfig.sources = appConfig.sources.filter(s => s.id !== req.params.id);
+  const deletedSource = appConfig.sources.find(s => s.id === c.req.param('id'));
+  appConfig.sources = appConfig.sources.filter(s => s.id !== c.req.param('id'));
 
   if (deletedSource) {
     const sClean = cleanSourceOrGroupName(deletedSource.name).toLowerCase();
@@ -509,26 +516,26 @@ apiRouter.delete('/api/sources/:id', (req, res) => {
     // Clean up sourceIds references in profiles
     (appConfig.profiles || []).forEach(p => {
       if (p.nodeFilter?.sourceIds) {
-        p.nodeFilter.sourceIds = p.nodeFilter.sourceIds.filter(id => id !== req.params.id && !matchesSource(id));
+        p.nodeFilter.sourceIds = p.nodeFilter.sourceIds.filter(id => id !== c.req.param('id') && !matchesSource(id));
       }
     });
   }
 
   saveConfig(appConfig);
   setGlobalNodesCache(collectNodesFromSources(appConfig));
-  res.json({ success: true, message: 'Source deleted' });
+  return c.json({ success: true, message: 'Source deleted' });
 });
 
-apiRouter.post('/api/sources/:id/refresh', async (req, res) => {
-  const source = appConfig.sources.find(s => s.id === req.params.id);
+apiRouter.post('/sources/:id/refresh', async (c) => {
+  const source = appConfig.sources.find(s => s.id === c.req.param('id'));
   if (!source) {
-    return res.status(404).json({ success: false, message: 'Source not found' });
+    return c.json({ success: false, message: 'Source not found' }, 404);
   }
   const url = (source.url || '').trim();
   if (source.type === 'manual' || source.type === 'custom' || !url || !url.startsWith('http')) {
     setGlobalNodesCache(collectNodesFromSources(appConfig));
     saveConfig(appConfig);
-    return res.json({ success: true, nodeCount: source.nodes?.length || 0, data: source.nodes || [] });
+    return c.json({ success: true, nodeCount: source.nodes?.length || 0, data: source.nodes || [] });
   }
   try {
     const nodes = await fetchAndParseSource(source, appConfig.countryRules);
@@ -537,105 +544,109 @@ apiRouter.post('/api/sources/:id/refresh', async (req, res) => {
     source.lastUpdated = new Date().toISOString();
     saveConfig(appConfig);
     setGlobalNodesCache(collectNodesFromSources(appConfig));
-    res.json({ success: true, nodeCount: nodes.length, data: nodes });
+    return c.json({ success: true, nodeCount: nodes.length, data: nodes });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message || 'Fetch failed' });
+    return c.json({ success: false, message: err.message || 'Fetch failed' }, 500);
   }
 });
 
-apiRouter.post('/api/sources/refresh-all', async (req, res) => {
+apiRouter.post('/sources/refresh-all', async (c) => {
   try {
     const all = await refreshAllSources(appConfig);
     const effective = applyExtractionRules(all, appConfig.rules);
-    res.json({ success: true, totalNodes: all.length, effectiveNodes: effective.length });
+    return c.json({ success: true, totalNodes: all.length, effectiveNodes: effective.length });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message || 'Refresh all failed' });
+    return c.json({ success: false, message: err.message || 'Refresh all failed' }, 500);
   }
 });
 
 
 // 3. Country Matching & Grouping Rules (国家/地区识别规则)
-apiRouter.get('/api/country-rules', (req, res) => {
-  res.json({ success: true, data: appConfig.countryRules || INITIAL_COUNTRY_RULES });
+apiRouter.get('/country-rules', (c) => {
+  return c.json({ success: true, data: appConfig.countryRules || INITIAL_COUNTRY_RULES });
 });
 
-apiRouter.post('/api/country-rules', (req, res) => {
+apiRouter.post('/country-rules', (c) => {
+  const body = c.get('body');
   const newRule: CountryPatternRule = {
     id: `c-${Date.now()}`,
-    code: (req.body.code || 'OTHER').toUpperCase(),
-    name: req.body.name || '自定义地区',
-    emoji: req.body.emoji || '🌐',
-    pattern: req.body.pattern || '',
-    groupName: req.body.groupName,
+    code: (body.code || 'OTHER').toUpperCase(),
+    name: body.name || '自定义地区',
+    emoji: body.emoji || '🌐',
+    pattern: body.pattern || '',
+    groupName: body.groupName,
   };
   if (!appConfig.countryRules) appConfig.countryRules = [...INITIAL_COUNTRY_RULES];
   appConfig.countryRules.push(newRule);
   saveConfig(appConfig);
-  res.json({ success: true, data: newRule });
+  return c.json({ success: true, data: newRule });
 });
 
-apiRouter.put('/api/country-rules/:id', (req, res) => {
+apiRouter.put('/country-rules/:id', (c) => {
+  const body = c.get('body');
   if (!appConfig.countryRules) appConfig.countryRules = [...INITIAL_COUNTRY_RULES];
-  const idx = appConfig.countryRules.findIndex(r => r.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ success: false, message: 'Country rule not found' });
-  appConfig.countryRules[idx] = { ...appConfig.countryRules[idx], ...req.body };
+  const idx = appConfig.countryRules.findIndex(r => r.id === c.req.param('id'));
+  if (idx === -1) return c.json({ success: false, message: 'Country rule not found' }, 404);
+  appConfig.countryRules[idx] = { ...appConfig.countryRules[idx], ...body };
   saveConfig(appConfig);
-  res.json({ success: true, data: appConfig.countryRules[idx] });
+  return c.json({ success: true, data: appConfig.countryRules[idx] });
 });
 
-apiRouter.delete('/api/country-rules/:id', (req, res) => {
+apiRouter.delete('/country-rules/:id', (c) => {
   if (!appConfig.countryRules) appConfig.countryRules = [...INITIAL_COUNTRY_RULES];
-  appConfig.countryRules = appConfig.countryRules.filter(r => r.id !== req.params.id);
+  appConfig.countryRules = appConfig.countryRules.filter(r => r.id !== c.req.param('id'));
   saveConfig(appConfig);
-  res.json({ success: true, message: 'Country rule deleted' });
+  return c.json({ success: true, message: 'Country rule deleted' });
 });
 
-apiRouter.post('/api/country-rules/reset', (req, res) => {
+apiRouter.post('/country-rules/reset', (c) => {
   appConfig.countryRules = [...INITIAL_COUNTRY_RULES];
   saveConfig(appConfig);
-  res.json({ success: true, data: appConfig.countryRules });
+  return c.json({ success: true, data: appConfig.countryRules });
 });
 
 // 4. Extraction & Rename Rules (节点抽取与清洗流水线)
-apiRouter.get('/api/rules', (req, res) => {
-  res.json({ success: true, data: appConfig.rules });
+apiRouter.get('/rules', (c) => {
+  return c.json({ success: true, data: appConfig.rules });
 });
 
-apiRouter.post('/api/rules', (req, res) => {
+apiRouter.post('/rules', (c) => {
+  const body = c.get('body');
   const newRule = {
     id: `rule-${Date.now()}`,
-    name: req.body.name || '新抽取规则',
-    enabled: req.body.enabled !== false,
-    ...req.body,
+    name: body.name || '新抽取规则',
+    enabled: body.enabled !== false,
+    ...body,
   };
   appConfig.rules.push(newRule);
   saveConfig(appConfig);
-  res.json({ success: true, data: newRule });
+  return c.json({ success: true, data: newRule });
 });
 
-apiRouter.put('/api/rules/:id', (req, res) => {
-  const index = appConfig.rules.findIndex(r => r.id === req.params.id);
+apiRouter.put('/rules/:id', (c) => {
+  const body = c.get('body');
+  const index = appConfig.rules.findIndex(r => r.id === c.req.param('id'));
   if (index === -1) {
-    return res.status(404).json({ success: false, message: 'Rule not found' });
+    return c.json({ success: false, message: 'Rule not found' }, 404);
   }
-  appConfig.rules[index] = { ...appConfig.rules[index], ...req.body };
+  appConfig.rules[index] = { ...appConfig.rules[index], ...body };
   saveConfig(appConfig);
-  res.json({ success: true, data: appConfig.rules[index] });
+  return c.json({ success: true, data: appConfig.rules[index] });
 });
 
-apiRouter.delete('/api/rules/:id', (req, res) => {
-  appConfig.rules = appConfig.rules.filter(r => r.id !== req.params.id);
+apiRouter.delete('/rules/:id', (c) => {
+  appConfig.rules = appConfig.rules.filter(r => r.id !== c.req.param('id'));
   saveConfig(appConfig);
-  res.json({ success: true, message: 'Rule deleted' });
+  return c.json({ success: true, message: 'Rule deleted' });
 });
 
 // 4. Effective Nodes
-apiRouter.get('/api/nodes', async (req, res) => {
+apiRouter.get('/nodes', async (c) => {
   try {
     const effective = await getEffectiveNodes();
-    res.json({ success: true, totalCount: effective.length, data: effective });
+    return c.json({ success: true, totalCount: effective.length, data: effective });
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    return c.json({ success: false, message: err.message }, 500);
   }
 });
 
@@ -679,7 +690,7 @@ export function sanitizeProxyGroups(appConfig: AppConfig): boolean {
 }
 
 // 5. Proxy Groups Management (出口策略分组)
-apiRouter.get('/api/groups', (req, res) => {
+apiRouter.get('/groups', (c) => {
   let needSave = ensureCustomProxyGroup(appConfig);
   if (sanitizeProxyGroups(appConfig)) {
     needSave = true;
@@ -687,39 +698,41 @@ apiRouter.get('/api/groups', (req, res) => {
   if (needSave) {
     saveConfig(appConfig);
   }
-  res.json({ success: true, data: appConfig.proxyGroups });
+  return c.json({ success: true, data: appConfig.proxyGroups });
 });
 
-apiRouter.post('/api/groups', (req, res) => {
+apiRouter.post('/groups', (c) => {
+  const body = c.get('body');
   const newGroup: ProxyGroupItem = {
     id: `grp-${Date.now()}`,
-    name: req.body.name || '新分组',
-    type: req.body.type || 'select',
-    proxies: req.body.proxies || [],
-    use: req.body.use,
-    filter: req.body.filter,
-    tolerance: req.body.tolerance,
-    interval: req.body.interval,
-    url: req.body.url,
-    includeAll: req.body.includeAll,
-    strategy: req.body.strategy,
-    lazy: req.body.lazy,
-    hidden: req.body.hidden,
-    icon: req.body.icon,
+    name: body.name || '新分组',
+    type: body.type || 'select',
+    proxies: body.proxies || [],
+    use: body.use,
+    filter: body.filter,
+    tolerance: body.tolerance,
+    interval: body.interval,
+    url: body.url,
+    includeAll: body.includeAll,
+    strategy: body.strategy,
+    lazy: body.lazy,
+    hidden: body.hidden,
+    icon: body.icon,
   };
   appConfig.proxyGroups.push(newGroup);
   saveConfig(appConfig);
-  res.json({ success: true, data: newGroup });
+  return c.json({ success: true, data: newGroup });
 });
 
-apiRouter.post('/api/groups/batch-import', (req, res) => {
-  const { text, replaceAll } = req.body;
+apiRouter.post('/groups/batch-import', (c) => {
+  const body = c.get('body');
+  const { text, replaceAll } = body;
   if (!text || typeof text !== 'string') {
-    return res.status(400).json({ success: false, message: 'Text required' });
+    return c.json({ success: false, message: 'Text required' }, 400);
   }
   const parsed = parseProxyGroupsText(text);
   if (parsed.length === 0) {
-    return res.status(400).json({ success: false, message: '未能从粘贴内容中识别到策略组' });
+    return c.json({ success: false, message: '未能从粘贴内容中识别到策略组' }, 400);
   }
 
   if (replaceAll) {
@@ -735,10 +748,10 @@ apiRouter.post('/api/groups/batch-import', (req, res) => {
   }
 
   saveConfig(appConfig);
-  res.json({ success: true, count: parsed.length, data: appConfig.proxyGroups });
+  return c.json({ success: true, count: parsed.length, data: appConfig.proxyGroups });
 });
 
-apiRouter.post('/api/groups/generate-country-presets', (req, res) => {
+apiRouter.post('/groups/generate-country-presets', (c) => {
   const countryRules = appConfig.countryRules || INITIAL_COUNTRY_RULES;
   const existingNames = new Set(appConfig.proxyGroups.map(g => g.name));
   const newGroups: ProxyGroupItem[] = [];
@@ -785,36 +798,37 @@ apiRouter.post('/api/groups/generate-country-presets', (req, res) => {
   });
 
   saveConfig(appConfig);
-  res.json({ success: true, count: newGroups.length, data: appConfig.proxyGroups });
+  return c.json({ success: true, count: newGroups.length, data: appConfig.proxyGroups });
 });
 
-apiRouter.put('/api/groups/:id', (req, res) => {
-  const idx = appConfig.proxyGroups.findIndex(g => g.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ success: false, message: 'Group not found' });
+apiRouter.put('/groups/:id', (c) => {
+  const body = c.get('body');
+  const idx = appConfig.proxyGroups.findIndex(g => g.id === c.req.param('id'));
+  if (idx === -1) return c.json({ success: false, message: 'Group not found' }, 404);
   
   const current = appConfig.proxyGroups[idx];
-  const updated = { ...current, ...req.body };
+  const updated = { ...current, ...body };
 
   // Explicitly handle clearing fields if provided
-  if ('proxies' in req.body) {
-    if (Array.isArray(req.body.proxies) && req.body.proxies.length > 0) {
-      updated.proxies = req.body.proxies;
+  if ('proxies' in body) {
+    if (Array.isArray(body.proxies) && body.proxies.length > 0) {
+      updated.proxies = body.proxies;
     } else {
       delete updated.proxies;
     }
   }
 
-  if ('use' in req.body) {
-    if (Array.isArray(req.body.use) && req.body.use.length > 0) {
-      updated.use = req.body.use;
+  if ('use' in body) {
+    if (Array.isArray(body.use) && body.use.length > 0) {
+      updated.use = body.use;
     } else {
       delete updated.use;
     }
   }
 
-  if ('filter' in req.body) {
-    if (typeof req.body.filter === 'string' && req.body.filter.trim()) {
-      updated.filter = req.body.filter.trim();
+  if ('filter' in body) {
+    if (typeof body.filter === 'string' && body.filter.trim()) {
+      updated.filter = body.filter.trim();
     } else {
       delete updated.filter;
     }
@@ -822,110 +836,115 @@ apiRouter.put('/api/groups/:id', (req, res) => {
 
   appConfig.proxyGroups[idx] = updated;
   saveConfig(appConfig);
-  res.json({ success: true, data: appConfig.proxyGroups[idx] });
+  return c.json({ success: true, data: appConfig.proxyGroups[idx] });
 });
 
-apiRouter.delete('/api/groups/:id', (req, res) => {
-  appConfig.proxyGroups = appConfig.proxyGroups.filter(g => g.id !== req.params.id);
+apiRouter.delete('/groups/:id', (c) => {
+  appConfig.proxyGroups = appConfig.proxyGroups.filter(g => g.id !== c.req.param('id'));
   saveConfig(appConfig);
-  res.json({ success: true, message: 'Group deleted' });
+  return c.json({ success: true, message: 'Group deleted' });
 });
 
 
 // 6. Unified Rules Matrix Management (表格化规则与去向管理)
-apiRouter.get('/api/rules/unified', (req, res) => {
-  res.json({ success: true, data: appConfig.rulesList });
+apiRouter.get('/rules/unified', (c) => {
+  return c.json({ success: true, data: appConfig.rulesList });
 });
 
-apiRouter.post('/api/rules/unified', (req, res) => {
+apiRouter.post('/rules/unified', (c) => {
+  const body = c.get('body');
   const newRule: UnifiedRuleItem = {
     id: `r-${Date.now()}`,
-    name: req.body.name || '新规则',
-    kind: req.body.kind || 'local',
-    type: req.body.type || 'DOMAIN-SUFFIX',
-    payload: req.body.payload || '',
-    format: req.body.format,
-    outbound: req.body.outbound || (appConfig.proxyGroups[0]?.name || '🎯 本地直连'),
-    enabled: req.body.enabled !== false,
+    name: body.name || '新规则',
+    kind: body.kind || 'local',
+    type: body.type || 'DOMAIN-SUFFIX',
+    payload: body.payload || '',
+    format: body.format,
+    outbound: body.outbound || (appConfig.proxyGroups[0]?.name || '🎯 本地直连'),
+    enabled: body.enabled !== false,
   };
   appConfig.rulesList.push(newRule);
   saveConfig(appConfig);
-  res.json({ success: true, data: newRule });
+  return c.json({ success: true, data: newRule });
 });
 
-apiRouter.post('/api/rules/import-local', (req, res) => {
-  const { text, defaultOutbound } = req.body;
+apiRouter.post('/rules/import-local', (c) => {
+  const body = c.get('body');
+  const { text, defaultOutbound } = body;
   if (!text || typeof text !== 'string') {
-    return res.status(400).json({ success: false, message: 'Text required' });
+    return c.json({ success: false, message: 'Text required' }, 400);
   }
   const outbound = defaultOutbound || appConfig.proxyGroups[0]?.name || '🎯 本地直连';
   const parsed = parseLocalRulesText(text, outbound);
   if (parsed.length === 0) {
-    return res.status(400).json({ success: false, message: '未能从粘贴内容中识别到本地规则' });
+    return c.json({ success: false, message: '未能从粘贴内容中识别到本地规则' }, 400);
   }
 
   appConfig.rulesList.push(...parsed);
   saveConfig(appConfig);
-  res.json({ success: true, count: parsed.length, data: appConfig.rulesList });
+  return c.json({ success: true, count: parsed.length, data: appConfig.rulesList });
 });
 
-apiRouter.post('/api/rules/import-remote', (req, res) => {
-  const { text, defaultOutbound } = req.body;
+apiRouter.post('/rules/import-remote', (c) => {
+  const body = c.get('body');
+  const { text, defaultOutbound } = body;
   if (!text || typeof text !== 'string') {
-    return res.status(400).json({ success: false, message: 'Text required' });
+    return c.json({ success: false, message: 'Text required' }, 400);
   }
   const outbound = defaultOutbound || appConfig.proxyGroups[0]?.name || '🚀 节点选择';
   const parsed = parseRemoteRulesText(text, outbound);
   if (parsed.length === 0) {
-    return res.status(400).json({ success: false, message: '未能从粘贴内容中识别到远程规则集' });
+    return c.json({ success: false, message: '未能从粘贴内容中识别到远程规则集' }, 400);
   }
 
   appConfig.rulesList.push(...parsed);
   saveConfig(appConfig);
-  res.json({ success: true, count: parsed.length, data: appConfig.rulesList });
+  return c.json({ success: true, count: parsed.length, data: appConfig.rulesList });
 });
 
-apiRouter.put('/api/rules/unified/:id', (req, res) => {
-  const idx = appConfig.rulesList.findIndex(r => r.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ success: false, message: 'Rule not found' });
-  appConfig.rulesList[idx] = { ...appConfig.rulesList[idx], ...req.body };
+apiRouter.put('/rules/unified/:id', (c) => {
+  const body = c.get('body');
+  const idx = appConfig.rulesList.findIndex(r => r.id === c.req.param('id'));
+  if (idx === -1) return c.json({ success: false, message: 'Rule not found' }, 404);
+  appConfig.rulesList[idx] = { ...appConfig.rulesList[idx], ...body };
   saveConfig(appConfig);
-  res.json({ success: true, data: appConfig.rulesList[idx] });
+  return c.json({ success: true, data: appConfig.rulesList[idx] });
 });
 
-apiRouter.delete('/api/rules/unified/:id', (req, res) => {
-  appConfig.rulesList = appConfig.rulesList.filter(r => r.id !== req.params.id);
+apiRouter.delete('/rules/unified/:id', (c) => {
+  appConfig.rulesList = appConfig.rulesList.filter(r => r.id !== c.req.param('id'));
   saveConfig(appConfig);
-  res.json({ success: true, message: 'Rule deleted' });
+  return c.json({ success: true, message: 'Rule deleted' });
 });
 
-apiRouter.post('/api/rules/unified/clear-all', (req, res) => {
+apiRouter.post('/rules/unified/clear-all', (c) => {
   appConfig.rulesList = [];
   saveConfig(appConfig);
-  res.json({ success: true, message: 'All rules cleared' });
+  return c.json({ success: true, message: 'All rules cleared' });
 });
 
-apiRouter.post('/api/rules/unified/reset', (req, res) => {
+apiRouter.post('/rules/unified/reset', (c) => {
   const defaultRules = loadDefaultRules();
   appConfig.rulesList = defaultRules;
   saveConfig(appConfig);
-  res.json({ success: true, count: defaultRules.length, data: appConfig.rulesList });
+  return c.json({ success: true, count: defaultRules.length, data: appConfig.rulesList });
 });
 
-apiRouter.get('/api/rules/unified/defaults', (req, res) => {
+apiRouter.get('/rules/unified/defaults', (c) => {
   const defaultRules = loadDefaultRules();
-  res.json({ success: true, count: defaultRules.length, data: defaultRules });
+  return c.json({ success: true, count: defaultRules.length, data: defaultRules });
 });
 
-apiRouter.get('/api/rules/unified/export-text', (req, res) => {
+apiRouter.get('/rules/unified/export-text', (c) => {
   const text = exportRulesToText(appConfig.rulesList);
-  res.json({ success: true, text });
+  return c.json({ success: true, text });
 });
 
-apiRouter.post('/api/rules/unified/batch-replace', (req, res) => {
-  const { text, defaultOutbound } = req.body;
+apiRouter.post('/rules/unified/batch-replace', (c) => {
+  const body = c.get('body');
+  const { text, defaultOutbound } = body;
   if (typeof text !== 'string') {
-    return res.status(400).json({ success: false, message: 'Text required' });
+    return c.json({ success: false, message: 'Text required' }, 400);
   }
   const outbound = defaultOutbound || appConfig.proxyGroups[0]?.name || '🎯 本地直连';
   const parsed = parseUnifiedRulesText(text, outbound);
@@ -953,15 +972,15 @@ apiRouter.post('/api/rules/unified/batch-replace', (req, res) => {
 
   appConfig.rulesList = parsed;
   saveConfig(appConfig);
-  res.json({ success: true, count: parsed.length, data: appConfig.rulesList, groups: appConfig.proxyGroups });
+  return c.json({ success: true, count: parsed.length, data: appConfig.rulesList, groups: appConfig.proxyGroups });
 });
 
 // 7. Multi-Templates Management
-apiRouter.get('/api/templates', (req, res) => {
-  res.json({ success: true, data: appConfig.templates });
+apiRouter.get('/templates', (c) => {
+  return c.json({ success: true, data: appConfig.templates });
 });
 
-apiRouter.get('/api/templates/defaults', (req, res) => {
+apiRouter.get('/templates/defaults', (c) => {
   const defaults: Record<string, string> = {
     singbox: loadDefaultTemplate('singbox'),
     'singbox-gateway': loadSingboxGatewayTemplate(),
@@ -971,32 +990,33 @@ apiRouter.get('/api/templates/defaults', (req, res) => {
     egern: loadDefaultTemplate('egern'),
     shadowrocket: loadDefaultTemplate('shadowrocket'),
   };
-  res.json({ success: true, data: defaults });
+  return c.json({ success: true, data: defaults });
 });
 
-apiRouter.get('/api/templates/default/:type', (req, res) => {
-  const type = req.params.type;
+apiRouter.get('/templates/default/:type', (c) => {
+  const type = c.req.param('type');
   if (type === 'singbox-gateway') {
     const content = loadSingboxGatewayTemplate();
-    return res.json({ success: true, type, content });
+    return c.json({ success: true, type, content });
   }
   const content = loadDefaultTemplate(type as ClientType);
-  res.json({ success: true, type, content });
+  return c.json({ success: true, type, content });
 });
 
-apiRouter.post('/api/templates', (req, res) => {
-  const type: ClientType = req.body.type || 'singbox';
-  let content = req.body.content;
+apiRouter.post('/templates', (c) => {
+  const body = c.get('body');
+  const type: ClientType = body.type || 'singbox';
+  let content = body.content;
   if (!content || !content.trim() || content.trim() === '# 模版内容') {
     content = loadDefaultTemplate(type);
   }
   const newTemplate: ConfigTemplate = {
     id: `tpl-${Date.now()}`,
-    name: req.body.name || `新建${type}配置模版`,
+    name: body.name || `新建${type}配置模版`,
     type,
     content,
-    description: req.body.description || '',
-    isDefault: Boolean(req.body.isDefault),
+    description: body.description || '',
+    isDefault: Boolean(body.isDefault),
   };
   if (newTemplate.isDefault) {
     appConfig.templates.forEach(t => {
@@ -1005,15 +1025,16 @@ apiRouter.post('/api/templates', (req, res) => {
   }
   appConfig.templates.push(newTemplate);
   saveConfig(appConfig);
-  res.json({ success: true, data: newTemplate });
+  return c.json({ success: true, data: newTemplate });
 });
 
-apiRouter.put('/api/templates/:id', (req, res) => {
-  const index = appConfig.templates.findIndex(t => t.id === req.params.id);
+apiRouter.put('/templates/:id', (c) => {
+  const body = c.get('body');
+  const index = appConfig.templates.findIndex(t => t.id === c.req.param('id'));
   if (index === -1) {
-    return res.status(404).json({ success: false, message: 'Template not found' });
+    return c.json({ success: false, message: 'Template not found' }, 404);
   }
-  const updated = { ...appConfig.templates[index], ...req.body };
+  const updated = { ...appConfig.templates[index], ...body };
   if (updated.isDefault) {
     appConfig.templates.forEach(t => {
       if (t.type === updated.type && t.id !== updated.id) t.isDefault = false;
@@ -1021,13 +1042,13 @@ apiRouter.put('/api/templates/:id', (req, res) => {
   }
   appConfig.templates[index] = updated;
   saveConfig(appConfig);
-  res.json({ success: true, data: updated });
+  return c.json({ success: true, data: updated });
 });
 
-apiRouter.post('/api/templates/:id/reset', (req, res) => {
-  const index = appConfig.templates.findIndex(t => t.id === req.params.id);
+apiRouter.post('/templates/:id/reset', (c) => {
+  const index = appConfig.templates.findIndex(t => t.id === c.req.param('id'));
   if (index === -1) {
-    return res.status(404).json({ success: false, message: '模版未找到' });
+    return c.json({ success: false, message: '模版未找到' }, 404);
   }
   const tpl = appConfig.templates[index];
   if (tpl.id === 'tpl-singbox-gateway' || tpl.name.includes('旁路由') || tpl.name.includes('网关')) {
@@ -1037,28 +1058,29 @@ apiRouter.post('/api/templates/:id/reset', (req, res) => {
   }
   appConfig.templates[index] = tpl;
   saveConfig(appConfig);
-  return res.json({ success: true, data: tpl });
+  return c.json({ success: true, data: tpl });
 });
 
-apiRouter.delete('/api/templates/:id', (req, res) => {
+apiRouter.delete('/templates/:id', (c) => {
   if (appConfig.templates.length <= 1) {
-    return res.status(400).json({ success: false, message: '至少保留一个模版' });
+    return c.json({ success: false, message: '至少保留一个模版' }, 400);
   }
-  appConfig.templates = appConfig.templates.filter(t => t.id !== req.params.id);
+  appConfig.templates = appConfig.templates.filter(t => t.id !== c.req.param('id'));
   saveConfig(appConfig);
-  res.json({ success: true, message: 'Template deleted' });
+  return c.json({ success: true, message: 'Template deleted' });
 });
 
 // 7. Profiles Management (多订阅中心)
-apiRouter.get('/api/profiles', (req, res) => {
-  res.json({ success: true, data: appConfig.profiles || [] });
+apiRouter.get('/profiles', (c) => {
+  return c.json({ success: true, data: appConfig.profiles || [] });
 });
 
 
-apiRouter.post('/api/profiles', (req, res) => {
-  const { name, description, nodeFilter, selectedGroupIds, selectedRuleIds, templates, token } = req.body;
+apiRouter.post('/profiles', (c) => {
+  const body = c.get('body');
+  const { name, description, nodeFilter, selectedGroupIds, selectedRuleIds, templates, token } = body;
   if (!name || typeof name !== 'string' || !name.trim()) {
-    return res.status(400).json({ success: false, message: '订阅名称不能为空' });
+    return c.json({ success: false, message: '订阅名称不能为空' }, 400);
   }
 
   const newProfile: SubscriptionProfile = {
@@ -1078,18 +1100,19 @@ apiRouter.post('/api/profiles', (req, res) => {
   appConfig.profiles = appConfig.profiles || [];
   appConfig.profiles.push(newProfile);
   saveConfig(appConfig);
-  res.json({ success: true, data: newProfile });
+  return c.json({ success: true, data: newProfile });
 });
 
-apiRouter.put('/api/profiles/:id', (req, res) => {
-  const { id } = req.params;
+apiRouter.put('/profiles/:id', (c) => {
+  const body = c.get('body');
+  const { id } = c.req.param();
   const index = (appConfig.profiles || []).findIndex(p => p.id === id);
   if (index === -1) {
-    return res.status(404).json({ success: false, message: 'Profile not found' });
+    return c.json({ success: false, message: 'Profile not found' }, 404);
   }
 
   const existing = appConfig.profiles[index];
-  const { name, description, enabled, nodeFilter, selectedGroupIds, selectedRuleIds, templates, token } = req.body;
+  const { name, description, enabled, nodeFilter, selectedGroupIds, selectedRuleIds, templates, token } = body;
 
   appConfig.profiles[index] = {
     ...existing,
@@ -1105,35 +1128,36 @@ apiRouter.put('/api/profiles/:id', (req, res) => {
   };
 
   saveConfig(appConfig);
-  res.json({ success: true, data: appConfig.profiles[index] });
+  return c.json({ success: true, data: appConfig.profiles[index] });
 });
 
-apiRouter.delete('/api/profiles/:id', (req, res) => {
-  const { id } = req.params;
+apiRouter.delete('/profiles/:id', (c) => {
+  const { id } = c.req.param();
   if (!appConfig.profiles || appConfig.profiles.length <= 1) {
-    return res.status(400).json({ success: false, message: '请至少保留一个订阅配置' });
+    return c.json({ success: false, message: '请至少保留一个订阅配置' }, 400);
   }
   appConfig.profiles = appConfig.profiles.filter(p => p.id !== id);
   saveConfig(appConfig);
-  res.json({ success: true, message: '订阅已删除' });
+  return c.json({ success: true, message: '订阅已删除' });
 });
 
-apiRouter.post('/api/profiles/:id/refresh-token', (req, res) => {
-  const { id } = req.params;
+apiRouter.post('/profiles/:id/refresh-token', (c) => {
+  const { id } = c.req.param();
   const profile = (appConfig.profiles || []).find(p => p.id === id);
   if (!profile) {
-    return res.status(404).json({ success: false, message: 'Profile not found' });
+    return c.json({ success: false, message: 'Profile not found' }, 404);
   }
   profile.token = generateRandomSubToken();
   profile.updatedAt = new Date().toISOString();
   saveConfig(appConfig);
-  res.json({ success: true, data: profile });
+  return c.json({ success: true, data: profile });
 });
 
 // 8. Live Preview
-apiRouter.post('/api/generate/preview', async (req, res) => {
+apiRouter.post('/generate/preview', async (c) => {
+  const body = c.get('body');
   try {
-    const { templateId, customTemplate, customType, profileId, profile: previewProfile } = req.body;
+    const { templateId, customTemplate, customType, profileId, profile: previewProfile } = body;
 
     let targetProfile: SubscriptionProfile | undefined;
     if (profileId) {
@@ -1178,9 +1202,9 @@ apiRouter.post('/api/generate/preview', async (req, res) => {
       : appConfig.sources;
 
     let output = '';
-    const baseUrl = getBaseUrl(req);
+    const baseUrl = getBaseUrl(c.req);
     const subToken = targetProfile?.token || 'preview-token';
-    const expand = Boolean(req.body?.expandNodes || req.query?.expand === 'true' || req.query?.expand === '1');
+    const expand = Boolean(body?.expandNodes || c.req.query('expand') === 'true' || c.req.query('expand') === '1');
 
     if (targetType === 'mihomo') {
       output = generateMihomoConfig(templateContent, nodes, groups, rules, effectiveSources, {
@@ -1209,19 +1233,19 @@ apiRouter.post('/api/generate/preview', async (req, res) => {
         subToken
       });
     } else if (targetType === 'shadowrocket') {
-      const isBase64 = req.body?.format === 'base64' || req.query?.format === 'base64';
+      const isBase64 = body?.format === 'base64' || c.req.query('format') === 'base64';
       if (isBase64) {
         output = generateShadowrocketBase64(nodes);
       } else {
-        const expandRocket = req.body?.expandNodes !== false;
+        const expandRocket = body?.expandNodes !== false;
         output = generateShadowrocketConfig(templateContent, nodes, groups, rules, effectiveSources, { expandNodes: expandRocket });
       }
     }
 
-    res.json({ success: true, nodeCount: nodes.length, data: output });
+    return c.json({ success: true, nodeCount: nodes.length, data: output });
   } catch (err) {
     const status = err instanceof UnsupportedProxyGroupError ? 422 : 500;
     const message = err instanceof Error ? err.message : 'Generation failed';
-    res.status(status).json({ success: false, message });
+    return c.json({ success: false, message }, status);
   }
 });
