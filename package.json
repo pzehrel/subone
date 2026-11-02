@@ -1,36 +1,43 @@
 {
   "name": "subone",
   "version": "1.0.0",
+  "private": true,
   "description": "Modern, lightweight subscription merger and template injector for Mihomo, Sing-box, and Loon",
-  "main": "dist/server/index.js",
+  "packageManager": "pnpm@12.16.1",
+  "engines": {
+    "node": ">=24.22.2 <25",
+    "pnpm": ">=12.16.1 <13"
+  },
   "scripts": {
-    "postinstall": "cd web && npm install",
-    "dev:server": "tsx watch src/server/index.ts",
-    "dev:web": "cd web && npm run dev",
-    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
-    "build:server": "tsup src/server/index.ts --format cjs --clean --out-dir dist/server",
-    "build:web": "cd web && npm run build",
-    "build": "npm run build:server && npm run build:web",
-    "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/*.test.ts",
-    "start": "node dist/server/index.js"
+    "dev": "pnpm --parallel --filter \"./apps/*\" dev",
+    "dev:server": "pnpm --filter @subone/server dev",
+    "dev:web": "pnpm --filter @subone/web dev",
+    "build": "pnpm -r build",
+    "build:server": "pnpm --filter @subone/server build",
+    "build:web": "pnpm --filter @subone/web build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r --if-present lint",
+    "test": "pnpm -r --if-present test",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "start": "pnpm --filter @subone/server start"
   },
-  "keywords": ["singbox", "mihomo", "clash", "loon", "subscription", "proxy"],
-  "author": "",
+  "keywords": [
+    "singbox",
+    "mihomo",
+    "clash",
+    "loon",
+    "subscription",
+    "proxy"
+  ],
+  "author": {
+    "name": "pzehrel",
+    "email": "pzehrel@gmail.com",
+    "url": "https://github.com/pzehrel"
+  },
   "license": "MIT",
-  "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^4.21.2",
-    "js-yaml": "^4.1.0"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pzehrel/subone.git"
   },
-  "devDependencies": {
-    "@types/cors": "^2.8.17",
-    "@types/express": "^5.0.0",
-    "@types/js-yaml": "^4.0.9",
-    "@types/node": "^22.13.5",
-    "concurrently": "^9.1.2",
-    "tsup": "^8.3.6",
-    "tsx": "^4.19.3",
-    "typescript": "^5.7.3"
-  }
+  "homepage": "https://github.com/pzehrel/subone#readme"
 }

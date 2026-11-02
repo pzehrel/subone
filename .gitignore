@@ -1,12 +1,11 @@
 # Dependencies
 node_modules/
-web/node_modules/
+.pnpm-store/
 .pnp
 .pnp.js
 
 # Build outputs
 dist/
-web/dist/
 .vscode/
 .agents/
 
@@ -46,7 +45,6 @@ Thumbs.db
 # TypeScript / Vite cache
 *.tsbuildinfo
 .vite/
-web/.vite/
 
 # Local templates & temporary test files
 # *template*.json

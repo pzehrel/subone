@@ -1,0 +1,42 @@
+{
+  "name": "@subone/server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "SubOne API and subscription service",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=24.22.2 <25"
+  },
+  "author": {
+    "name": "pzehrel",
+    "email": "pzehrel@gmail.com",
+    "url": "https://github.com/pzehrel"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pzehrel/subone.git",
+    "directory": "apps/server"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup src/index.ts --format cjs --target node24 --clean --out-dir dist",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.3.0",
+    "js-yaml": "^5.5.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.19.2",
+    "tsup": "^9.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
