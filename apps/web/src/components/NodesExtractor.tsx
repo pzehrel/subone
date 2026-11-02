@@ -1,3 +1,4 @@
+import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
 import React, { useState } from 'react';
 import {
   Check,
@@ -15,7 +16,6 @@ import {
   Sliders,
   Sparkles,
   Trash2,
-  X,
   XCircle,
   Zap,
 } from 'lucide-react';
@@ -217,15 +217,15 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
   return (
     <div className="space-y-5 max-w-6xl mx-auto">
       {/* Top Main Action & Refresh Header */}
-      <div className="claude-panel p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="ui-panel p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1.5">
           <div className="flex items-center gap-2.5">
-            <h2 className="text-lg font-bold text-[#1F1E1D]">节点池与抽取规则流水线</h2>
+            <h2 className="text-lg font-bold text-ui-text">节点池与抽取规则流水线</h2>
             <span className="px-2.5 py-0.5 text-xs font-semibold bg-[#EFF6F4] text-[#367A68] border border-[#D1E5DF] rounded-full">
               {nodes.length} 个有效节点
             </span>
           </div>
-          <p className="text-xs text-[#78746D]">
+          <p className="text-xs text-ui-secondary">
             管理地区识别规则、关键字/正则过滤与重命名
           </p>
 
@@ -236,8 +236,8 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                 key={code}
                 onClick={() => setSelectedCountry(selectedCountry === code ? 'ALL' : code)}
                 className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-mono transition-all ${selectedCountry === code
-                  ? 'bg-[#CC785C] text-white font-bold shadow-xs'
-                  : 'bg-[#F5F2EC] text-[#59554E] hover:bg-[#EDE8DE] border border-[#E3DDD2]'
+                  ? 'bg-ui-accent text-white font-bold shadow-xs'
+                  : 'bg-[#F5F2EC] text-ui-secondary hover:bg-[#EDE8DE] border border-ui-border'
                   }`}
               >
                 <span>{data.emoji}</span>
@@ -252,7 +252,7 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
           <button
             onClick={onRefreshAll}
             disabled={isRefreshing}
-            className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold btn-claude-primary rounded-xl shadow-sm disabled:opacity-50"
+            className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold ui-button-primary rounded-xl shadow-sm disabled:opacity-50"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
             <span>{isRefreshing ? '正在拉取并分组...' : '🔄 立即拉取并执行抽取分组'}</span>
@@ -263,21 +263,21 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
       {/* Rules Config Accordions */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Section 1: Country Grouping Rules */}
-        <div className="claude-panel rounded-2xl overflow-hidden flex flex-col">
+        <div className="ui-panel rounded-2xl overflow-hidden flex flex-col">
           <button
             onClick={() => setShowCountryRules(!showCountryRules)}
-            className="w-full px-4 py-3.5 bg-[#FAF8F5] hover:bg-[#F3EFEA] border-b border-[#E8E4DC] flex items-center justify-between transition-colors text-left"
+            className="w-full px-4 py-3.5 bg-ui-subtle hover:bg-[#F3EFEA] border-b border-ui-border flex items-center justify-between transition-colors text-left"
           >
             <div className="flex items-center gap-2.5">
               <Globe className="w-4 h-4 text-[#367A68]" />
               <div>
-                <h3 className="text-xs font-bold text-[#1F1E1D]">🌍 国家/地区自动分类与分组规则</h3>
-                <p className="text-[11px] text-[#78746D]">
+                <h3 className="text-xs font-bold text-ui-text">🌍 国家/地区自动分类与分组规则</h3>
+                <p className="text-[11px] text-ui-secondary">
                   已配置 {countryRules.length} 个地区正则匹配与对应策略分组
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-[#78746D]">
+            <div className="flex items-center gap-2 text-ui-secondary">
               <span className="text-[11px] font-medium hidden sm:inline">
                 {showCountryRules ? '收起规则' : '查看/编辑'}
               </span>
@@ -286,13 +286,13 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
           </button>
 
           {showCountryRules && (
-            <div className="p-4 space-y-3 bg-white animate-in fade-in duration-150 flex-1">
-              <div className="flex items-center justify-between pb-2 border-b border-[#F0ECE4]">
-                <span className="text-[11px] text-[#78746D]">匹配节点名称识别国家，并自动分流至对应测速策略组</span>
+            <div className="p-4 space-y-3 bg-ui-surface animate-in fade-in duration-150 flex-1">
+              <div className="flex items-center justify-between pb-2 border-b border-ui-divider">
+                <span className="text-[11px] text-ui-secondary">匹配节点名称识别国家，并自动分流至对应测速策略组</span>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => onResetCountryRules()}
-                    className="flex items-center gap-1 text-[11px] text-[#78746D] hover:text-[#1F1E1D]"
+                    className="flex items-center gap-1 text-[11px] text-ui-secondary hover:text-ui-text"
                     title="重置为默认规则"
                   >
                     <RotateCcw className="w-3 h-3" />
@@ -300,9 +300,9 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                   </button>
                   <button
                     onClick={openAddCountry}
-                    className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold btn-claude-secondary rounded-lg"
+                    className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold ui-button-secondary rounded-lg"
                   >
-                    <Plus className="w-3 h-3 text-[#CC785C]" />
+                    <Plus className="w-3 h-3 text-ui-accent" />
                     <span>添加地区</span>
                   </button>
                 </div>
@@ -312,14 +312,14 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                 {countryRules.map(cr => (
                   <div
                     key={cr.id}
-                    className="bg-[#FAF8F5] p-2.5 rounded-xl border border-[#EFECE6] flex items-center justify-between gap-3 text-xs"
+                    className="bg-ui-subtle p-2.5 rounded-xl border border-ui-divider flex items-center justify-between gap-3 text-xs"
                   >
                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
                       <span className="text-base">{cr.emoji}</span>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-[#1F1E1D]">{cr.name}</span>
-                          <span className="px-1.5 py-0.2 text-[10px] font-mono bg-[#EFEAE2] text-[#69655E] rounded">
+                          <span className="font-bold text-ui-text">{cr.name}</span>
+                          <span className="px-1.5 py-0.2 text-[10px] font-mono bg-ui-hover text-ui-secondary rounded">
                             {cr.code}
                           </span>
                           {cr.groupName && (
@@ -328,7 +328,7 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                             </span>
                           )}
                         </div>
-                        <div className="text-[11px] font-mono text-[#78746D] truncate mt-0.5" title={cr.pattern}>
+                        <div className="text-[11px] font-mono text-ui-secondary truncate mt-0.5" title={cr.pattern}>
                           {cr.pattern}
                         </div>
                       </div>
@@ -337,7 +337,7 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => openEditCountry(cr)}
-                        className="p-1 text-[#69655E] hover:text-[#1F1E1D] rounded-lg hover:bg-white"
+                        className="p-1 text-ui-secondary hover:text-ui-text rounded-lg hover:bg-ui-surface"
                         title="编辑地区规则"
                       >
                         <Edit2 className="w-3.5 h-3.5" />
@@ -358,21 +358,21 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
         </div>
 
         {/* Section 2: Custom Extraction & Rename Rules */}
-        <div className="claude-panel rounded-2xl overflow-hidden flex flex-col">
+        <div className="ui-panel rounded-2xl overflow-hidden flex flex-col">
           <button
             onClick={() => setShowExtractionRules(!showExtractionRules)}
-            className="w-full px-4 py-3.5 bg-[#FAF8F5] hover:bg-[#F3EFEA] border-b border-[#E8E4DC] flex items-center justify-between transition-colors text-left"
+            className="w-full px-4 py-3.5 bg-ui-subtle hover:bg-[#F3EFEA] border-b border-ui-border flex items-center justify-between transition-colors text-left"
           >
             <div className="flex items-center gap-2.5">
-              <Sliders className="w-4 h-4 text-[#CC785C]" />
+              <Sliders className="w-4 h-4 text-ui-accent" />
               <div>
-                <h3 className="text-xs font-bold text-[#1F1E1D]">⚡ 自定义抽取与重命名规则</h3>
-                <p className="text-[11px] text-[#78746D]">
+                <h3 className="text-xs font-bold text-ui-text">⚡ 自定义抽取与重命名规则</h3>
+                <p className="text-[11px] text-ui-secondary">
                   已配置 {rules.length} 条节点白名单过滤、正则清洗与改名规则
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-[#78746D]">
+            <div className="flex items-center gap-2 text-ui-secondary">
               <span className="text-[11px] font-medium hidden sm:inline">
                 {showExtractionRules ? '收起规则' : '查看/编辑'}
               </span>
@@ -381,14 +381,14 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
           </button>
 
           {showExtractionRules && (
-            <div className="p-4 space-y-3 bg-white animate-in fade-in duration-150 flex-1">
-              <div className="flex items-center justify-between pb-2 border-b border-[#F0ECE4]">
-                <span className="text-[11px] text-[#78746D]">规则按顺序执行；若无启用规则则默认保留全部节点</span>
+            <div className="p-4 space-y-3 bg-ui-surface animate-in fade-in duration-150 flex-1">
+              <div className="flex items-center justify-between pb-2 border-b border-ui-divider">
+                <span className="text-[11px] text-ui-secondary">规则按顺序执行；若无启用规则则默认保留全部节点</span>
                 <button
                   onClick={openAddRule}
-                  className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold btn-claude-secondary rounded-lg"
+                  className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold ui-button-secondary rounded-lg"
                 >
-                  <Plus className="w-3 h-3 text-[#CC785C]" />
+                  <Plus className="w-3 h-3 text-ui-accent" />
                   <span>添加抽取规则</span>
                 </button>
               </div>
@@ -397,7 +397,7 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                 {rules.map(rule => (
                   <div
                     key={rule.id}
-                    className={`p-2.5 rounded-xl border flex items-center justify-between gap-3 text-xs transition-all ${rule.enabled ? 'bg-[#FAF8F5] border-[#EFECE6]' : 'bg-[#F7F5F2] border-[#E5DFD5] opacity-60'
+                    className={`p-2.5 rounded-xl border flex items-center justify-between gap-3 text-xs transition-all ${rule.enabled ? 'bg-ui-subtle border-ui-divider' : 'bg-[#F7F5F2] border-ui-border opacity-60'
                       }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -409,13 +409,13 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                         {rule.enabled ? (
                           <CheckCircle2 className="w-4 h-4 text-[#367A68]" />
                         ) : (
-                          <XCircle className="w-4 h-4 text-[#9E9A91]" />
+                          <XCircle className="w-4 h-4 text-ui-muted" />
                         )}
                       </button>
 
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-[#1F1E1D]">{rule.name}</span>
+                          <span className="font-bold text-ui-text">{rule.name}</span>
                           {rule.excludeRegex && (
                             <span className="px-1.5 py-0.2 text-[10px] font-mono bg-[#FDF2F0] text-[#A8483B] rounded">
                               排除: {rule.excludeRegex}
@@ -428,7 +428,7 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                           )}
                         </div>
                         {rule.renamePattern && (
-                          <div className="text-[11px] font-mono text-[#78746D] mt-0.5 truncate">
+                          <div className="text-[11px] font-mono text-ui-secondary mt-0.5 truncate">
                             重命名: {rule.renamePattern.prefix ? `[前缀: ${rule.renamePattern.prefix}] ` : ''}
                             {rule.renamePattern.suffix ? `[后缀: ${rule.renamePattern.suffix}] ` : ''}
                             {rule.renamePattern.replaceFrom ? `[替换: ${rule.renamePattern.replaceFrom} -> ${rule.renamePattern.replaceTo || ''}]` : ''}
@@ -440,7 +440,7 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => openEditRule(rule)}
-                        className="p-1 text-[#69655E] hover:text-[#1F1E1D] rounded-lg hover:bg-white"
+                        className="p-1 text-ui-secondary hover:text-ui-text rounded-lg hover:bg-ui-surface"
                         title="编辑规则"
                       >
                         <Edit2 className="w-3.5 h-3.5" />
@@ -457,7 +457,7 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                 ))}
 
                 {rules.length === 0 && (
-                  <div className="text-center py-6 text-xs text-[#9E9A91]">暂无自定义抽取规则，默认保留所有节点</div>
+                  <div className="text-center py-6 text-xs text-ui-muted">暂无自定义抽取规则，默认保留所有节点</div>
                 )}
               </div>
             </div>
@@ -467,15 +467,15 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
 
       {/* Nodes Search, Filters & Grid Display */}
       <div className="space-y-4">
-        <div className="claude-panel p-4 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="ui-panel p-4 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="relative flex-1 max-w-md">
-            <Search className="w-4 h-4 text-[#8C877D] absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <Search className="w-4 h-4 text-ui-muted absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               placeholder="搜索节点名称、IP 或 端口..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 claude-input rounded-xl text-xs"
+              className="w-full pl-9 pr-4 py-2 ui-input rounded-xl text-xs"
             />
           </div>
 
@@ -483,7 +483,7 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
             <select
               value={selectedCountry}
               onChange={e => setSelectedCountry(e.target.value)}
-              className="px-3 py-2 claude-input rounded-xl text-xs cursor-pointer"
+              className="px-3 py-2 ui-input rounded-xl text-xs cursor-pointer"
             >
               <option value="ALL">全部地区 ({nodes.length})</option>
               {availableCountries.map(c => (
@@ -496,7 +496,7 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
             <select
               value={selectedType}
               onChange={e => setSelectedType(e.target.value)}
-              className="px-3 py-2 claude-input rounded-xl text-xs cursor-pointer"
+              className="px-3 py-2 ui-input rounded-xl text-xs cursor-pointer"
             >
               <option value="ALL">全部协议</option>
               {availableTypes.map(t => (
@@ -513,26 +513,26 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
           {filteredNodes.map(node => (
             <div
               key={node.id}
-              className="claude-panel p-4 rounded-2xl hover:border-[#D5CFC5] transition-all flex flex-col justify-between gap-3 group"
+              className="ui-panel p-4 rounded-2xl hover:border-[#D5CFC5] transition-all flex flex-col justify-between gap-3 group"
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-xl">{node.countryEmoji || '🌐'}</span>
                   <div className="min-w-0">
-                    <h4 className="text-xs font-bold text-[#1F1E1D] truncate group-hover:text-[#CC785C] transition-colors">
+                    <h4 className="text-xs font-bold text-ui-text truncate group-hover:text-ui-accent transition-colors">
                       {node.name}
                     </h4>
-                    <div className="text-[11px] font-mono text-[#78746D] truncate">
+                    <div className="text-[11px] font-mono text-ui-secondary truncate">
                       {node.server}:{node.port}
                     </div>
                   </div>
                 </div>
-                <span className="px-2 py-0.5 text-[10px] font-mono uppercase font-bold bg-[#F3EFEA] text-[#69655E] rounded border border-[#E5DFD5]">
+                <span className="px-2 py-0.5 text-[10px] font-mono uppercase font-bold bg-[#F3EFEA] text-ui-secondary rounded border border-ui-border">
                   {node.type}
                 </span>
               </div>
 
-              <div className="flex items-center justify-between text-[11px] text-[#8C877D] border-t border-[#F0ECE4] pt-2">
+              <div className="flex items-center justify-between text-[11px] text-ui-muted border-t border-ui-divider pt-2">
                 <div className="flex items-center gap-2 min-w-0">
                   {node.sourceName && (
                     <span className="truncate max-w-[130px]" title={node.sourceName}>
@@ -540,7 +540,7 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                     </span>
                   )}
                   {node.countryCode && (
-                    <span className="px-1.5 py-0.2 bg-[#F3EFEA] text-[#69655E] text-[10px] rounded font-mono">
+                    <span className="px-1.5 py-0.2 bg-[#F3EFEA] text-ui-secondary text-[10px] rounded font-mono">
                       {node.countryCode}
                     </span>
                   )}
@@ -558,12 +558,12 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
           ))}
 
           {filteredNodes.length === 0 && (
-            <div className="col-span-full claude-panel p-12 rounded-2xl text-center text-xs text-[#9E9A91] space-y-2">
+            <div className="col-span-full ui-panel p-12 rounded-2xl text-center text-xs text-ui-muted space-y-2">
               <Layers className="w-8 h-8 text-[#CCC6BB] mx-auto" />
               <p>暂无符合筛选条件的节点</p>
               <button
                 onClick={onRefreshAll}
-                className="px-3.5 py-1.5 text-xs font-semibold btn-claude-primary rounded-xl"
+                className="px-3.5 py-1.5 text-xs font-semibold ui-button-primary rounded-xl"
               >
                 立即从订阅源拉取
               </button>
@@ -573,159 +573,150 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
       </div>
 
       {/* Country Rule Modal */}
-      {showCountryModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="claude-panel w-full max-w-md p-6 rounded-2xl shadow-xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-[#1F1E1D]">
-                {editingCountryRule ? '编辑地区识别规则' : '添加国家/地区规则'}
-              </h3>
-              <button onClick={() => setShowCountryModal(false)} className="p-1 text-[#8C877D] hover:text-[#1F1E1D]">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCountrySubmit} className="space-y-3.5">
+      <Modal
+        open={!!(showCountryModal)}
+        title={(showCountryModal) ? <>{editingCountryRule ? '编辑地区识别规则' : '添加国家/地区规则'}</> : ''}
+        size="md"
+        onClose={() => setShowCountryModal(false)}
+      >
+        {(showCountryModal) && (
+          <ModalForm onSubmit={handleCountrySubmit}>
+            <ModalBody>
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="block text-xs font-medium text-[#4A4742] mb-1">国旗 Emoji</label>
+                  <label className="block text-xs font-medium text-ui-secondary mb-1">国旗 Emoji</label>
                   <input
                     type="text"
                     required
                     placeholder="🇭🇰"
                     value={cEmoji}
                     onChange={e => setCEmoji(e.target.value)}
-                    className="w-full px-3 py-2 claude-input rounded-xl text-center text-sm"
+                    className="w-full px-3 py-2 ui-input rounded-xl text-center text-sm"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#4A4742] mb-1">地区代码</label>
+                  <label className="block text-xs font-medium text-ui-secondary mb-1">地区代码</label>
                   <input
                     type="text"
                     required
                     placeholder="HK"
                     value={cCode}
                     onChange={e => setCCode(e.target.value.toUpperCase())}
-                    className="w-full px-3 py-2 claude-input rounded-xl text-xs uppercase font-mono"
+                    className="w-full px-3 py-2 ui-input rounded-xl text-xs uppercase font-mono"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#4A4742] mb-1">地区名称</label>
+                  <label className="block text-xs font-medium text-ui-secondary mb-1">地区名称</label>
                   <input
                     type="text"
                     required
                     placeholder="香港"
                     value={cName}
                     onChange={e => setCName(e.target.value)}
-                    className="w-full px-3 py-2 claude-input rounded-xl text-xs"
+                    className="w-full px-3 py-2 ui-input rounded-xl text-xs"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-[#4A4742] mb-1">匹配正则表达式 (不区分大小写)</label>
+                <label className="block text-xs font-medium text-ui-secondary mb-1">匹配正则表达式 (不区分大小写)</label>
                 <input
                   type="text"
                   required
                   placeholder=""
                   value={cPattern}
                   onChange={e => setCPattern(e.target.value)}
-                  className="w-full px-3 py-2 claude-input rounded-xl text-xs font-mono"
+                  className="w-full px-3 py-2 ui-input rounded-xl text-xs font-mono"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-[#4A4742] mb-1">挂载对应测速分组 (可选)</label>
+                <label className="block text-xs font-medium text-ui-secondary mb-1">挂载对应测速分组 (可选)</label>
                 <input
                   type="text"
                   placeholder=""
                   value={cGroupName}
                   onChange={e => setCGroupName(e.target.value)}
-                  className="w-full px-3 py-2 claude-input rounded-xl text-xs"
+                  className="w-full px-3 py-2 ui-input rounded-xl text-xs"
                 />
               </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowCountryModal(false)}
-                  className="px-4 py-2 text-xs font-medium btn-claude-secondary rounded-xl"
-                >
-                  取消
-                </button>
-                <button type="submit" className="px-4 py-2 text-xs font-semibold btn-claude-primary rounded-xl">
-                  {editingCountryRule ? '保存修改' : '确认添加'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            </ModalBody>
+            <ModalFooter>
+              <button
+                type="button"
+                onClick={() => setShowCountryModal(false)}
+                className="px-4 py-2 text-xs font-medium ui-button-secondary rounded-xl"
+              >
+                取消
+              </button>
+              <button type="submit" className="px-4 py-2 text-xs font-semibold ui-button-primary rounded-xl">
+                {editingCountryRule ? '保存修改' : '确认添加'}
+              </button>
+            </ModalFooter>
+          </ModalForm>
+        )}
+      </Modal>
 
       {/* Extraction Rule Modal */}
-      {showRuleModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="claude-panel w-full max-w-lg p-6 rounded-2xl shadow-xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-[#1F1E1D]">
-                {editingRule ? '编辑抽取规则' : '新建抽取规则'}
-              </h3>
-              <button onClick={() => setShowRuleModal(false)} className="p-1 text-[#8C877D] hover:text-[#1F1E1D]">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleRuleSubmit} className="space-y-4">
+      <Modal
+        open={!!(showRuleModal)}
+        title={(showRuleModal) ? <>{editingRule ? '编辑抽取规则' : '新建抽取规则'}</> : ''}
+        size="lg"
+        onClose={() => setShowRuleModal(false)}
+      >
+        {(showRuleModal) && (
+          <ModalForm onSubmit={handleRuleSubmit}>
+            <ModalBody>
               <div>
-                <label className="block text-xs font-medium text-[#4A4742] mb-1.5">规则名称</label>
+                <label className="block text-xs font-medium text-ui-secondary mb-1.5">规则名称</label>
                 <input
                   type="text"
                   required
                   value={ruleName}
                   onChange={e => setRuleName(e.target.value)}
-                  className="w-full px-3.5 py-2 claude-input rounded-xl text-xs"
+                  className="w-full px-3.5 py-2 ui-input rounded-xl text-xs"
                 />
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-[#4A4742] mb-1">包含正则 (Include)</label>
+                  <label className="block text-xs font-medium text-ui-secondary mb-1">包含正则 (Include)</label>
                   <input
                     type="text"
                     placeholder="如：(0\.5x|专线|BGP)"
                     value={includeRegex}
                     onChange={e => setIncludeRegex(e.target.value)}
-                    className="w-full px-3 py-2 claude-input rounded-xl text-xs font-mono"
+                    className="w-full px-3 py-2 ui-input rounded-xl text-xs font-mono"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#4A4742] mb-1">排除正则 (Exclude)</label>
+                  <label className="block text-xs font-medium text-ui-secondary mb-1">排除正则 (Exclude)</label>
                   <input
                     type="text"
                     placeholder="如：(官网|到期|剩余|流量)"
                     value={excludeRegex}
                     onChange={e => setExcludeRegex(e.target.value)}
-                    className="w-full px-3 py-2 claude-input rounded-xl text-xs font-mono"
+                    className="w-full px-3 py-2 ui-input rounded-xl text-xs font-mono"
                   />
                 </div>
               </div>
 
-              <div className="p-3 bg-[#FAF8F5] rounded-xl border border-[#EFECE6] space-y-2">
-                <span className="text-xs font-bold text-[#1F1E1D]">节点重命名处理 (可选)</span>
+              <div className="p-3 bg-ui-subtle rounded-xl border border-ui-divider space-y-2">
+                <span className="text-xs font-bold text-ui-text">节点重命名处理 (可选)</span>
                 <div className="grid grid-cols-2 gap-2">
                   <input
                     type="text"
                     placeholder="添加前缀 (如: [VIP] )"
                     value={prefix}
                     onChange={e => setPrefix(e.target.value)}
-                    className="px-3 py-1.5 claude-input rounded-lg text-xs"
+                    className="px-3 py-1.5 ui-input rounded-lg text-xs"
                   />
                   <input
                     type="text"
                     placeholder="添加后缀"
                     value={suffix}
                     onChange={e => setSuffix(e.target.value)}
-                    className="px-3 py-1.5 claude-input rounded-lg text-xs"
+                    className="px-3 py-1.5 ui-input rounded-lg text-xs"
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
@@ -734,34 +725,33 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                     placeholder="正则替换 (From)"
                     value={replaceFrom}
                     onChange={e => setReplaceFrom(e.target.value)}
-                    className="px-3 py-1.5 claude-input rounded-lg text-xs font-mono"
+                    className="px-3 py-1.5 ui-input rounded-lg text-xs font-mono"
                   />
                   <input
                     type="text"
                     placeholder="替换为 (To)"
                     value={replaceTo}
                     onChange={e => setReplaceTo(e.target.value)}
-                    className="px-3 py-1.5 claude-input rounded-lg text-xs font-mono"
+                    className="px-3 py-1.5 ui-input rounded-lg text-xs font-mono"
                   />
                 </div>
               </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowRuleModal(false)}
-                  className="px-4 py-2 text-xs font-medium btn-claude-secondary rounded-xl"
-                >
-                  取消
-                </button>
-                <button type="submit" className="px-4 py-2 text-xs font-semibold btn-claude-primary rounded-xl">
-                  {editingRule ? '保存修改' : '确认创建'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            </ModalBody>
+            <ModalFooter>
+              <button
+                type="button"
+                onClick={() => setShowRuleModal(false)}
+                className="px-4 py-2 text-xs font-medium ui-button-secondary rounded-xl"
+              >
+                取消
+              </button>
+              <button type="submit" className="px-4 py-2 text-xs font-semibold ui-button-primary rounded-xl">
+                {editingRule ? '保存修改' : '确认创建'}
+              </button>
+            </ModalFooter>
+          </ModalForm>
+        )}
+      </Modal>
     </div>
   );
 };

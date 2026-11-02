@@ -30,7 +30,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const tabs = [
     { id: 'dashboard', label: '首页', shortLabel: '首页', icon: LayoutDashboard },
-    { id: 'sources', label: '订阅与节点', shortLabel: '订阅与节点', icon: Radio },
+    { id: 'sources', label: '上游订阅', shortLabel: '上游订阅', icon: Radio },
     { id: 'groups', label: '策略组', shortLabel: '策略组', icon: SlidersHorizontal },
     { id: 'rules', label: '分流规则', shortLabel: '分流规则', icon: GitBranch },
     { id: 'templates', label: '配置模版', shortLabel: '配置模版', icon: FileCode },
@@ -39,18 +39,18 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <>
       {/* Top Header Bar */}
-      <header className="sticky top-0 z-30 bg-[#FAF8F5]/85 backdrop-blur-md border-b border-[#E8E4DC]/80 px-4 sm:px-8 py-2.5 flex items-center justify-between">
+      <header className="sticky top-0 z-30 bg-ui-subtle/85 backdrop-blur-md border-b border-ui-border/80 px-4 sm:px-8 py-2.5 flex items-center justify-between">
         {/* Brand logo */}
         <div className="flex items-center gap-3">
           <div
             className="flex items-center gap-2.5 cursor-pointer group"
             onClick={() => setActiveTab('dashboard')}
           >
-            <div className="w-7 h-7 rounded-lg bg-[#CC785C] flex items-center justify-center text-white shadow-sm transition-transform group-hover:scale-105">
+            <div className="w-7 h-7 rounded-lg bg-ui-accent flex items-center justify-center text-white shadow-sm transition-transform group-hover:scale-105">
               <Layers className="w-4 h-4 stroke-[2.2]" />
             </div>
-            <span className="text-[15px] font-bold tracking-tight text-[#1F1E1D]">
-              sub<span className="text-[#CC785C] font-normal">one</span>
+            <span className="text-[15px] font-bold tracking-tight text-ui-text">
+              sub<span className="text-ui-accent font-normal">one</span>
             </span>
           </div>
         </div>
@@ -63,11 +63,10 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors duration-150 cursor-pointer ${
-                  isActive
-                    ? 'text-[#CC785C] font-semibold bg-[#CC785C]/10'
-                    : 'text-[#69655E] hover:text-[#1F1E1D] hover:bg-[#EFEAE2]/60'
-                }`}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors duration-150 cursor-pointer ${isActive
+                    ? 'text-ui-accent font-semibold bg-ui-accent/10'
+                    : 'text-ui-secondary hover:text-ui-text hover:bg-ui-hover/60'
+                  }`}
               >
                 {tab.label}
               </button>
@@ -81,17 +80,17 @@ export const Header: React.FC<HeaderProps> = ({
             href="https://cfm019.github.io/subone-doc/"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-[#69655E] hover:text-[#1F1E1D] hover:bg-[#EFEAE2] rounded-lg transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-ui-secondary hover:text-ui-text hover:bg-ui-hover rounded-lg transition-colors cursor-pointer"
             title="查看在线使用说明与配置手册"
             aria-label="查看在线文档"
           >
-            <BookOpen className="w-4 h-4 text-[#CC785C]" />
+            <BookOpen className="w-4 h-4 text-ui-accent" />
             <span className="hidden sm:inline">文档</span>
           </a>
 
           <button
             onClick={onOpenSettings}
-            className="p-1.5 text-[#69655E] hover:text-[#1F1E1D] hover:bg-[#EFEAE2] rounded-lg transition-colors cursor-pointer"
+            className="p-1.5 text-ui-secondary hover:text-ui-text hover:bg-ui-hover rounded-lg transition-colors cursor-pointer"
             title="设置与安全"
             aria-label="设置与安全"
           >
@@ -101,7 +100,7 @@ export const Header: React.FC<HeaderProps> = ({
           {hasAuth && onLogout && (
             <button
               onClick={onLogout}
-              className="p-1.5 text-[#69655E] hover:text-[#A8483B] hover:bg-[#FDF2F0] rounded-lg transition-colors cursor-pointer"
+              className="p-1.5 text-ui-secondary hover:text-[#A8483B] hover:bg-[#FDF2F0] rounded-lg transition-colors cursor-pointer"
               title="退出登录"
               aria-label="退出登录"
             >
@@ -113,7 +112,7 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Mobile Bottom Navigation Bar (visible on mobile < md, fixed at bottom) */}
       <nav
-        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#FAF8F5]/92 backdrop-blur-md border-t border-[#E8E4DC]/80 px-2 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] shadow-lg shadow-black/5 flex items-center justify-around"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-ui-subtle/92 backdrop-blur-md border-t border-ui-border/80 px-2 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] shadow-lg shadow-black/5 flex items-center justify-around"
         aria-label="移动端底部导航"
       >
         {tabs.map(tab => {
@@ -123,27 +122,23 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 flex flex-col items-center justify-center py-1 px-1 rounded-lg transition-all duration-150 cursor-pointer ${
-                isActive
-                  ? 'text-[#CC785C]'
-                  : 'text-[#7D7971] hover:text-[#1F1E1D]'
-              }`}
+              className={`flex-1 flex flex-col items-center justify-center py-1 px-1 rounded-lg transition-all duration-150 cursor-pointer ${isActive
+                  ? 'text-ui-accent'
+                  : 'text-[#7D7971] hover:text-ui-text'
+                }`}
             >
               <div
-                className={`relative flex items-center justify-center w-8 h-6 rounded-full transition-colors ${
-                  isActive ? 'bg-[#CC785C]/15' : ''
-                }`}
+                className={`relative flex items-center justify-center w-8 h-6 rounded-full transition-colors ${isActive ? 'bg-ui-accent/15' : ''
+                  }`}
               >
                 <IconComponent
-                  className={`w-4 h-4 transition-transform duration-150 ${
-                    isActive ? 'scale-110 stroke-[2.4]' : 'stroke-[1.8]'
-                  }`}
+                  className={`w-4 h-4 transition-transform duration-150 ${isActive ? 'scale-110 stroke-[2.4]' : 'stroke-[1.8]'
+                    }`}
                 />
               </div>
               <span
-                className={`text-[10px] leading-tight tracking-tight mt-0.5 whitespace-nowrap ${
-                  isActive ? 'font-semibold text-[#CC785C]' : 'font-normal'
-                }`}
+                className={`text-[10px] leading-tight tracking-tight mt-0.5 whitespace-nowrap ${isActive ? 'font-semibold text-ui-accent' : 'font-normal'
+                  }`}
               >
                 {tab.shortLabel}
               </span>

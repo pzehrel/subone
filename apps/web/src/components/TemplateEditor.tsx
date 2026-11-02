@@ -1,3 +1,4 @@
+import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
 import React, { useState, useEffect } from 'react';
 import {
   Check,
@@ -9,7 +10,6 @@ import {
   RotateCcw,
   Save,
   Trash2,
-  X,
 } from 'lucide-react';
 import { ConfigTemplate, ClientType } from '../types';
 
@@ -133,14 +133,14 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
   return (
     <div className="space-y-4 max-w-7xl mx-auto h-[calc(100vh-130px)] flex flex-col min-h-0">
       {/* Control bar */}
-      <div className="claude-panel p-3.5 rounded-2xl flex flex-wrap items-center justify-between gap-3 shrink-0">
+      <div className="ui-panel p-3.5 rounded-2xl flex flex-wrap items-center justify-between gap-3 shrink-0">
         {/* Dropdown template selector */}
         <div className="flex items-center gap-3">
           <div className="relative">
             <select
               value={selectedTemplateId}
               onChange={e => setSelectedTemplateId(e.target.value)}
-              className="appearance-none pl-3.5 pr-9 py-2 bg-white border border-[#DFD9CF] rounded-xl text-xs font-semibold text-[#1F1E1D] focus:outline-none focus:border-[#CC785C] shadow-xs cursor-pointer"
+              className="appearance-none pl-3.5 pr-9 py-2 bg-ui-surface border border-ui-border rounded-xl text-xs font-semibold text-ui-text focus:outline-none focus:border-ui-accent shadow-xs cursor-pointer"
             >
               {templates.map(t => (
                 <option key={t.id} value={t.id}>
@@ -148,14 +148,14 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
                 </option>
               ))}
             </select>
-            <ChevronDown className="w-4 h-4 text-[#8C877D] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <ChevronDown className="w-4 h-4 text-ui-muted absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
 
           <button
             onClick={() => setShowNewModal(true)}
-            className="flex items-center gap-1 px-3 py-2 text-xs font-semibold btn-claude-secondary rounded-xl shadow-xs"
+            className="flex items-center gap-1 px-3 py-2 text-xs font-semibold ui-button-secondary rounded-xl shadow-xs"
           >
-            <Plus className="w-3.5 h-3.5 text-[#CC785C]" />
+            <Plus className="w-3.5 h-3.5 text-ui-accent" />
             <span>新建模版</span>
           </button>
 
@@ -167,7 +167,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
               {!currentTemplate.isDefault && (
                 <button
                   onClick={() => onUpdateTemplate(currentTemplate.id, { isDefault: true })}
-                  className="text-[11px] text-[#78746D] hover:text-[#1F1E1D] hover:underline"
+                  className="text-[11px] text-ui-secondary hover:text-ui-text hover:underline"
                 >
                   设为此格式默认
                 </button>
@@ -191,17 +191,17 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
           <button
             onClick={handleResetTemplate}
             disabled={isSaving}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold btn-claude-secondary rounded-xl text-[#78746D] hover:text-[#1F1E1D]"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold ui-button-secondary rounded-xl text-ui-secondary hover:text-ui-text"
             title="恢复为系统内置的默认模版"
           >
-            <RotateCcw className="w-3.5 h-3.5 text-[#CC785C]" />
+            <RotateCcw className="w-3.5 h-3.5 text-ui-accent" />
             <span>恢复默认</span>
           </button>
 
           <button
             onClick={handleSave}
             disabled={isSaving}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold btn-claude-primary rounded-xl shadow-xs"
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold ui-button-primary rounded-xl shadow-xs"
           >
             <Save className="w-3.5 h-3.5" />
             <span>{isSaving ? '保存中...' : '保存模版'}</span>
@@ -211,36 +211,36 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
 
       {/* Editor Full Width Pane */}
       <div className="flex-1 flex flex-col min-h-0 h-full">
-        <div className="claude-panel rounded-2xl flex flex-col h-full min-h-0 overflow-hidden shadow-xs">
-          <div className="px-4 py-2.5 bg-[#FAF8F5] border-b border-[#E8E4DC] flex items-center justify-between shrink-0">
+        <div className="ui-panel rounded-2xl flex flex-col h-full min-h-0 overflow-hidden shadow-xs">
+          <div className="px-4 py-2.5 bg-ui-subtle border-b border-ui-border flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2">
-              <FileCode className="w-4 h-4 text-[#CC785C]" />
-              <span className="text-xs font-bold text-[#1F1E1D]">模版配置骨架</span>
+              <FileCode className="w-4 h-4 text-ui-accent" />
+              <span className="text-xs font-bold text-ui-text">模版配置骨架</span>
             </div>
             <div className="flex items-center gap-1.5">
               <button
                 onClick={handleCopyTemplate}
-                className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium btn-claude-secondary rounded-lg"
+                className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium ui-button-secondary rounded-lg"
                 title="复制模版内容"
               >
-                {copied ? <Check className="w-3 h-3 text-[#367A68]" /> : <Copy className="w-3 h-3 text-[#78746D]" />}
+                {copied ? <Check className="w-3 h-3 text-[#367A68]" /> : <Copy className="w-3 h-3 text-ui-secondary" />}
                 <span>{copied ? '已复制' : '复制'}</span>
               </button>
               <button
                 onClick={handleDownloadTemplate}
-                className="p-1 text-[#69655E] hover:text-[#1F1E1D] btn-claude-secondary rounded-lg"
+                className="p-1 text-ui-secondary hover:text-ui-text ui-button-secondary rounded-lg"
                 title="下载模版文件"
               >
                 <Download className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
-          <div className="flex-1 relative min-h-0 w-full h-full bg-white">
+          <div className="flex-1 relative min-h-0 w-full h-full bg-ui-surface">
             <textarea
               value={templateContent}
               onChange={e => setTemplateContent(e.target.value)}
               spellCheck={false}
-              className="absolute inset-0 w-full h-full p-4 bg-white font-mono text-xs text-[#2D2B28] focus:outline-none resize-none leading-relaxed overflow-y-auto overflow-x-auto"
+              className="absolute inset-0 w-full h-full p-4 bg-ui-surface font-mono text-xs text-ui-text focus:outline-none resize-none leading-relaxed overflow-y-auto overflow-x-auto"
               placeholder="此处编辑配置模版..."
             />
           </div>
@@ -248,35 +248,33 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
       </div>
 
       {/* New Template Modal */}
-      {showNewModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="claude-panel w-full max-w-md p-6 rounded-2xl shadow-xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-[#1F1E1D]">新建配置模版</h3>
-              <button onClick={() => setShowNewModal(false)} className="p-1 text-[#8C877D] hover:text-[#1F1E1D]">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateSubmit} className="space-y-4">
+      <Modal
+        open={!!(showNewModal)}
+        title={(showNewModal) ? <>新建配置模版</> : ''}
+        size="md"
+        onClose={() => setShowNewModal(false)}
+      >
+        {(showNewModal) && (
+          <ModalForm onSubmit={handleCreateSubmit}>
+            <ModalBody>
               <div>
-                <label className="block text-xs font-medium text-[#4A4742] mb-1.5">模版名称</label>
+                <label className="block text-xs font-medium text-ui-secondary mb-1.5">模版名称</label>
                 <input
                   type="text"
                   required
                   placeholder=""
                   value={newName}
                   onChange={e => setNewName(e.target.value)}
-                  className="w-full px-3.5 py-2 claude-input rounded-xl text-xs"
+                  className="w-full px-3.5 py-2 ui-input rounded-xl text-xs"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-[#4A4742] mb-1.5">目标客户端格式</label>
+                <label className="block text-xs font-medium text-ui-secondary mb-1.5">目标客户端格式</label>
                 <select
                   value={newType}
                   onChange={e => setNewType(e.target.value as any)}
-                  className="w-full px-3.5 py-2 claude-input rounded-xl text-xs"
+                  className="w-full px-3.5 py-2 ui-input rounded-xl text-xs"
                 >
                   <option value="singbox">Sing-box (JSON 格式)</option>
                   <option value="mihomo">Mihomo / ShellCrash (YAML 格式)</option>
@@ -288,35 +286,34 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-[#4A4742] mb-1.5">模版备注描述 (可选)</label>
+                <label className="block text-xs font-medium text-ui-secondary mb-1.5">模版备注描述 (可选)</label>
                 <input
                   type="text"
                   placeholder=""
                   value={newDesc}
                   onChange={e => setNewDesc(e.target.value)}
-                  className="w-full px-3.5 py-2 claude-input rounded-xl text-xs"
+                  className="w-full px-3.5 py-2 ui-input rounded-xl text-xs"
                 />
               </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowNewModal(false)}
-                  className="px-4 py-2 text-xs font-medium btn-claude-secondary rounded-xl"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 text-xs font-semibold btn-claude-primary rounded-xl"
-                >
-                  确认创建
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            </ModalBody>
+            <ModalFooter>
+              <button
+                type="button"
+                onClick={() => setShowNewModal(false)}
+                className="px-4 py-2 text-xs font-medium ui-button-secondary rounded-xl"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 text-xs font-semibold ui-button-primary rounded-xl"
+              >
+                确认创建
+              </button>
+            </ModalFooter>
+          </ModalForm>
+        )}
+      </Modal>
     </div>
   );
 };
