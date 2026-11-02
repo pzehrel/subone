@@ -1,19 +1,23 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { createServer, type Server } from 'node:http';
+import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, beforeEach, test } from 'node:test';
-import express from 'express';
+import { serve } from '@hono/node-server';
 import type { AppConfig, ProxyNode, SubscriptionProfile, SubscriptionSource } from '../src/types/index';
 
 const originalDirectory = process.cwd();
 const originalRoot = process.env.SUBONE_ROOT;
 let temporaryDirectory: string;
-let server: Server | undefined;
+let server: ReturnType<typeof serve> | undefined;
 let origin: string;
 let context: typeof import('../src/context');
+let auth: typeof import('../src/middlewares/auth');
+
+const consoleHtml = '<!doctype html><html><body>SubOne test console</body></html>';
+const consoleScript = 'console.log("SubOne");';
 
 function fixture(): AppConfig {
   return {
@@ -31,16 +35,16 @@ before(async () => {
   temporaryDirectory = await mkdtemp(join(tmpdir(), 'subone-api-regressions-'));
   await mkdir(join(temporaryDirectory, 'data'));
   await writeFile(join(temporaryDirectory, 'data', 'subone_data.json'), JSON.stringify(fixture()));
+  await mkdir(join(temporaryDirectory, 'apps/web/dist/assets'), { recursive: true });
+  await writeFile(join(temporaryDirectory, 'apps/web/dist/index.html'), consoleHtml);
+  await writeFile(join(temporaryDirectory, 'apps/web/dist/assets/app.js'), consoleScript);
   process.chdir(temporaryDirectory);
   process.env.SUBONE_ROOT = temporaryDirectory;
   context = await import('../src/context');
-  const { apiRouter } = await import('../src/routes/api');
-  const { subRouter } = await import('../src/routes/sub');
-  const app = express();
-  app.use(express.json());
-  app.use(apiRouter);
-  app.use(subRouter);
-  server = app.listen(0, '127.0.0.1');
+  auth = await import('../src/middlewares/auth');
+  const { createApp } = await import('../src/app');
+  const app = createApp();
+  server = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' });
   await once(server, 'listening');
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
@@ -50,6 +54,7 @@ before(async () => {
 beforeEach(() => {
   context.setAppConfig(fixture());
   context.setGlobalNodesCache([]);
+  auth.activeSessions.clear();
 });
 
 after(async () => {
@@ -75,6 +80,207 @@ async function post<T = SubscriptionProfile>(path: string, body: unknown, header
   });
   return { status: response.status, body: await readApiResponse<T>(response) };
 }
+
+test('authentication preserves public login, both token headers, expiry and logout', async () => {
+  const config = fixture();
+  config.settings.adminPassword = 'test-password';
+  context.setAppConfig(config);
+
+  const status = await fetch(`${origin}/api/auth/status`);
+  assert.deepEqual(await status.json(), { success: true, authRequired: true, authenticated: false });
+
+  const denied = await fetch(`${origin}/api/config`);
+  assert.equal(denied.status, 401);
+  assert.deepEqual(await denied.json(), { success: false, message: '请先登录管理控制台' });
+  assert.equal((await post('/api/auth/change-password', { newPassword: 'other' })).status, 401);
+  assert.equal((await post('/api/settings/regenerate-sub-token', {})).status, 401);
+  assert.equal((await post('/api/auth/login', { password: 'wrong' })).status, 401);
+
+  const login = await fetch(`${origin}/api/auth/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'test-password' }),
+  });
+  assert.equal(login.status, 200);
+  const { token } = await login.json() as { token: string };
+  assert.match(token, /^sess_[a-f0-9]{48}$/);
+
+  for (const headers of [{ Authorization: `Bearer ${token}` }, { 'X-Auth-Token': token }]) {
+    assert.equal((await fetch(`${origin}/api/config`, { headers })).status, 200);
+    const authenticated = await fetch(`${origin}/api/auth/status`, { headers });
+    assert.deepEqual(await authenticated.json(), { success: true, authRequired: true, authenticated: true });
+  }
+
+  auth.activeSessions.set(token, { createdAt: Date.now() - auth.SESSION_TTL_MS - 1 });
+  assert.equal((await fetch(`${origin}/api/config`, { headers: { Authorization: `Bearer ${token}` } })).status, 401);
+
+  const session = auth.createSession();
+  assert.equal((await post('/api/auth/logout', {}, { Authorization: `Bearer ${session}` })).status, 200);
+  assert.equal((await fetch(`${origin}/api/config`, { headers: { Authorization: `Bearer ${session}` } })).status, 401);
+});
+
+test('password changes and token rotation retain their protected API paths', async () => {
+  const config = fixture();
+  config.settings.adminPassword = 'old-password';
+  context.setAppConfig(config);
+  const headers = { Authorization: `Bearer ${auth.createSession()}` };
+
+  const rejected = await post('/api/auth/change-password', { oldPassword: 'wrong', newPassword: 'new-password' }, headers);
+  assert.equal(rejected.status, 400);
+  assert.equal(rejected.body.message, '旧密码验证失败');
+
+  const changed = await post('/api/auth/change-password', { oldPassword: 'old-password', newPassword: ' new-password ' }, headers);
+  assert.equal(changed.status, 200);
+  assert.equal(context.getAppConfig().settings.adminPassword, 'new-password');
+  assert.equal((await post('/api/auth/login', { password: 'new-password' })).status, 200);
+
+  const rotated = await fetch(`${origin}/api/settings/regenerate-sub-token`, { method: 'POST', headers });
+  assert.equal(rotated.status, 200);
+  const body = await rotated.json() as { success: boolean; subToken: string };
+  assert.equal(body.success, true);
+  assert.equal(body.subToken, context.getAppConfig().settings.subToken);
+  assert.match(body.subToken, /^[a-f0-9]{32}$/);
+});
+
+test('administration remains accessible when no password is configured', async () => {
+  const response = await fetch(`${origin}/api/auth/status`);
+  assert.deepEqual(await response.json(), { success: true, authRequired: false, authenticated: true });
+  assert.equal((await fetch(`${origin}/api/config/`)).status, 200);
+  assert.equal((await post('/api/auth/login', {})).status, 200);
+});
+
+test('node routes preserve query selection, encoded IDs and update/delete aliases', async () => {
+  const config = fixture();
+  const node: ProxyNode = { id: 'node phone', name: 'Phone', type: 'ss', server: 'example.test', port: 443 };
+  config.sources = [
+    { id: 'manual phone', name: 'Phone', type: 'manual', enabled: true, nodes: [node] },
+    { id: 'manual laptop', name: 'Laptop', type: 'manual', enabled: true, nodes: [] },
+  ];
+  context.setAppConfig(config);
+
+  const selected = await fetch(`${origin}/api/custom-nodes?sourceId=manual%20phone`);
+  assert.deepEqual((await readApiResponse<ProxyNode[]>(selected)).data, [node]);
+
+  const updated = await fetch(`${origin}/api/nodes/node%20phone`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Updated phone' }),
+  });
+  assert.equal(updated.status, 200);
+  assert.equal((await readApiResponse<ProxyNode>(updated)).data.name, 'Updated phone');
+
+  const deleted = await fetch(`${origin}/api/custom-nodes/node%20phone`, { method: 'DELETE' });
+  assert.equal(deleted.status, 200);
+  assert.deepEqual(context.getAppConfig().sources[0].nodes, []);
+});
+
+test('nested URL-encoded forms remain accepted alongside JSON requests', async () => {
+  const response = await fetch(`${origin}/api/profiles`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+    body: new URLSearchParams({
+      name: '手机订阅',
+      'nodeFilter[mode]': 'selected',
+      'nodeFilter[selectedNodeIds][]': 'node-1',
+      'selectedGroupIds[]': 'group-1',
+    }).toString(),
+  });
+  assert.equal(response.status, 200);
+  const profile = (await readApiResponse<SubscriptionProfile>(response)).data;
+  assert.equal(profile.name, '手机订阅');
+  assert.deepEqual(profile.nodeFilter, { mode: 'selected', selectedNodeIds: ['node-1'] });
+  assert.deepEqual(profile.selectedGroupIds, ['group-1']);
+});
+
+test('invalid JSON is rejected before business handlers run', async () => {
+  for (const body of ['{"name":', 'null', '"phone"']) {
+    const response = await fetch(`${origin}/api/profiles`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+    });
+    assert.equal(response.status, 400);
+  }
+  assert.deepEqual(context.getAppConfig().profiles, []);
+});
+
+test('the 20 MB body limit accepts imports and rejects oversized fixed and chunked requests', async () => {
+  const accepted = await post('/api/profiles', { name: 'Large profile', description: 'x'.repeat(128 * 1024) });
+  assert.equal(accepted.status, 200);
+
+  const rejected = await fetch(`${origin}/api/profiles`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Too large', description: 'x'.repeat(20 * 1024 * 1024) }),
+  });
+  assert.equal(rejected.status, 413);
+  await rejected.text();
+
+  const chunkedStatus = await new Promise<number | undefined>((resolve, reject) => {
+    const upload = request(`${origin}/api/profiles`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    }, response => {
+      response.resume();
+      response.on('end', () => resolve(response.statusCode));
+    });
+    upload.on('error', reject);
+    upload.write('{"name":"Too large","description":"');
+    const chunk = 'x'.repeat(1024 * 1024);
+    for (let index = 0; index < 21; index += 1) upload.write(chunk);
+    upload.end('"}');
+  });
+  assert.equal(chunkedStatus, 413);
+  assert.equal(context.getAppConfig().profiles?.length, 1);
+});
+
+test('CORS preflight remains public and allows existing API methods and headers', async () => {
+  const config = fixture();
+  config.settings.adminPassword = 'test-password';
+  context.setAppConfig(config);
+
+  const response = await fetch(`${origin}/api/sources/phone`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'https://console.example.test',
+      'Access-Control-Request-Method': 'DELETE',
+      'Access-Control-Request-Headers': 'authorization,content-type,x-auth-token',
+    },
+  });
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), '*');
+  assert.match(response.headers.get('access-control-allow-methods') || '', /DELETE/);
+  assert.match(response.headers.get('access-control-allow-headers') || '', /authorization/);
+});
+
+test('the same server serves console assets and SPA routes without replacing API or subscription errors', async () => {
+  for (const path of ['/', '/profiles/phone']) {
+    const response = await fetch(`${origin}${path}`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') || '', /text\/html/);
+    assert.equal(await response.text(), consoleHtml);
+  }
+
+  const asset = await fetch(`${origin}/assets/app.js`);
+  assert.equal(asset.status, 200);
+  assert.match(asset.headers.get('content-type') || '', /javascript/);
+  assert.equal(await asset.text(), consoleScript);
+
+  const head = await fetch(`${origin}/assets/app.js`, { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), '');
+
+  for (const path of ['/api/does-not-exist', '/s/invalid-token', '/s/invalid-token/source/phone']) {
+    const response = await fetch(`${origin}${path}`);
+    assert.equal(response.status, 404);
+    assert.equal(await response.text(), '404 Not Found');
+    assert.equal(response.headers.get('x-powered-by'), null);
+  }
+});
+
+test('legacy subscription paths retain silent 404 responses for every method', async () => {
+  for (const path of ['/sub', '/sub/', '/sub/legacy/path']) {
+    for (const method of ['GET', 'POST', 'PUT', 'DELETE']) {
+      const response = await fetch(`${origin}${path}`, { method });
+      assert.equal(response.status, 404);
+      assert.equal(await response.text(), '404 Not Found');
+      assert.match(response.headers.get('content-type') || '', /text\/plain/);
+      assert.equal(response.headers.get('x-powered-by'), null);
+    }
+  }
+});
 
 test('info rules immediately reclassify cached nodes and filter every subscription format without refetching', async () => {
   const config = fixture();

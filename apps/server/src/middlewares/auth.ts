@@ -1,4 +1,5 @@
-import express from 'express';
+import type { HonoRequest } from 'hono';
+import { createMiddleware } from 'hono/factory';
 import crypto from 'crypto';
 import { getAppConfig } from '../context';
 
@@ -26,25 +27,25 @@ export function destroySession(token: string): void {
   activeSessions.delete(token);
 }
 
-export function extractBearerToken(req: express.Request): string | undefined {
-  const authHeader = req.headers.authorization;
+export function extractBearerToken(req: HonoRequest): string | undefined {
+  const authHeader = req.header('authorization');
   if (authHeader && authHeader.startsWith('Bearer ')) {
     return authHeader.substring(7).trim();
   }
-  if (req.headers['x-auth-token'] && typeof req.headers['x-auth-token'] === 'string') {
-    return req.headers['x-auth-token'];
+  if (req.header('x-auth-token')) {
+    return req.header('x-auth-token');
   }
   return undefined;
 }
 
-export function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+export const requireAuth = createMiddleware(async (c, next) => {
   const appConfig = getAppConfig();
   if (!appConfig.settings.adminPassword) {
-    return next();
+    return await next();
   }
-  const token = extractBearerToken(req);
+  const token = extractBearerToken(c.req);
   if (isValidSession(token)) {
-    return next();
+    return await next();
   }
-  return res.status(401).json({ success: false, message: '请先登录管理控制台' });
-}
+  return c.json({ success: false, message: '请先登录管理控制台' }, 401);
+});

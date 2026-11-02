@@ -1,4 +1,4 @@
-import express from 'express';
+import { Hono, type Context } from 'hono';
 import yaml from 'js-yaml';
 import { getAppConfig, getBaseUrl } from '../context';
 import { detectClientType, ClientType } from '../core/parser/ua-detector';
@@ -21,45 +21,45 @@ import {
   getEffectiveTemplateForProfile,
 } from '../services/profile-service';
 
-export const subRouter = express.Router();
+export const subRouter = new Hono({ strict: false });
 
-subRouter.get('/s/:subToken/rules/:ruleId/qx', async (req, res) => {
+subRouter.get('/s/:subToken/rules/:ruleId/qx', async (c) => {
   const config = getAppConfig();
-  const profile = config.profiles?.find(p => p.enabled !== false && p.token === req.params.subToken);
+  const profile = config.profiles?.find(p => p.enabled !== false && p.token === c.req.param('subToken'));
   const rule = profile && getEffectiveRulesForProfile(profile).find(r =>
-    r.id === req.params.ruleId && r.enabled && r.kind === 'remote' && r.behavior === 'classical');
-  if (!rule) return res.status(404).type('text/plain').send('404 Not Found');
+    r.id === c.req.param('ruleId') && r.enabled && r.kind === 'remote' && r.behavior === 'classical');
+  if (!rule) return c.text('404 Not Found', 404);
   try {
     const { getQuantumultXRules } = await import('../services/qx-rules');
-    res.type('text/plain').send(await getQuantumultXRules(rule));
+    return c.text(await getQuantumultXRules(rule));
   } catch {
-    res.status(502).type('text/plain').send('Rule set unavailable');
+    return c.text('Rule set unavailable', 502);
   }
 });
 
-async function handlePrivateSubRequest(req: express.Request, res: express.Response, forcedType?: ClientType) {
-  const tokenParam = req.params.subToken;
+async function handlePrivateSubRequest(c: Context, forcedType?: ClientType) {
+  const tokenParam = c.req.param('subToken');
   const appConfig = getAppConfig();
 
   if (typeof tokenParam !== 'string' || !tokenParam) {
-    res.removeHeader('X-Powered-By');
-    return res.status(404).type('text/plain').send('404 Not Found');
+    c.header('X-Powered-By', undefined);
+    return c.text('404 Not Found', 404);
   }
 
   // Find profile by token
   const profile = (appConfig.profiles || []).find(p => p.token === tokenParam && p.enabled !== false);
   if (!profile) {
-    res.removeHeader('X-Powered-By');
-    return res.status(404).type('text/plain').send('404 Not Found');
+    c.header('X-Powered-By', undefined);
+    return c.text('404 Not Found', 404);
   }
 
   try {
-    const queryTarget = (req.query.target as string) || (req.query.type as string) || (req.params.target as string);
-    const userAgent = req.headers['user-agent'];
+    const queryTarget = (c.req.query('target') as string) || (c.req.query('type') as string) || (c.req.param('target') as string);
+    const userAgent = c.req.header('user-agent');
     const detectedType = forcedType || detectClientType(userAgent, queryTarget, 'singbox');
 
     let tpl: ConfigTemplate | undefined;
-    const tplId = req.query.template as string;
+    const tplId = c.req.query('template') as string;
     if (tplId) {
       tpl = appConfig.templates.find(t => t.id === tplId || t.name === tplId);
     }
@@ -72,99 +72,99 @@ async function handlePrivateSubRequest(req: express.Request, res: express.Respon
     const groups = getEffectiveGroupsForProfile(profile, nodes);
     const rules = getEffectiveRulesForProfile(profile);
     const sources = getEffectiveSourcesForProfile(profile, nodes);
-    const baseUrl = getBaseUrl(req);
+    const baseUrl = getBaseUrl(c.req);
 
     if (detectedType === 'mihomo') {
-      const expand = req.query.expand === 'true' || req.query.expand === '1' || req.query.node_list === 'true';
+      const expand = c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
       const output = generateMihomoConfig(templateContent, nodes, groups, rules, sources, {
         expandNodes: expand,
         baseUrl,
         subToken: tokenParam
       });
-      res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
-      res.setHeader('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
-      return res.send(output);
+      c.header('Content-Type', 'text/yaml; charset=utf-8');
+      c.header('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
+      return c.body(output);
     }
 
     if (detectedType === 'singbox') {
       const output = generateSingboxConfig(templateContent, nodes, groups, rules, sources);
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      return res.send(output);
+      c.header('Content-Type', 'application/json; charset=utf-8');
+      return c.body(output);
     }
 
     if (detectedType === 'loon') {
-      const expand = req.query.expand === 'true' || req.query.expand === '1' || req.query.node_list === 'true';
+      const expand = c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
       const output = generateLoonConfig(templateContent, nodes, groups, rules, sources, {
         expandNodes: expand,
         baseUrl,
         subToken: tokenParam
       });
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      return res.send(output);
+      c.header('Content-Type', 'text/plain; charset=utf-8');
+      return c.body(output);
     }
 
     if (detectedType === 'quantumultx') {
-      const expand = req.query.expand === 'true' || req.query.expand === '1' || req.query.node_list === 'true';
+      const expand = c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
       const output = generateQuantumultXConfig(templateContent, nodes, groups, rules, sources, {
         expandNodes: expand,
         baseUrl,
         subToken: tokenParam
       });
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.setHeader('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
-      return res.send(output);
+      c.header('Content-Type', 'text/plain; charset=utf-8');
+      c.header('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
+      return c.body(output);
     }
 
     if (detectedType === 'egern') {
-      const expand = req.query.expand === 'true' || req.query.expand === '1' || req.query.node_list === 'true';
+      const expand = c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
       const output = generateEgernConfig(templateContent, nodes, groups, rules, sources, {
         expandNodes: expand,
         baseUrl,
         subToken: tokenParam
       });
-      res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
-      res.setHeader('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
-      return res.send(output);
+      c.header('Content-Type', 'text/yaml; charset=utf-8');
+      c.header('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
+      return c.body(output);
     }
 
     if (detectedType === 'shadowrocket') {
-      const isBase64 = req.query.format === 'base64' || req.query.format === 'b64';
+      const isBase64 = c.req.query('format') === 'base64' || c.req.query('format') === 'b64';
       if (isBase64) {
         const output = generateShadowrocketBase64(nodes);
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.setHeader('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
-        return res.send(output);
+        c.header('Content-Type', 'text/plain; charset=utf-8');
+        c.header('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
+        return c.body(output);
       }
-      const expand = req.query.expand !== 'false' && req.query.expand !== '0';
+      const expand = c.req.query('expand') !== 'false' && c.req.query('expand') !== '0';
       const output = generateShadowrocketConfig(templateContent, nodes, groups, rules, sources, { expandNodes: expand });
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.setHeader('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
-      return res.send(output);
+      c.header('Content-Type', 'text/plain; charset=utf-8');
+      c.header('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
+      return c.body(output);
     }
 
   } catch (err: any) {
     if (err instanceof UnsupportedProxyGroupError) {
-      return res.status(422).type('text/plain').send(err.message);
+      return c.text(err.message, 422);
     }
     console.error('Subscription generation error:', err);
-    res.status(500).send(`Generation error: ${err.message || err}`);
+    return c.html(`Generation error: ${err.message || err}`, 500);
   }
 }
 
-async function handleSourceSubRequest(req: express.Request, res: express.Response, forcedTarget?: ClientType) {
-  const tokenParam = req.params.subToken;
-  const sourceIdParam = req.params.sourceId;
+async function handleSourceSubRequest(c: Context, forcedTarget?: ClientType) {
+  const tokenParam = c.req.param('subToken');
+  const sourceIdParam = c.req.param('sourceId');
   const appConfig = getAppConfig();
 
   if (typeof tokenParam !== 'string' || !tokenParam || typeof sourceIdParam !== 'string' || !sourceIdParam) {
-    res.removeHeader('X-Powered-By');
-    return res.status(404).type('text/plain').send('404 Not Found');
+    c.header('X-Powered-By', undefined);
+    return c.text('404 Not Found', 404);
   }
 
   const profile = (appConfig.profiles || []).find(p => p.token === tokenParam && p.enabled !== false);
   if (!profile) {
-    res.removeHeader('X-Powered-By');
-    return res.status(404).type('text/plain').send('404 Not Found');
+    c.header('X-Powered-By', undefined);
+    return c.text('404 Not Found', 404);
   }
 
   const cleanId = sourceIdParam.trim().toLowerCase();
@@ -177,80 +177,80 @@ async function handleSourceSubRequest(req: express.Request, res: express.Respons
   );
 
   if (!matchedSource) {
-    res.removeHeader('X-Powered-By');
-    return res.status(404).type('text/plain').send('404 Not Found');
+    c.header('X-Powered-By', undefined);
+    return c.text('404 Not Found', 404);
   }
 
   try {
     let sourceNodes: ProxyNode[] = matchedSource.nodes || [];
     const userinfo = Object.entries(parseSubscriptionUserinfo(matchedSource.subscriptionUserinfo))
       .map(([key, value]) => `${key}=${value}`).join('; ');
-    if (userinfo) res.setHeader('subscription-userinfo', userinfo);
+    if (userinfo) c.header('subscription-userinfo', userinfo);
 
     // 应用提取规则
     sourceNodes = applyExtractionRules(sourceNodes, appConfig.rules);
 
-    const queryTarget = (req.query.target as string) || (req.query.type as string) || (req.params.target as string);
-    const userAgent = req.headers['user-agent'];
+    const queryTarget = (c.req.query('target') as string) || (c.req.query('type') as string) || (c.req.param('target') as string);
+    const userAgent = c.req.header('user-agent');
     const detectedType = forcedTarget || detectClientType(userAgent, queryTarget, 'loon');
 
     if (detectedType === 'loon') {
       const proxyLines = sourceNodes.map(nodeToLoonProxy);
       const output = ['[Proxy]', ...proxyLines].join('\n');
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      return res.send(output);
+      c.header('Content-Type', 'text/plain; charset=utf-8');
+      return c.body(output);
     }
 
     if (detectedType === 'mihomo') {
       const proxies = sourceNodes.map(nodeToMihomoProxy);
       const output = yaml.dump({ proxies }, { indent: 2, lineWidth: -1, noRefs: true });
-      res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
-      return res.send(output);
+      c.header('Content-Type', 'text/yaml; charset=utf-8');
+      return c.body(output);
     }
 
     if (detectedType === 'quantumultx') {
       const proxyLines = sourceNodes.map(nodeToQuantumultXProxy);
       const output = proxyLines.join('\n');
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      return res.send(output);
+      c.header('Content-Type', 'text/plain; charset=utf-8');
+      return c.body(output);
     }
 
     if (detectedType === 'egern') {
       const proxies = sourceNodes.map(nodeToEgernProxy);
       const output = yaml.dump({ proxies }, { indent: 2, lineWidth: -1 });
-      res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
-      return res.send(output);
+      c.header('Content-Type', 'text/yaml; charset=utf-8');
+      return c.body(output);
     }
 
     const output = generateShadowrocketBase64(sourceNodes);
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    return res.send(output);
+    c.header('Content-Type', 'text/plain; charset=utf-8');
+    return c.body(output);
   } catch (err: any) {
     console.error('Source subscription generation error:', err);
-    res.status(500).send(`Generation error: ${err.message || err}`);
+    return c.html(`Generation error: ${err.message || err}`, 500);
   }
 }
 
 // Secret Token Routes
-subRouter.get('/s/:subToken/source/:sourceId/loon', (req, res) => handleSourceSubRequest(req, res, 'loon'));
-subRouter.get('/s/:subToken/source/:sourceId/:target', (req, res) => {
-  const target = req.params.target;
+subRouter.get('/s/:subToken/source/:sourceId/loon', (c) => handleSourceSubRequest(c, 'loon'));
+subRouter.get('/s/:subToken/source/:sourceId/:target', (c) => {
+  const target = c.req.param('target');
   const mapped = target === 'qx' ? 'quantumultx' : (target === 'rocket' ? 'shadowrocket' : target);
-  return handleSourceSubRequest(req, res, mapped as ClientType);
+  return handleSourceSubRequest(c, mapped as ClientType);
 });
-subRouter.get('/s/:subToken/source/:sourceId', (req, res) => handleSourceSubRequest(req, res));
+subRouter.get('/s/:subToken/source/:sourceId', (c) => handleSourceSubRequest(c));
 
-subRouter.get('/s/:subToken', (req, res) => handlePrivateSubRequest(req, res));
-subRouter.get('/s/:subToken/mihomo', (req, res) => handlePrivateSubRequest(req, res, 'mihomo'));
-subRouter.get('/s/:subToken/singbox', (req, res) => handlePrivateSubRequest(req, res, 'singbox'));
-subRouter.get('/s/:subToken/loon', (req, res) => handlePrivateSubRequest(req, res, 'loon'));
-subRouter.get('/s/:subToken/qx', (req, res) => handlePrivateSubRequest(req, res, 'quantumultx'));
-subRouter.get('/s/:subToken/quantumultx', (req, res) => handlePrivateSubRequest(req, res, 'quantumultx'));
-subRouter.get('/s/:subToken/egern', (req, res) => handlePrivateSubRequest(req, res, 'egern'));
-subRouter.get('/s/:subToken/shadowrocket', (req, res) => handlePrivateSubRequest(req, res, 'shadowrocket'));
-subRouter.get('/s/:subToken/rocket', (req, res) => handlePrivateSubRequest(req, res, 'shadowrocket'));
-subRouter.get('/s/:subToken/:target', (req, res) => {
-  const target = req.params.target;
+subRouter.get('/s/:subToken', (c) => handlePrivateSubRequest(c));
+subRouter.get('/s/:subToken/mihomo', (c) => handlePrivateSubRequest(c, 'mihomo'));
+subRouter.get('/s/:subToken/singbox', (c) => handlePrivateSubRequest(c, 'singbox'));
+subRouter.get('/s/:subToken/loon', (c) => handlePrivateSubRequest(c, 'loon'));
+subRouter.get('/s/:subToken/qx', (c) => handlePrivateSubRequest(c, 'quantumultx'));
+subRouter.get('/s/:subToken/quantumultx', (c) => handlePrivateSubRequest(c, 'quantumultx'));
+subRouter.get('/s/:subToken/egern', (c) => handlePrivateSubRequest(c, 'egern'));
+subRouter.get('/s/:subToken/shadowrocket', (c) => handlePrivateSubRequest(c, 'shadowrocket'));
+subRouter.get('/s/:subToken/rocket', (c) => handlePrivateSubRequest(c, 'shadowrocket'));
+subRouter.get('/s/:subToken/:target', (c) => {
+  const target = c.req.param('target');
   if (
     target === 'mihomo' ||
     target === 'singbox' ||
@@ -262,7 +262,7 @@ subRouter.get('/s/:subToken/:target', (req, res) => {
     target === 'rocket'
   ) {
     const mapped = target === 'qx' ? 'quantumultx' : (target === 'rocket' ? 'shadowrocket' : target);
-    return handlePrivateSubRequest(req, res, mapped as ClientType);
+    return handlePrivateSubRequest(c, mapped as ClientType);
   }
-  return handlePrivateSubRequest(req, res);
+  return handlePrivateSubRequest(c);
 });

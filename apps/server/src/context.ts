@@ -1,4 +1,4 @@
-import express from 'express';
+import type { HonoRequest } from 'hono';
 import { AppConfig, ProxyNode } from './types/index';
 import { loadConfig, saveConfig } from './storage/db';
 
@@ -25,9 +25,9 @@ export function setGlobalNodesCache(nodes: ProxyNode[]): void {
   globalNodesCache = nodes;
 }
 
-export function getBaseUrl(req: express.Request): string {
+export function getBaseUrl(req: HonoRequest): string {
   const port = process.env.PORT || appConfig.settings?.port || 3456;
-  const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
-  const host = (req.headers['x-forwarded-host'] as string) || req.get('host') || `localhost:${port}`;
+  const proto = req.header('x-forwarded-proto') || new URL(req.url).protocol.slice(0, -1) || 'http';
+  const host = req.header('x-forwarded-host') || req.header('host') || `localhost:${port}`;
   return `${proto}://${host}`;
 }

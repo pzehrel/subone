@@ -1,4 +1,5 @@
-import express from 'express';
+import { Hono } from 'hono';
+import type { BodyEnv } from '../middlewares/body';
 import crypto from 'crypto';
 import { getAppConfig } from '../context';
 import { saveServerConfig, generateRandomSubToken } from '../storage/db';
@@ -11,68 +12,70 @@ import {
   requireAuth,
 } from '../middlewares/auth';
 
-export const authRouter = express.Router();
+export const authRouter = new Hono<BodyEnv>({ strict: false });
 
 // Public Auth Endpoints
-authRouter.get('/auth/status', (req, res) => {
+authRouter.get('/auth/status', (c) => {
   const appConfig = getAppConfig();
   const hasPassword = Boolean(appConfig.settings.adminPassword);
-  const token = extractBearerToken(req);
+  const token = extractBearerToken(c.req);
   const authenticated = !hasPassword || isValidSession(token);
-  res.json({ success: true, authRequired: hasPassword, authenticated });
+  return c.json({ success: true, authRequired: hasPassword, authenticated });
 });
 
-authRouter.post('/auth/login', (req, res) => {
-  const { password } = req.body;
+authRouter.post('/auth/login', (c) => {
+  const body = c.get('body');
+  const { password } = body;
   const appConfig = getAppConfig();
   const adminPassword = appConfig.settings.adminPassword;
   if (!adminPassword) {
     const sessionToken = createSession();
-    return res.json({ success: true, token: sessionToken });
+    return c.json({ success: true, token: sessionToken });
   }
 
   if (!password || typeof password !== 'string') {
-    return res.status(401).json({ success: false, message: '请输入密码' });
+    return c.json({ success: false, message: '请输入密码' }, 401);
   }
 
   const a = Buffer.from(password);
   const b = Buffer.from(adminPassword);
   if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
     const sessionToken = createSession();
-    return res.json({ success: true, token: sessionToken });
+    return c.json({ success: true, token: sessionToken });
   }
 
-  return res.status(401).json({ success: false, message: '密码错误，请重新输入' });
+  return c.json({ success: false, message: '密码错误，请重新输入' }, 401);
 });
 
-authRouter.post('/auth/logout', (req, res) => {
-  const token = extractBearerToken(req);
+authRouter.post('/auth/logout', (c) => {
+  const token = extractBearerToken(c.req);
   if (token) destroySession(token);
-  res.json({ success: true, message: '已退出登录' });
+  return c.json({ success: true, message: '已退出登录' });
 });
 
-authRouter.post('/auth/change-password', requireAuth, (req, res) => {
-  const { oldPassword, newPassword } = req.body;
+authRouter.post('/auth/change-password', requireAuth, (c) => {
+  const body = c.get('body');
+  const { oldPassword, newPassword } = body;
   const appConfig = getAppConfig();
   if (!newPassword || typeof newPassword !== 'string' || newPassword.trim().length === 0) {
-    return res.status(400).json({ success: false, message: '新密码不能为空' });
+    return c.json({ success: false, message: '新密码不能为空' }, 400);
   }
 
   if (appConfig.settings.adminPassword) {
     if (!oldPassword || oldPassword !== appConfig.settings.adminPassword) {
-      return res.status(400).json({ success: false, message: '旧密码验证失败' });
+      return c.json({ success: false, message: '旧密码验证失败' }, 400);
     }
   }
 
   appConfig.settings.adminPassword = newPassword.trim();
   saveServerConfig({ adminPassword: newPassword.trim() });
-  res.json({ success: true, message: '密码修改成功' });
+  return c.json({ success: true, message: '密码修改成功' });
 });
 
-authRouter.post('/settings/regenerate-sub-token', requireAuth, (req, res) => {
+authRouter.post('/settings/regenerate-sub-token', requireAuth, (c) => {
   const appConfig = getAppConfig();
   const newToken = generateRandomSubToken();
   appConfig.settings.subToken = newToken;
   saveServerConfig({ subToken: newToken });
-  res.json({ success: true, subToken: newToken });
+  return c.json({ success: true, subToken: newToken });
 });
