@@ -1,6 +1,6 @@
 import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
 import { adaptRulesetForLoon, formatRuleTag } from './ruleset-adapter';
-import { resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag } from './common';
+import { sourceSubscriptionUrl, resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag } from './common';
 
 function formatServer(server: string): string {
   const trimmed = (server || '').trim();
@@ -354,7 +354,7 @@ export function injectUnifiedToLoon(
     // 外部机场订阅：保持原样直连链接
     networkSources.forEach(s => {
       const tag = s.name.replace(/[=,]/g, '_').trim();
-      remoteProxyLines.push(`${tag} = ${s.url}, udp=true, fast-open=default, skip-cert-verify=true, enabled=true`);
+      remoteProxyLines.push(`${tag} = ${sourceSubscriptionUrl(s, 'loon', options)}, udp=true, fast-open=default, skip-cert-verify=true, enabled=true`);
       allActiveRemoteSources.push(s);
     });
 

@@ -1,7 +1,7 @@
 import yaml from 'js-yaml';
 import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
 import { adaptRulesetForEgern, formatRuleTag } from './ruleset-adapter';
-import { resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag } from './common';
+import { sourceSubscriptionUrl, resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag } from './common';
 import { nodeToMihomoProxy } from './mihomo-generator';
 
 export function nodeToEgernProxy(node: ProxyNode): any {
@@ -100,7 +100,7 @@ export function injectUnifiedToEgern(
       doc.sources.push({
         name: s.name.trim(),
         type: 'http',
-        url: s.url,
+        url: sourceSubscriptionUrl(s, 'egern', options),
       });
       allActiveRemoteSources.push(s);
     });

@@ -20,12 +20,25 @@ import {
 import { SubscriptionSource, ProxyNode, ConfigTemplate } from '../types';
 import { nodeToUri } from '../utils/nodeUri';
 import { copyToClipboard } from '../utils/clipboard';
+import { formatSubscriptionTraffic, formatSubscriptionExpiry } from '../utils/subscriptionInfo';
+
+function previewInfoMatches(source: SubscriptionSource | null, pattern: string) {
+  if (!pattern.trim()) return { names: [], error: '' };
+  try {
+    const regex = new RegExp(pattern.trim(), 'i');
+    const names = [...(source?.nodes || []), ...(source?.infoNodes || [])]
+      .filter(node => regex.test(node.name)).map(node => node.name);
+    return { names, error: '' };
+  } catch {
+    return { names: [], error: '正则无效，请检查表达式' };
+  }
+}
 
 interface SourcesManagerProps {
   sources: SubscriptionSource[];
   nodes?: ProxyNode[];
   templates?: ConfigTemplate[];
-  onAddSource: (source: { name: string; url?: string; type: string; filterConfig?: any }) => Promise<void>;
+  onAddSource: (source: { name: string; url?: string; type: string; filterConfig?: any; trafficNodeRegex?: string; expiryNodeRegex?: string }) => Promise<void>;
   onAddCustomGroup?: (name: string) => Promise<void>;
   onUpdateSource: (id: string, updates: Partial<SubscriptionSource>) => Promise<void>;
   onDeleteSource: (id: string) => Promise<void>;
@@ -106,6 +119,10 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
   const [newNetworkName, setNewNetworkName] = useState('');
   const [newNetworkUrl, setNewNetworkUrl] = useState('');
   const [newNetworkType, setNewNetworkType] = useState<NonNullable<SubscriptionSource['type']>>('auto');
+  const [trafficNodeRegex, setTrafficNodeRegex] = useState('');
+  const [expiryNodeRegex, setExpiryNodeRegex] = useState('');
+  const trafficMatches = useMemo(() => previewInfoMatches(editingNetworkSource, trafficNodeRegex), [editingNetworkSource, trafficNodeRegex]);
+  const expiryMatches = useMemo(() => previewInfoMatches(editingNetworkSource, expiryNodeRegex), [editingNetworkSource, expiryNodeRegex]);
 
   // Loading & Action states
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
@@ -227,6 +244,8 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
     setNewNetworkName(source.name);
     setNewNetworkUrl(source.url || '');
     setNewNetworkType(source.type || 'auto');
+    setTrafficNodeRegex(source.trafficNodeRegex || '');
+    setExpiryNodeRegex(source.expiryNodeRegex || '');
     setShowAddNetworkModal(true);
   };
 
@@ -234,6 +253,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
   const handleAddNetworkSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNetworkName.trim() || !newNetworkUrl.trim()) return;
+    if (trafficMatches.error || expiryMatches.error) return;
     setIsSubmitting(true);
     try {
       if (editingNetworkSource) {
@@ -241,21 +261,28 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
           name: newNetworkName.trim(),
           url: newNetworkUrl.trim(),
           type: newNetworkType,
+          trafficNodeRegex: trafficNodeRegex.trim(),
+          expiryNodeRegex: expiryNodeRegex.trim(),
         });
       } else {
         await onAddSource({
           name: newNetworkName.trim(),
           url: newNetworkUrl.trim(),
           type: newNetworkType,
+          trafficNodeRegex: trafficNodeRegex.trim(),
+          expiryNodeRegex: expiryNodeRegex.trim(),
         });
       }
       setNewNetworkName('');
       setNewNetworkUrl('');
       setNewNetworkType('auto');
+      setTrafficNodeRegex('');
+      setExpiryNodeRegex('');
       setEditingNetworkSource(null);
       setShowAddNetworkModal(false);
     } catch (err: any) {
       console.error('Failed to save network source:', err);
+      alert(err.message || '保存订阅失败');
     } finally {
       setIsSubmitting(false);
     }
@@ -406,6 +433,8 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
               setNewNetworkName('');
               setNewNetworkUrl('');
               setNewNetworkType('auto');
+              setTrafficNodeRegex('');
+              setExpiryNodeRegex('');
               setShowAddNetworkModal(true);
             }}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold btn-claude-secondary rounded-xl shadow-2xs cursor-pointer"
@@ -434,6 +463,8 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
           const isExpanded = expandedSourceIds.has(source.id);
           const isThisRefreshing = refreshingId === source.id;
           const nodesList = source.nodes || [];
+          const traffic = !isCustom && formatSubscriptionTraffic(source.subscriptionInfo);
+          const expiry = !isCustom && formatSubscriptionExpiry(source.subscriptionInfo);
 
           return (
             <div
@@ -494,6 +525,12 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
 
                     {/* 卡片副信息 */}
                     {/* 更新时间提示 */}
+                    {(traffic || expiry) && (
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[#59554E]">
+                        {traffic && <span>{traffic}</span>}
+                        {expiry && <span>{expiry}</span>}
+                      </div>
+                    )}
                     {source.lastUpdated && (
                       <div className="text-[10px] text-[#9E9A91]">
                         最后同步: {new Date(source.lastUpdated).toLocaleString()}
@@ -727,7 +764,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
       {/* 弹窗 1：添加/编辑网络机场订阅弹窗 */}
       {showAddNetworkModal && (
         <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-[#E3DDD2] shadow-xl w-full max-w-md p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-2xl border border-[#E3DDD2] shadow-xl w-full max-w-md max-h-[90dvh] overflow-y-auto p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between pb-3 border-b border-[#F0ECE4]">
               <div>
                 <h3 className="text-sm font-bold text-[#1F1E1D]">
@@ -784,6 +821,39 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                 </select>
               </div>
 
+              <fieldset className="space-y-3 rounded-xl border border-[#E3DDD2] p-3">
+                <legend className="px-1 text-xs font-semibold text-[#1F1E1D]">流量与到期时间</legend>
+                <p className="text-[11px] leading-relaxed text-[#78746D]">
+                  按节点名称匹配提示项。匹配项将显示为订阅信息，不计入可用节点。留空则不匹配。
+                </p>
+                {[
+                  { id: 'traffic-node-regex', label: '流量提示正则', value: trafficNodeRegex, setValue: setTrafficNodeRegex, placeholder: '剩余流量|已用流量|流量用量', preview: trafficMatches },
+                  { id: 'expiry-node-regex', label: '到期时间提示正则', value: expiryNodeRegex, setValue: setExpiryNodeRegex, placeholder: '套餐到期|到期时间|有效期', preview: expiryMatches },
+                ].map(field => (
+                  <div key={field.id}>
+                    <label htmlFor={field.id} className="block text-xs font-semibold text-[#1F1E1D] mb-1">{field.label}</label>
+                    <input
+                      id={field.id}
+                      type="text"
+                      value={field.value}
+                      onChange={e => field.setValue(e.target.value)}
+                      placeholder={field.placeholder}
+                      aria-invalid={!!field.preview.error}
+                      aria-describedby={`${field.id}-preview`}
+                      className="w-full px-3 py-2 text-xs bg-white border border-[#E3DDD2] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C] font-mono"
+                    />
+                    <div id={`${field.id}-preview`} className={`mt-1 text-[11px] ${field.preview.error ? 'text-red-600' : 'text-[#78746D]'}`}>
+                      {field.preview.error || (field.value.trim() && (editingNetworkSource ? `匹配 ${field.preview.names.length} 项` : '添加并拉取后匹配'))}
+                      {field.preview.names.length > 0 && (
+                        <ul className="mt-1 max-h-20 overflow-y-auto space-y-1 break-words">
+                          {field.preview.names.map((name, index) => <li key={index}>{name}</li>)}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </fieldset>
+
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
@@ -797,7 +867,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || !!trafficMatches.error || !!expiryMatches.error}
                   className="px-4 py-1.5 text-xs font-semibold btn-claude-primary rounded-xl disabled:opacity-50 cursor-pointer"
                 >
                   {isSubmitting ? '保存中...' : (editingNetworkSource ? '保存更改' : '添加并拉取')}

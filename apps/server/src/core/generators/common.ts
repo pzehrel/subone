@@ -1,3 +1,16 @@
+import type { ClientType, SubscriptionSource } from '../../types/index';
+
+export function sourceSubscriptionUrl(
+  source: SubscriptionSource,
+  target: ClientType,
+  options?: { baseUrl?: string; subToken?: string },
+): string | undefined {
+  if ((source.trafficNodeRegex?.trim() || source.expiryNodeRegex?.trim()) && options?.baseUrl && options?.subToken) {
+    return `${options.baseUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(options.subToken)}/source/${encodeURIComponent(source.id)}?target=${target}`;
+  }
+  return source.url;
+}
+
 export function resolveSafeOutbound(target: string, availableGroups: Set<string>, fallback: string): string {
   const t = (target || '').trim();
   if (!t) return fallback;

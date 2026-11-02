@@ -11,6 +11,7 @@ import { generateQuantumultXConfig, nodeToQuantumultXProxy } from '../core/gener
 import { generateEgernConfig, nodeToEgernProxy } from '../core/generators/egern-generator';
 import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../core/generators/shadowrocket-generator';
 import { UnsupportedProxyGroupError } from '../core/generators/errors';
+import { parseSubscriptionUserinfo } from '../core/parser/subscription-info';
 import {
   getEffectiveNodes,
   getEffectiveNodesForProfile,
@@ -182,6 +183,9 @@ async function handleSourceSubRequest(req: express.Request, res: express.Respons
 
   try {
     let sourceNodes: ProxyNode[] = matchedSource.nodes || [];
+    const userinfo = Object.entries(parseSubscriptionUserinfo(matchedSource.subscriptionUserinfo))
+      .map(([key, value]) => `${key}=${value}`).join('; ');
+    if (userinfo) res.setHeader('subscription-userinfo', userinfo);
 
     // 应用提取规则
     sourceNodes = applyExtractionRules(sourceNodes, appConfig.rules);
@@ -194,7 +198,6 @@ async function handleSourceSubRequest(req: express.Request, res: express.Respons
       const proxyLines = sourceNodes.map(nodeToLoonProxy);
       const output = ['[Proxy]', ...proxyLines].join('\n');
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.setHeader('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
       return res.send(output);
     }
 
@@ -202,7 +205,6 @@ async function handleSourceSubRequest(req: express.Request, res: express.Respons
       const proxies = sourceNodes.map(nodeToMihomoProxy);
       const output = yaml.dump({ proxies }, { indent: 2, lineWidth: -1, noRefs: true });
       res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
-      res.setHeader('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
       return res.send(output);
     }
 
@@ -210,7 +212,6 @@ async function handleSourceSubRequest(req: express.Request, res: express.Respons
       const proxyLines = sourceNodes.map(nodeToQuantumultXProxy);
       const output = proxyLines.join('\n');
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.setHeader('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
       return res.send(output);
     }
 
@@ -218,13 +219,11 @@ async function handleSourceSubRequest(req: express.Request, res: express.Respons
       const proxies = sourceNodes.map(nodeToEgernProxy);
       const output = yaml.dump({ proxies }, { indent: 2, lineWidth: -1 });
       res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
-      res.setHeader('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
       return res.send(output);
     }
 
     const output = generateShadowrocketBase64(sourceNodes);
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
     return res.send(output);
   } catch (err: any) {
     console.error('Source subscription generation error:', err);

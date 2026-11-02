@@ -4,6 +4,7 @@ import yaml from 'js-yaml';
 import { appConfig, getBaseUrl, setGlobalNodesCache, getGlobalNodesCache } from '../context';
 import { saveConfig, saveServerConfig, generateRandomSubToken } from '../storage/db';
 import { fetchAndParseSource, parseRawContent } from '../core/parser/fetcher';
+import { applySubscriptionInfo, validateInfoRegex } from '../core/parser/subscription-info';
 import {
   parseProxyGroupsText,
   parseLocalRulesText,
@@ -354,12 +355,20 @@ apiRouter.post('/api/sources', async (req, res) => {
       return res.status(400).json({ success: false, message: '订阅链接不能为空' });
     }
 
+    try {
+      validateInfoRegex(req.body);
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
+
     const newSource: SubscriptionSource = {
       id: `src-${Date.now()}`,
       name: sourceName,
       url: sourceUrl,
       enabled: req.body.enabled !== false,
       type: 'remote',
+      trafficNodeRegex: req.body.trafficNodeRegex?.trim(),
+      expiryNodeRegex: req.body.expiryNodeRegex?.trim(),
       nodeCount: 0,
       nodes: [],
     };
@@ -406,6 +415,11 @@ apiRouter.put('/api/sources/:id', async (req, res) => {
     return res.status(404).json({ success: false, message: 'Source not found' });
   }
   const oldSource = appConfig.sources[index];
+  try {
+    validateInfoRegex(req.body);
+  } catch (err: any) {
+    return res.status(400).json({ success: false, message: err.message });
+  }
   const oldName = cleanSourceOrGroupName(oldSource.name || '');
   const newName = req.body.name ? cleanSourceOrGroupName(req.body.name) : oldName;
 
@@ -441,6 +455,9 @@ apiRouter.put('/api/sources/:id', async (req, res) => {
         req.body.nodes = nodes;
         req.body.nodeCount = nodes.length;
         req.body.lastUpdated = new Date().toISOString();
+        req.body.infoNodes = tempSource.infoNodes;
+        req.body.subscriptionUserinfo = tempSource.subscriptionUserinfo;
+        req.body.subscriptionInfo = tempSource.subscriptionInfo;
       } catch (err: any) {
         console.error(`[Fetcher] Failed to fetch updated source URL:`, err.message || err);
       }
@@ -448,6 +465,14 @@ apiRouter.put('/api/sources/:id', async (req, res) => {
   }
 
   appConfig.sources[index] = { ...appConfig.sources[index], ...req.body };
+  const updatedSource = appConfig.sources[index];
+  if (updatedSource.type !== 'manual' && updatedSource.type !== 'custom') {
+    updatedSource.nodes = applySubscriptionInfo(updatedSource, [
+      ...(updatedSource.nodes || []),
+      ...(updatedSource.infoNodes || []),
+    ]);
+    updatedSource.nodeCount = updatedSource.nodes.length;
+  }
   saveConfig(appConfig);
   setGlobalNodesCache(collectNodesFromSources(appConfig));
   res.json({ success: true, data: appConfig.sources[index], proxyGroups: appConfig.proxyGroups });

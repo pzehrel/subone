@@ -365,7 +365,7 @@ export function App() {
   };
 
   // Sources handlers
-  const handleAddSource = async (source: { name: string; url?: string; type: string; filterConfig?: any }) => {
+  const handleAddSource = async (source: { name: string; url?: string; type: string; filterConfig?: any; trafficNodeRegex?: string; expiryNodeRegex?: string }) => {
     try {
       setErrorMsg(null);
       const res = await apiFetch(`${API_BASE}/sources`, {

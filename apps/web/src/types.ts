@@ -30,6 +30,21 @@ export interface SubscriptionSource {
   lastUpdated?: string;
   nodeCount?: number;
   nodes?: ProxyNode[];
+  trafficNodeRegex?: string;
+  expiryNodeRegex?: string;
+  infoNodes?: ProxyNode[];
+  subscriptionInfo?: SubscriptionInfo;
+}
+
+export interface SubscriptionInfo {
+  upload?: number;
+  download?: number;
+  total?: number;
+  remaining?: number;
+  used?: number;
+  expire?: number;
+  trafficText?: string;
+  expiryText?: string;
 }
 
 export interface ExtractionRule {

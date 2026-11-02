@@ -4,7 +4,7 @@ import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '
 import { adaptRulesetForMihomo, formatRuleTag } from './ruleset-adapter';
 import { resolveGroupNodes } from './group-nodes';
 import { UnsupportedProxyGroupError } from './errors';
-import { resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag } from './common';
+import { sourceSubscriptionUrl, resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag } from './common';
 
 export function nodeToMihomoProxy(node: ProxyNode): any {
   // Only reuse raw if it is legitimately a Clash/Mihomo proxy object (not sing-box outbound, etc.)
@@ -378,7 +378,7 @@ export function injectUnifiedToMihomo(
 
       doc['proxy-providers'][providerKey] = {
         type: 'http',
-        url: s.url,
+        url: sourceSubscriptionUrl(s, 'mihomo', options),
         interval: 86400,
         path: `./proxy_providers/${safePathName}.yaml`,
         'health-check': {

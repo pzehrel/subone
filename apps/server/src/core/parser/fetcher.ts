@@ -2,6 +2,7 @@ import { CountryPatternRule, ProxyNode, SubscriptionSource } from '../../types/i
 import { parseNodeUri } from './uri-parser';
 import { parseClashYaml } from './clash-parser';
 import { parseSingboxJson } from './singbox-parser';
+import { applySubscriptionInfo } from './subscription-info';
 
 function decodeBase64Safe(str: string): string {
   try {
@@ -24,7 +25,7 @@ export async function fetchAndParseSource(
 
   // If local direct text content / node URIs (not starting with http/https)
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
-    return parseRawContent(url, source.id, source.name, source.type, countryPatterns);
+    return applySubscriptionInfo(source, parseRawContent(url, source.id, source.name, source.type, countryPatterns), null);
   }
 
   try {
@@ -54,7 +55,8 @@ export async function fetchAndParseSource(
     }
 
     const text = await response.text();
-    return parseRawContent(text, source.id, source.name, source.type, countryPatterns);
+    const nodes = parseRawContent(text, source.id, source.name, source.type, countryPatterns);
+    return applySubscriptionInfo(source, nodes, response.headers.get('subscription-userinfo'));
   } catch (err: any) {
     console.error(`Failed to fetch source [${source.name}] (${url}):`, err.message || err);
     throw err;
