@@ -2,7 +2,7 @@
 # ==============================================================================
 # SubOne 一键安装与服务部署脚本 (All-in-One VPS Installer)
 # 支持环境: Debian / Ubuntu / CentOS / RHEL / Rocky / AlmaLinux / Alpine
-# 项目仓库: https://github.com/cfm019/subone
+# 项目仓库: https://github.com/pzehrel/subone
 # ==============================================================================
 
 set -e
@@ -16,8 +16,8 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
-REPO_URL="https://github.com/cfm019/subone.git"
-REPO_PROXY_URL="https://ghproxy.net/https://github.com/cfm019/subone.git"
+REPO_URL="https://github.com/pzehrel/subone.git"
+REPO_PROXY_URL="https://ghproxy.net/https://github.com/pzehrel/subone.git"
 DEFAULT_PORT=3456
 DEFAULT_INSTALL_DIR="/opt/subone"
 SERVICE_NAME="subone"
@@ -28,7 +28,7 @@ ACTIVE_PORT="${DEFAULT_PORT}"
 detect_os() {
     if [ "$(uname -s)" = "Darwin" ]; then
         echo -e "${YELLOW}检测到当前系统为 macOS。此脚本专为 Linux VPS (Systemd) 一键部署设计。${RESET}"
-        echo -e "本地开发请直接执行: npm install && npm run build && npm start"
+        echo -e "本地开发请直接执行: pnpm install --frozen-lockfile && pnpm build && pnpm start"
         exit 1
     fi
 
@@ -73,7 +73,7 @@ check_root() {
     fi
 }
 
-# 3. 小内存 VPS 自动配置 Swap (防止 npm 依赖安装或 vite 编译时内存溢出被 Kill)
+# 3. 小内存 VPS 自动配置 Swap (防止 pnpm 依赖安装或 vite 编译时内存溢出被 Kill)
 setup_swap() {
     if command -v free >/dev/null 2>&1; then
         local mem_mb
@@ -122,37 +122,35 @@ install_dependencies() {
     esac
 }
 
-# 5. 检查与安装 Node.js (>= 20.0.0)
+# 5. 检查与安装 Node.js 24 LTS
 install_nodejs() {
-    echo -e "${CYAN}==> [2/5] 检查与安装 Node.js 环境 (要求 >= 20.0.0)...${RESET}"
+    echo -e "${CYAN}==> [2/5] 检查与安装 Node.js 环境 (要求 >= 24.22.2 < 25)...${RESET}"
     if command -v node >/dev/null 2>&1; then
         local node_ver
-        local node_major
         node_ver=$(node -v 2>/dev/null | tr -d 'v')
-        node_major=$(echo "$node_ver" | cut -d'.' -f1)
-        if [ "$node_major" -ge 20 ]; then
-            echo -e "${GREEN}✓ 检测到已安装 Node.js v${node_ver} (>= 20)${RESET}"
+        if node -e 'const [major, minor, patch] = process.versions.node.split(".").map(Number); process.exit(major === 24 && (minor > 22 || (minor === 22 && patch >= 2)) ? 0 : 1)'; then
+            echo -e "${GREEN}✓ 检测到已安装 Node.js v${node_ver} (24 LTS)${RESET}"
             return 0
         else
-            echo -e "${YELLOW}当前 Node.js 版本为 v${node_ver}，低于要求的 v20.0.0，正在升级至 Node.js 22 LTS...${RESET}"
+            echo -e "${YELLOW}当前 Node.js 版本为 v${node_ver}，不符合要求的 >= 24.22.2 < 25，正在升级至 Node.js 24 LTS...${RESET}"
         fi
     else
-        echo -e "${YELLOW}未检测到 Node.js，正在安装 Node.js 22 LTS...${RESET}"
+        echo -e "${YELLOW}未检测到 Node.js，正在安装 Node.js 24 LTS...${RESET}"
     fi
 
     local installed=0
     if [ "$PM" = "apt" ]; then
-        echo -e "${CYAN}配置 NodeSource 22.x 源...${RESET}"
-        curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1 || true
+        echo -e "${CYAN}配置 NodeSource 24.x 源...${RESET}"
+        curl -fsSL https://deb.nodesource.com/setup_24.x | bash - >/dev/null 2>&1 || true
         apt-get install -y nodejs >/dev/null 2>&1 || true
-        if command -v node >/dev/null 2>&1 && [ "$(node -v | tr -d 'v' | cut -d'.' -f1)" -ge 20 ]; then
+        if command -v node >/dev/null 2>&1 && node -e 'const [major, minor, patch] = process.versions.node.split(".").map(Number); process.exit(major === 24 && (minor > 22 || (minor === 22 && patch >= 2)) ? 0 : 1)'; then
             installed=1
         fi
     elif [ "$PM" = "dnf" ] || [ "$PM" = "yum" ]; then
-        echo -e "${CYAN}配置 NodeSource 22.x 源...${RESET}"
-        curl -fsSL https://rpm.nodesource.com/setup_22.x | bash - >/dev/null 2>&1 || true
+        echo -e "${CYAN}配置 NodeSource 24.x 源...${RESET}"
+        curl -fsSL https://rpm.nodesource.com/setup_24.x | bash - >/dev/null 2>&1 || true
         $PM install -y nodejs >/dev/null 2>&1 || true
-        if command -v node >/dev/null 2>&1 && [ "$(node -v | tr -d 'v' | cut -d'.' -f1)" -ge 20 ]; then
+        if command -v node >/dev/null 2>&1 && node -e 'const [major, minor, patch] = process.versions.node.split(".").map(Number); process.exit(major === 24 && (minor > 22 || (minor === 22 && patch >= 2)) ? 0 : 1)'; then
             installed=1
         fi
     fi
@@ -169,10 +167,10 @@ install_nodejs() {
         esac
 
         if [ -n "$node_arch" ]; then
-            echo -e "${YELLOW}通过 Node.js 官方预编译包进行安装 (v22.14.0 - ${node_arch})...${RESET}"
-            local node_pkg="node-v22.14.0-linux-${node_arch}.tar.xz"
+            echo -e "${YELLOW}通过 Node.js 官方预编译包进行安装 (v24.22.2 - ${node_arch})...${RESET}"
+            local node_pkg="node-v24.22.2-linux-${node_arch}.tar.xz"
             local tmp_tar="/tmp/${node_pkg}"
-            if curl -fsSL --connect-timeout 15 "https://nodejs.org/dist/v22.14.0/${node_pkg}" -o "$tmp_tar"; then
+            if curl -fsSL --connect-timeout 15 "https://nodejs.org/dist/v24.22.2/${node_pkg}" -o "$tmp_tar"; then
                 tar -xJf "$tmp_tar" -C /usr/local --strip-components=1
                 rm -f "$tmp_tar"
             else
@@ -229,22 +227,21 @@ setup_codebase() {
 
 # 7. 安装项目依赖并编译
 build_subone() {
-    echo -e "${CYAN}==> [4/5] 安装 npm 依赖并编译前后端...${RESET}"
+    echo -e "${CYAN}==> [4/5] 安装 pnpm 依赖并编译前后端...${RESET}"
     cd "${INSTALL_DIR}"
 
-    echo -e "  - 正在安装主依赖..."
-    npm install --no-audit --no-fund
-
-    if [ ! -d "web/node_modules" ]; then
-        echo -e "  - 正在安装前端界面依赖..."
-        (cd web && npm install --no-audit --no-fund)
+    if ! command -v pnpm >/dev/null 2>&1 || [ "$(pnpm --version)" != "12.16.1" ]; then
+        npm install --global pnpm@12.16.1
     fi
 
-    echo -e "  - 正在编译服务端与前端静态资源..."
-    npm run build
+    echo -e "  - 正在安装项目依赖..."
+    pnpm install --frozen-lockfile
 
-    if [ ! -f "dist/server/index.js" ] || [ ! -f "web/dist/index.html" ]; then
-        echo -e "${RED}[错误] 编译生成物不完整，未找到 dist/server/index.js 或 web/dist/index.html！${RESET}"
+    echo -e "  - 正在编译服务端与前端静态资源..."
+    pnpm build
+
+    if [ ! -f "apps/server/dist/index.js" ] || [ ! -f "apps/web/dist/index.html" ]; then
+        echo -e "${RED}[错误] 编译生成物不完整，未找到 apps/server/dist/index.js 或 apps/web/dist/index.html！${RESET}"
         exit 1
     fi
     echo -e "${GREEN}✓ 依赖安装与代码编译成功！${RESET}"
@@ -290,10 +287,10 @@ setup_systemd() {
 
     if ! command -v systemctl >/dev/null 2>&1; then
         echo -e "${YELLOW}系统未检测到 systemd，改用后台常驻方式启动...${RESET}"
-        pkill -f "dist/server/index.js" 2>/dev/null || true
+        pkill -f "apps/server/dist/index.js" 2>/dev/null || true
         local node_bin
         node_bin=$(command -v node)
-        nohup "$node_bin" "${INSTALL_DIR}/dist/server/index.js" > "${INSTALL_DIR}/subone.log" 2>&1 &
+        nohup "$node_bin" "${INSTALL_DIR}/apps/server/dist/index.js" > "${INSTALL_DIR}/subone.log" 2>&1 &
         sleep 2
         return 0
     fi
@@ -310,7 +307,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=${node_bin} ${INSTALL_DIR}/dist/server/index.js
+ExecStart=${node_bin} ${INSTALL_DIR}/apps/server/dist/index.js
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
@@ -386,13 +383,14 @@ main() {
         update)
             detect_os
             check_root
+            install_nodejs
             setup_codebase
             build_subone
             if command -v systemctl >/dev/null 2>&1; then
                 systemctl restart ${SERVICE_NAME}
             else
-                pkill -f "dist/server/index.js" 2>/dev/null || true
-                nohup node "${INSTALL_DIR}/dist/server/index.js" > "${INSTALL_DIR}/subone.log" 2>&1 &
+                pkill -f "apps/server/dist/index.js" 2>/dev/null || true
+                nohup node "${INSTALL_DIR}/apps/server/dist/index.js" > "${INSTALL_DIR}/subone.log" 2>&1 &
             fi
             echo -e "${GREEN}✓ SubOne 更新完成并已重启服务！${RESET}"
             ;;

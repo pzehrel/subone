@@ -1,6 +1,8 @@
 # SubOne
 
-> 📚 **在线文档**：[https://cfm019.github.io/subone-doc/](https://cfm019.github.io/subone-doc/)  
+本项目 fork 自 [cfm019/subone](https://github.com/cfm019/subone)。感谢原作者 [cfm019](https://github.com/cfm019) 及所有贡献者的工作。当前仓库为 [pzehrel/subone](https://github.com/pzehrel/subone)。
+
+> 📚 **上游在线文档**：[https://cfm019.github.io/subone-doc/](https://cfm019.github.io/subone-doc/)
 > 包含系统安装部署指南、控制台图文使用手册、各客户端配置教程及按源解耦机制详解。
 
 多节点多源聚合与配置生成。支持汇聚多个上游机场订阅与自建独立节点，分 Profile 定制策略组、分流规则及模版，生成组合后的聚合订阅配置。
@@ -25,7 +27,7 @@
 > 💡 图文安装指引、Docker 容器编排与客户端配置手册，请参阅 [SubOne 在线文档](https://cfm019.github.io/subone-doc/)。
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/cfm019/subone/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/pzehrel/subone/main/install.sh)
 ```
 
 - **控制台访问**：`http://<你的VPS_IP>:3456`
@@ -45,21 +47,29 @@ bash <(curl -fsSL https://raw.githubusercontent.com/cfm019/subone/main/install.s
 
 ### Docker 运行
 
+先克隆本仓库并进入项目目录，再构建镜像：
+
 ```bash
+git clone https://github.com/pzehrel/subone.git
+cd subone
+docker build -t subone:local .
+
 docker run -d \
   --name subone \
   --restart unless-stopped \
   -p 3456:3456 \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/templates:/app/templates \
-  cfm019/subone:latest
+  subone:local
 ```
 
 或使用 Docker Compose：
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
+
+Docker 配置保存在 `data/server-config.json`。重建容器时，请保留 `data/` 和 `templates/` 目录。
 
 ### 登陆后请立即设置访问密码
 现在默认是免密登录的，请一定登陆后修改设置，添加密码，否则暴露在公网存在安全风险。
@@ -94,8 +104,20 @@ docker compose up -d
 ## 源码编译部署
 ## 1. 环境要求
 
-- **Node.js**: `>= 20.0.0` (可通过 `node -v` 查看)
-- **npm**: `>= 9.0.0`
+- **Node.js**：`24.22.2`（24 LTS，版本见 `.nvmrc`、`.node-version`）。
+- **pnpm**：`12.16.1`（版本见 `package.json` 的 `packageManager`）。
+
+```bash
+nvm install
+nvm use
+npm install --global pnpm@12.16.1
+```
+
+| 目录 | 包名 | 用途 |
+| :--- | :--- | :--- |
+| `apps/server` | `@subone/server` | API 与订阅服务 |
+| `apps/web` | `@subone/web` | Web 控制台 |
+| `templates` | — | 各客户端的默认配置模版 |
 
 ## 2. 配置与编译
 
@@ -122,15 +144,27 @@ docker compose up -d
 
 
 ```bash
-# 确认 Node 版本 >= 20
+# 确认 Node 版本为 24 LTS
 node -v
 
 # 安装依赖
-npm install
+pnpm install --frozen-lockfile
 
 # 编译后端与前端
-npm run build
+pnpm build
 ```
+
+本地开发与检查命令：
+
+```bash
+pnpm dev             # 启动 API 和 Web 控制台
+pnpm dev:server      # 仅启动 API（默认 3456）
+pnpm dev:web         # 仅启动 Web 控制台（默认 5173）
+pnpm check           # 类型检查、代码检查和测试
+pnpm start           # 启动编译后的服务
+```
+
+配置、数据与模版统一位于仓库根目录的 `config.json`、`data/`、`templates/`。
 
 ### 3. 后台常驻运行 (Systemd 服务)
 
@@ -145,7 +179,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/root/subone
-ExecStart=/usr/bin/npm start
+ExecStart=/usr/bin/node /root/subone/apps/server/dist/index.js
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
@@ -154,7 +188,7 @@ Environment=NODE_ENV=production
 WantedBy=multi-user.target
 ```
 
-> 注：若 `npm` 路径不在 `/usr/bin/npm`，可通过 `which npm` 查询并替换 `ExecStart` 路径；`WorkingDirectory` 请替换为实际项目所在目录。
+> 注：可通过 `command -v node` 查询 Node.js 的绝对路径，并替换 `ExecStart` 中的 `/usr/bin/node`；`WorkingDirectory` 请替换为实际项目所在目录。
 
 管理服务命令：
 
@@ -237,7 +271,7 @@ Subone 支持为各个客户端自定义基础模版。所有模版文件统一�
 #### 1. 下载脚本到路由器
 ```bash
 # 下载到管理目录（如 /root）并赋予执行权限
-curl -4 -sSL -o /root/update-singbox.sh https://raw.githubusercontent.com/cfm019/subone/main/tools/update-singbox.sh
+curl -4 -sSL -o /root/update-singbox.sh https://raw.githubusercontent.com/pzehrel/subone/main/tools/update-singbox.sh
 chmod +x /root/update-singbox.sh
 ```
 
