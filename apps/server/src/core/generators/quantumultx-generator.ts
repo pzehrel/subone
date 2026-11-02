@@ -2,7 +2,7 @@ import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '
 import { resolveGroupNodes } from './group-nodes';
 import { UnsupportedProxyGroupError } from './errors';
 import { adaptRulesetForQuantumultX, formatRuleTag } from './ruleset-adapter';
-import { resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag, resolveGroupIcon, DEFAULT_QX_ICON_BASE } from './common';
+import { sourceSubscriptionUrl, resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag, resolveGroupIcon, DEFAULT_QX_ICON_BASE } from './common';
 
 export function nodeToQuantumultXProxy(node: ProxyNode): string {
   const tag = node.name.replace(/[=,]/g, '_');
@@ -316,7 +316,7 @@ export function injectUnifiedToQuantumultX(
     networkSources.forEach(s => {
       const tag = s.name.replace(/[=,]/g, '_').trim();
       const iconUrl = resolveGroupIcon(s.name) || `${DEFAULT_QX_ICON_BASE}/Airport.png`;
-      serverRemoteLines.push(`${s.url}, tag=${tag}, update-interval=86400, opt-parser=false, img-url=${iconUrl}`);
+      serverRemoteLines.push(`${sourceSubscriptionUrl(s, 'quantumultx', options)}, tag=${tag}, update-interval=86400, opt-parser=false, img-url=${iconUrl}`);
       allActiveRemoteSources.push(s);
     });
 

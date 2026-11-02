@@ -114,6 +114,17 @@ export interface ProxyNode {
 
 export type SourceType = 'remote' | 'manual';
 
+export interface SubscriptionInfo {
+  upload?: number;
+  download?: number;
+  total?: number;
+  remaining?: number;
+  used?: number;
+  expire?: number;
+  trafficText?: string;
+  expiryText?: string;
+}
+
 export interface SubscriptionSource {
   id: string;
   name: string;
@@ -124,6 +135,11 @@ export interface SubscriptionSource {
   lastUpdated?: string;
   nodeCount?: number;
   nodes?: ProxyNode[];
+  trafficNodeRegex?: string;
+  expiryNodeRegex?: string;
+  infoNodes?: ProxyNode[];
+  subscriptionUserinfo?: string;
+  subscriptionInfo?: SubscriptionInfo;
 }
 
 export interface ExtractionRule {

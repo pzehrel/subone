@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, beforeEach, test } from 'node:test';
 import express from 'express';
-import type { AppConfig, ProxyNode, SubscriptionProfile } from '../src/types/index';
+import type { AppConfig, ProxyNode, SubscriptionProfile, SubscriptionSource } from '../src/types/index';
 
 const originalDirectory = process.cwd();
 const originalRoot = process.env.SUBONE_ROOT;
@@ -75,6 +75,104 @@ async function post<T = SubscriptionProfile>(path: string, body: unknown, header
   });
   return { status: response.status, body: await readApiResponse<T>(response) };
 }
+
+test('info rules immediately reclassify cached nodes and filter every subscription format without refetching', async () => {
+  const config = fixture();
+  const names = ['Hong Kong', '剩余流量：128 GB', '套餐到期：2026-12-31'];
+  config.sources = [{
+    id: 'airport', name: 'Airport', type: 'remote', enabled: true,
+    url: 'http://127.0.0.1:1/expired-subscription',
+    nodes: names.map((name, index) => ({ id: `node-${index}`, name, type: 'ss', server: 'example.test', port: 443, method: 'aes-128-gcm', password: 'test' })),
+    lastUpdated: '2026-11-01T00:00:00Z',
+  }];
+  config.profiles = [{ id: 'profile', name: 'Phone', token: 'info-test', enabled: true, nodeFilter: { mode: 'all' } }];
+  context.setAppConfig(config);
+  const update = async (body: unknown) => {
+    const response = await fetch(`${origin}/api/sources/airport`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    return { status: response.status, body: await readApiResponse<SubscriptionSource>(response) };
+  };
+  const result = await update({ trafficNodeRegex: '剩余流量', expiryNodeRegex: '套餐到期' });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.data.nodeCount, 1);
+  assert.equal(result.body.data.infoNodes?.length, 2);
+  assert.equal(result.body.data.subscriptionInfo?.trafficText, names[1]);
+  assert.equal(result.body.data.subscriptionInfo?.expiryText, names[2]);
+  assert.equal(result.body.data.lastUpdated, '2026-11-01T00:00:00Z');
+  assert.equal(context.getGlobalNodesCache().length, 1);
+
+  for (const target of ['mihomo', 'singbox', 'loon', 'qx', 'egern', 'shadowrocket']) {
+    const response = await fetch(`${origin}/s/info-test/${target}?expand=true`);
+    assert.equal(response.status, 200);
+    const output = await response.text();
+    assert.ok(output.includes('Hong Kong'));
+    assert.ok(!output.includes('剩余流量'));
+    assert.ok(!output.includes('套餐到期'));
+  }
+  for (const target of ['mihomo', 'loon', 'qx', 'egern']) {
+    const response = await fetch(`${origin}/s/info-test/${target}`);
+    assert.equal(response.status, 200);
+    const output = await response.text();
+    assert.ok(output.includes(`${origin}/s/info-test/source/airport?target=`));
+    assert.ok(!output.includes('expired-subscription'));
+    const sourceResponse = await fetch(`${origin}/s/info-test/source/airport?target=${target}`);
+    assert.equal(sourceResponse.status, 200);
+    assert.ok(!(await sourceResponse.text()).includes('剩余流量'));
+    assert.equal(sourceResponse.headers.get('subscription-userinfo'), null);
+  }
+
+  const beforeFailure = structuredClone(context.getAppConfig().sources[0]);
+  const invalid = await update({ name: 'Should not be saved', trafficNodeRegex: '[' });
+  assert.equal(invalid.status, 400);
+  assert.deepEqual(context.getAppConfig().sources[0], beforeFailure);
+  const refresh = await post('/api/sources/airport/refresh', {});
+  assert.equal(refresh.status, 500);
+  assert.deepEqual(context.getAppConfig().sources[0], beforeFailure);
+
+  const restored = await update({ trafficNodeRegex: '', expiryNodeRegex: '' });
+  assert.equal(restored.body.data.nodeCount, 3);
+  assert.deepEqual(restored.body.data.infoNodes, []);
+  assert.equal(restored.body.data.subscriptionInfo, undefined);
+});
+
+test('source creation, URL changes and refresh preserve upstream metadata', async t => {
+  let expire = 1893456000;
+  const upstream = createServer((_request, response) => {
+    response.setHeader('Subscription-Userinfo', `upload=0; download=1024; total=2048; expire=${expire}`);
+    response.end('proxies:\n  - {name: "Hong Kong", type: ss, server: example.test, port: 443, cipher: aes-128-gcm, password: test}\n  - {name: "剩余流量：128 GB", type: ss, server: example.test, port: 443, cipher: aes-128-gcm, password: test}');
+  });
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  t.after(() => new Promise<void>((resolve, reject) => upstream.close(error => error ? reject(error) : resolve())));
+  const address = upstream.address();
+  assert.ok(address && typeof address !== 'string');
+  const url = `http://127.0.0.1:${address.port}/sub`;
+  const invalid = await post('/api/sources', { name: 'Invalid', url, expiryNodeRegex: '[' });
+  assert.equal(invalid.status, 400);
+  const created = await post<SubscriptionSource>('/api/sources', { name: 'Airport', url, trafficNodeRegex: '剩余流量' });
+  assert.equal(created.status, 200);
+  const source = created.body.data;
+  assert.equal(source.nodes?.length, 1);
+  assert.equal(source.infoNodes?.length, 1);
+  assert.equal(source.subscriptionInfo?.download, 1024);
+  assert.equal(source.subscriptionInfo?.trafficText, undefined);
+  context.getAppConfig().profiles = [{ id: 'profile', name: 'Phone', token: 'info-test', enabled: true, nodeFilter: { mode: 'all' } }];
+  const response = await fetch(`${origin}/s/info-test/source/${source.id}?target=mihomo`);
+  assert.equal(response.headers.get('subscription-userinfo'), 'upload=0; download=1024; total=2048; expire=1893456000');
+
+  expire += 86400;
+  const changed = await fetch(`${origin}/api/sources/${source.id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: `${url}?new=1` }),
+  });
+  assert.equal((await readApiResponse<SubscriptionSource>(changed)).data.subscriptionInfo?.expire, expire);
+  expire += 86400;
+  assert.equal((await post(`/api/sources/${source.id}/refresh`, {})).status, 200);
+  assert.equal(context.getAppConfig().sources.find(s => s.id === source.id)?.subscriptionInfo?.expire, expire);
+  expire += 86400;
+  assert.equal((await post('/api/sources/refresh-all', {})).status, 200);
+  assert.equal(context.getAppConfig().sources.find(s => s.id === source.id)?.subscriptionInfo?.expire, expire);
+});
 
 test('preview rejects unsupported relay groups with a client error', async () => {
   const config = fixture();

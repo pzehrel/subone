@@ -85,6 +85,8 @@ Docker 配置保存在 `data/server-config.json`。重建容器时，请保留 `
   - 每个 Profile 可按需勾选不同源节点、自选策略组、分流规则及各自的模版；
 - **独立节点与上游机场订阅源聚合**：
   - 支持导入各类上游机场订阅，提取节点并按地区或关键字筛选分组；
+  - 添加或编辑网络订阅源时，可用正则分别匹配流量、到期时间提示项，并预览匹配结果。匹配项会从可用节点和导出节点中移除，信息显示在订阅卡片上；
+  - 流量与到期时间优先采用机场响应头中的信息，缺失时使用匹配项。修改规则立即作用于已有节点，清空规则可恢复提示项，无需重新拉取订阅；
   - 支持添加自建独立节点，支持单条/批量 URI、Clash YAML、Sing-box JSON 格式录入与解析；
 - **协议与传输支持**：
   - **支持导入解析**：VLESS (Reality/Vision/gRPC/WS)、VMess、Shadowsocks (SS 2022/AEAD)、Trojan、Hysteria 2、TUIC v5、AnyTLS、WireGuard、Snell (v1~v4)、SOCKS5、HTTP、v2rayn 等协议；
