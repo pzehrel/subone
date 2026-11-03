@@ -11,7 +11,8 @@ import { generateQuantumultXConfig, nodeToQuantumultXProxy } from '../core/gener
 import { generateEgernConfig, nodeToEgernProxy } from '../core/generators/egern-generator';
 import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../core/generators/shadowrocket-generator';
 import { UnsupportedProxyGroupError } from '../core/generators/errors';
-import { parseSubscriptionUserinfo } from '../core/parser/subscription-info';
+import { formatSubscriptionUserinfo, parseSubscriptionUserinfo } from '../core/parser/subscription-info';
+import { aggregateSubscriptionInfo } from '../../../../shared/subscription-info';
 import {
   getEffectiveNodes,
   getEffectiveNodesForProfile,
@@ -73,6 +74,8 @@ async function handlePrivateSubRequest(c: Context, forcedType?: ClientType) {
     const rules = getEffectiveRulesForProfile(profile);
     const sources = getEffectiveSourcesForProfile(profile, nodes);
     const baseUrl = getBaseUrl(c.req);
+    const userinfo = formatSubscriptionUserinfo(aggregateSubscriptionInfo(sources.map(source => source.subscriptionInfo)));
+    if (userinfo) c.header('subscription-userinfo', userinfo);
 
     if (detectedType === 'mihomo') {
       const expand = c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
@@ -82,7 +85,6 @@ async function handlePrivateSubRequest(c: Context, forcedType?: ClientType) {
         subToken: tokenParam
       });
       c.header('Content-Type', 'text/yaml; charset=utf-8');
-      c.header('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
       return c.body(output);
     }
 
@@ -111,7 +113,6 @@ async function handlePrivateSubRequest(c: Context, forcedType?: ClientType) {
         subToken: tokenParam
       });
       c.header('Content-Type', 'text/plain; charset=utf-8');
-      c.header('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
       return c.body(output);
     }
 
@@ -123,7 +124,6 @@ async function handlePrivateSubRequest(c: Context, forcedType?: ClientType) {
         subToken: tokenParam
       });
       c.header('Content-Type', 'text/yaml; charset=utf-8');
-      c.header('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
       return c.body(output);
     }
 
@@ -132,13 +132,11 @@ async function handlePrivateSubRequest(c: Context, forcedType?: ClientType) {
       if (isBase64) {
         const output = generateShadowrocketBase64(nodes);
         c.header('Content-Type', 'text/plain; charset=utf-8');
-        c.header('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
         return c.body(output);
       }
       const expand = c.req.query('expand') !== 'false' && c.req.query('expand') !== '0';
       const output = generateShadowrocketConfig(templateContent, nodes, groups, rules, sources, { expandNodes: expand });
       c.header('Content-Type', 'text/plain; charset=utf-8');
-      c.header('subscription-userinfo', 'upload=0; download=0; total=1073741824000; expire=0');
       return c.body(output);
     }
 

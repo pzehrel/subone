@@ -1,3 +1,4 @@
+import { Input } from './ui/Input';
 import React, { useState } from 'react';
 import { Layers, ArrowRight, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
@@ -63,7 +64,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
         {/* Input & Action Form */}
         <form onSubmit={handleSubmit} className="space-y-3.5">
           <div className="relative">
-            <input
+            <Input aria-label="访问密码"
               type={showPassword ? 'text' : 'password'}
               required
               autoFocus
@@ -73,7 +74,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                 setPassword(e.target.value);
                 if (error) setError(null);
               }}
-              className="w-full h-11 pl-4 pr-11 bg-ui-subtle border border-ui-border rounded-xl text-sm text-ui-text focus:outline-none focus:border-ui-accent focus:bg-ui-surface focus:ring-3 focus:ring-ui-accent/10 transition-all placeholder:text-[#A39E93]"
+              className="w-full h-11 pl-4 pr-11"
             />
             <button
               type="button"

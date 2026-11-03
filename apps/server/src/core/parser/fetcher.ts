@@ -3,6 +3,11 @@ import { parseNodeUri } from './uri-parser';
 import { parseClashYaml } from './clash-parser';
 import { parseSingboxJson } from './singbox-parser';
 import { applySubscriptionInfo } from './subscription-info';
+import { isQuantumultXContent, parseQuantumultX } from './quantumultx-parser';
+
+function isQuantumultXHint(hint?: string): boolean {
+  return ['quantumultx', 'quanx', 'qx'].includes(hint?.toLowerCase() || '');
+}
 
 function decodeBase64Safe(str: string): string {
   try {
@@ -29,7 +34,9 @@ export async function fetchAndParseSource(
   }
 
   try {
-    const userAgent = source.customUserAgent || 'ClashMeta/v1.18.0 (subone-engine; +https://github.com/subone)';
+    const userAgent = source.customUserAgent || (isQuantumultXHint(source.type)
+      ? 'Quantumult%20X'
+      : 'ClashMeta/v1.18.0 (subone-engine; +https://github.com/subone)');
     const response = await fetch(url, {
       headers: {
         'User-Agent': userAgent,
@@ -73,6 +80,11 @@ export function parseRawContent(
   const content = raw.trim();
   if (!content) return [];
 
+  if (isQuantumultXHint(hintType) || isQuantumultXContent(content)) {
+    const nodes = parseQuantumultX(content, sourceId, sourceName, countryPatterns);
+    if (nodes.length || isQuantumultXContent(content)) return nodes;
+  }
+
   // 1. If explicit or looks like Sing-box JSON
   if (hintType === 'singbox' || (content.startsWith('{') && content.endsWith('}') && content.includes('"outbounds"'))) {
     const nodes = parseSingboxJson(content, sourceId, sourceName, countryPatterns);
@@ -93,10 +105,15 @@ export function parseRawContent(
     // Might be multiline base64 or mixed
     try {
       const b64 = decodeBase64Safe(content);
-      if (b64.includes('://')) {
+      if (b64.includes('://') || isQuantumultXContent(b64)) {
         decoded = b64;
       }
     } catch (e) {}
+  }
+
+  if (isQuantumultXHint(hintType) || isQuantumultXContent(decoded)) {
+    const nodes = parseQuantumultX(decoded, sourceId, sourceName, countryPatterns);
+    if (nodes.length || isQuantumultXContent(decoded)) return nodes;
   }
 
   // 4. Parse line-by-line URI list

@@ -1,3 +1,7 @@
+import { Input } from './ui/Input';
+import { Select, SelectItem } from './ui/Select';
+import { Field, Label } from './ui/Field';
+import { Badge } from './ui/Badge';
 import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
 import React, { useState } from 'react';
 import {
@@ -221,9 +225,9 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
         <div className="space-y-1.5">
           <div className="flex items-center gap-2.5">
             <h2 className="text-lg font-bold text-ui-text">节点池与抽取规则流水线</h2>
-            <span className="px-2.5 py-0.5 text-xs font-semibold bg-[#EFF6F4] text-[#367A68] border border-[#D1E5DF] rounded-full">
+            <Badge tone="success" className="border">
               {nodes.length} 个有效节点
-            </span>
+            </Badge>
           </div>
           <p className="text-xs text-ui-secondary">
             管理地区识别规则、关键字/正则过滤与重命名
@@ -319,13 +323,13 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
                           <span className="font-bold text-ui-text">{cr.name}</span>
-                          <span className="px-1.5 py-0.2 text-[10px] font-mono bg-ui-hover text-ui-secondary rounded">
+                          <Badge tone="neutral" className="font-mono">
                             {cr.code}
-                          </span>
+                          </Badge>
                           {cr.groupName && (
-                            <span className="px-1.5 py-0.2 text-[10px] font-medium bg-[#EFF6F4] text-[#367A68] rounded truncate">
+                            <Badge tone="success" className="font-medium truncate">
                               ➔ {cr.groupName}
-                            </span>
+                            </Badge>
                           )}
                         </div>
                         <div className="text-[11px] font-mono text-ui-secondary truncate mt-0.5" title={cr.pattern}>
@@ -417,14 +421,14 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                         <div className="flex items-center gap-1.5">
                           <span className="font-bold text-ui-text">{rule.name}</span>
                           {rule.excludeRegex && (
-                            <span className="px-1.5 py-0.2 text-[10px] font-mono bg-[#FDF2F0] text-[#A8483B] rounded">
+                            <Badge tone="danger" className="font-mono">
                               排除: {rule.excludeRegex}
-                            </span>
+                            </Badge>
                           )}
                           {rule.includeRegex && (
-                            <span className="px-1.5 py-0.2 text-[10px] font-mono bg-[#EFF6F4] text-[#367A68] rounded">
+                            <Badge tone="success" className="font-mono">
                               包含: {rule.includeRegex}
-                            </span>
+                            </Badge>
                           )}
                         </div>
                         {rule.renamePattern && (
@@ -470,41 +474,41 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
         <div className="ui-panel p-4 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="relative flex-1 max-w-md">
             <Search className="w-4 h-4 text-ui-muted absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
+            <Input aria-label="搜索节点名称、IP 或 端口..."
               type="text"
               placeholder="搜索节点名称、IP 或 端口..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 ui-input rounded-xl text-xs"
+              className="w-full pl-9 pr-4"
             />
           </div>
 
           <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
-            <select
+            <Select aria-label="国家或地区筛选"
               value={selectedCountry}
-              onChange={e => setSelectedCountry(e.target.value)}
-              className="px-3 py-2 ui-input rounded-xl text-xs cursor-pointer"
+              onValueChange={nextValue => setSelectedCountry(nextValue)}
+              className="cursor-pointer"
             >
-              <option value="ALL">全部地区 ({nodes.length})</option>
+              <SelectItem value="ALL">全部地区 ({nodes.length})</SelectItem>
               {availableCountries.map(c => (
-                <option key={c} value={c}>
+                <SelectItem key={c} value={c}>
                   {c} ({nodes.filter(n => (n.countryCode || 'OTHER') === c).length})
-                </option>
+                </SelectItem>
               ))}
-            </select>
+            </Select>
 
-            <select
+            <Select aria-label="节点协议筛选"
               value={selectedType}
-              onChange={e => setSelectedType(e.target.value)}
-              className="px-3 py-2 ui-input rounded-xl text-xs cursor-pointer"
+              onValueChange={nextValue => setSelectedType(nextValue)}
+              className="cursor-pointer"
             >
-              <option value="ALL">全部协议</option>
+              <SelectItem value="ALL">全部协议</SelectItem>
               {availableTypes.map(t => (
-                <option key={t} value={t}>
+                <SelectItem key={t} value={t}>
                   {t.toUpperCase()}
-                </option>
+                </SelectItem>
               ))}
-            </select>
+            </Select>
           </div>
         </div>
 
@@ -527,9 +531,9 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                     </div>
                   </div>
                 </div>
-                <span className="px-2 py-0.5 text-[10px] font-mono uppercase font-bold bg-[#F3EFEA] text-ui-secondary rounded border border-ui-border">
+                <Badge tone="neutral" className="font-mono uppercase border">
                   {node.type}
-                </span>
+                </Badge>
               </div>
 
               <div className="flex items-center justify-between text-[11px] text-ui-muted border-t border-ui-divider pt-2">
@@ -540,17 +544,17 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                     </span>
                   )}
                   {node.countryCode && (
-                    <span className="px-1.5 py-0.2 bg-[#F3EFEA] text-ui-secondary text-[10px] rounded font-mono">
+                    <Badge tone="neutral" className="font-mono">
                       {node.countryCode}
-                    </span>
+                    </Badge>
                   )}
                 </div>
                 <div className="flex items-center gap-1.5 font-mono text-[10px]">
-                  {node.tls && <span className="text-[#367A68] bg-[#EFF6F4] px-1.5 py-0.5 rounded border border-[#D1E5DF]">TLS</span>}
+                  {node.tls && <Badge tone="success" className="border">TLS</Badge>}
                   {node.network && (
-                    <span className="text-[#B85D38] bg-[#FAF0E6] px-1.5 py-0.5 rounded border border-[#E8D7C7] uppercase">
+                    <Badge tone="neutral" className="border uppercase">
                       {node.network}
-                    </span>
+                    </Badge>
                   )}
                 </div>
               </div>
@@ -583,63 +587,63 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
           <ModalForm onSubmit={handleCountrySubmit}>
             <ModalBody>
               <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <label className="block text-xs font-medium text-ui-secondary mb-1">国旗 Emoji</label>
-                  <input
+                <Field>
+                  <Label className="block">国旗 Emoji</Label>
+                  <Input
                     type="text"
                     required
                     placeholder="🇭🇰"
                     value={cEmoji}
                     onChange={e => setCEmoji(e.target.value)}
-                    className="w-full px-3 py-2 ui-input rounded-xl text-center text-sm"
+                    className="w-full"
                   />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-ui-secondary mb-1">地区代码</label>
-                  <input
+                </Field>
+                <Field>
+                  <Label className="block">地区代码</Label>
+                  <Input
                     type="text"
                     required
                     placeholder="HK"
                     value={cCode}
                     onChange={e => setCCode(e.target.value.toUpperCase())}
-                    className="w-full px-3 py-2 ui-input rounded-xl text-xs uppercase font-mono"
+                    className="w-full font-mono"
                   />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-ui-secondary mb-1">地区名称</label>
-                  <input
+                </Field>
+                <Field>
+                  <Label className="block">地区名称</Label>
+                  <Input
                     type="text"
                     required
                     placeholder="香港"
                     value={cName}
                     onChange={e => setCName(e.target.value)}
-                    className="w-full px-3 py-2 ui-input rounded-xl text-xs"
+                    className="w-full"
                   />
-                </div>
+                </Field>
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-ui-secondary mb-1">匹配正则表达式 (不区分大小写)</label>
-                <input
+              <Field>
+                <Label className="block">匹配正则表达式 (不区分大小写)</Label>
+                <Input
                   type="text"
                   required
                   placeholder=""
                   value={cPattern}
                   onChange={e => setCPattern(e.target.value)}
-                  className="w-full px-3 py-2 ui-input rounded-xl text-xs font-mono"
+                  className="w-full font-mono"
                 />
-              </div>
+              </Field>
 
-              <div>
-                <label className="block text-xs font-medium text-ui-secondary mb-1">挂载对应测速分组 (可选)</label>
-                <input
+              <Field>
+                <Label className="block">挂载对应测速分组 (可选)</Label>
+                <Input
                   type="text"
                   placeholder=""
                   value={cGroupName}
                   onChange={e => setCGroupName(e.target.value)}
-                  className="w-full px-3 py-2 ui-input rounded-xl text-xs"
+                  className="w-full"
                 />
-              </div>
+              </Field>
             </ModalBody>
             <ModalFooter>
               <button
@@ -667,72 +671,70 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
         {(showRuleModal) && (
           <ModalForm onSubmit={handleRuleSubmit}>
             <ModalBody>
-              <div>
-                <label className="block text-xs font-medium text-ui-secondary mb-1.5">规则名称</label>
-                <input
+              <Field>
+                <Label className="block">规则名称</Label>
+                <Input
                   type="text"
                   required
                   value={ruleName}
                   onChange={e => setRuleName(e.target.value)}
-                  className="w-full px-3.5 py-2 ui-input rounded-xl text-xs"
+                  className="w-full"
                 />
-              </div>
+              </Field>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-ui-secondary mb-1">包含正则 (Include)</label>
-                  <input
+                <Field>
+                  <Label className="block">包含正则 (Include)</Label>
+                  <Input
                     type="text"
                     placeholder="如：(0\.5x|专线|BGP)"
                     value={includeRegex}
                     onChange={e => setIncludeRegex(e.target.value)}
-                    className="w-full px-3 py-2 ui-input rounded-xl text-xs font-mono"
+                    className="w-full font-mono"
                   />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-ui-secondary mb-1">排除正则 (Exclude)</label>
-                  <input
+                </Field>
+                <Field>
+                  <Label className="block">排除正则 (Exclude)</Label>
+                  <Input
                     type="text"
                     placeholder="如：(官网|到期|剩余|流量)"
                     value={excludeRegex}
                     onChange={e => setExcludeRegex(e.target.value)}
-                    className="w-full px-3 py-2 ui-input rounded-xl text-xs font-mono"
+                    className="w-full font-mono"
                   />
-                </div>
+                </Field>
               </div>
 
               <div className="p-3 bg-ui-subtle rounded-xl border border-ui-divider space-y-2">
                 <span className="text-xs font-bold text-ui-text">节点重命名处理 (可选)</span>
                 <div className="grid grid-cols-2 gap-2">
-                  <input
+                  <Input aria-label="添加前缀 (如: [VIP] )"
                     type="text"
                     placeholder="添加前缀 (如: [VIP] )"
                     value={prefix}
                     onChange={e => setPrefix(e.target.value)}
-                    className="px-3 py-1.5 ui-input rounded-lg text-xs"
                   />
-                  <input
+                  <Input aria-label="添加后缀"
                     type="text"
                     placeholder="添加后缀"
                     value={suffix}
                     onChange={e => setSuffix(e.target.value)}
-                    className="px-3 py-1.5 ui-input rounded-lg text-xs"
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <input
+                  <Input aria-label="正则替换 (From)"
                     type="text"
                     placeholder="正则替换 (From)"
                     value={replaceFrom}
                     onChange={e => setReplaceFrom(e.target.value)}
-                    className="px-3 py-1.5 ui-input rounded-lg text-xs font-mono"
+                    className="font-mono"
                   />
-                  <input
+                  <Input aria-label="替换为 (To)"
                     type="text"
                     placeholder="替换为 (To)"
                     value={replaceTo}
                     onChange={e => setReplaceTo(e.target.value)}
-                    className="px-3 py-1.5 ui-input rounded-lg text-xs font-mono"
+                    className="font-mono"
                   />
                 </div>
               </div>

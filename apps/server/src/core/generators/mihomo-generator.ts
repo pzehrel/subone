@@ -48,6 +48,16 @@ export function nodeToMihomoProxy(node: ProxyNode): any {
     udp: node.udp !== undefined ? Boolean(node.udp) : true,
   };
 
+  if (node.type === 'ssr') {
+    base.cipher = node.method;
+    base.password = node.password;
+    base.protocol = node.protocol;
+    base['protocol-param'] = node.protocolParam;
+    base.obfs = node.obfs;
+    base['obfs-param'] = node.obfsParam;
+    return base;
+  }
+
   if (node.type === 'ss') {
     base.cipher = node.method || 'aes-128-gcm';
     base.password = node.password;

@@ -1,8 +1,11 @@
+import { Input } from './ui/Input';
+import { Textarea } from './ui/Textarea';
+import { Select, SelectItem } from './ui/Select';
+import { Field, Label } from './ui/Field';
 import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
 import React, { useState, useEffect } from 'react';
 import {
   Check,
-  ChevronDown,
   Copy,
   Download,
   FileCode,
@@ -137,18 +140,18 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
         {/* Dropdown template selector */}
         <div className="flex items-center gap-3">
           <div className="relative">
-            <select
+            <Select aria-label="当前配置模版"
               value={selectedTemplateId}
-              onChange={e => setSelectedTemplateId(e.target.value)}
-              className="appearance-none pl-3.5 pr-9 py-2 bg-ui-surface border border-ui-border rounded-xl text-xs font-semibold text-ui-text focus:outline-none focus:border-ui-accent shadow-xs cursor-pointer"
+              onValueChange={nextValue => setSelectedTemplateId(nextValue)}
+              className="cursor-pointer"
             >
               {templates.map(t => (
-                <option key={t.id} value={t.id}>
+                <SelectItem key={t.id} value={t.id}>
                   {t.name} {t.isDefault ? '⭐' : ''}
-                </option>
+                </SelectItem>
               ))}
-            </select>
-            <ChevronDown className="w-4 h-4 text-ui-muted absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </Select>
+
           </div>
 
           <button
@@ -236,11 +239,11 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
             </div>
           </div>
           <div className="flex-1 relative min-h-0 w-full h-full bg-ui-surface">
-            <textarea
+            <Textarea aria-label="此处编辑配置模版..." variant="code"
               value={templateContent}
               onChange={e => setTemplateContent(e.target.value)}
               spellCheck={false}
-              className="absolute inset-0 w-full h-full p-4 bg-ui-surface font-mono text-xs text-ui-text focus:outline-none resize-none leading-relaxed overflow-y-auto overflow-x-auto"
+              className="absolute inset-0 w-full h-full font-mono resize-none"
               placeholder="此处编辑配置模版..."
             />
           </div>
@@ -250,51 +253,51 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
       {/* New Template Modal */}
       <Modal
         open={!!(showNewModal)}
-        title={(showNewModal) ? <>新建配置模版</> : ''}
+        title="新建配置模版"
         size="md"
         onClose={() => setShowNewModal(false)}
       >
         {(showNewModal) && (
           <ModalForm onSubmit={handleCreateSubmit}>
             <ModalBody>
-              <div>
-                <label className="block text-xs font-medium text-ui-secondary mb-1.5">模版名称</label>
-                <input
+              <Field>
+                <Label className="block">模版名称</Label>
+                <Input
                   type="text"
                   required
                   placeholder=""
                   value={newName}
                   onChange={e => setNewName(e.target.value)}
-                  className="w-full px-3.5 py-2 ui-input rounded-xl text-xs"
+                  className="w-full"
                 />
-              </div>
+              </Field>
 
-              <div>
-                <label className="block text-xs font-medium text-ui-secondary mb-1.5">目标客户端格式</label>
-                <select
+              <Field>
+                <Label className="block">目标客户端格式</Label>
+                <Select
                   value={newType}
-                  onChange={e => setNewType(e.target.value as any)}
-                  className="w-full px-3.5 py-2 ui-input rounded-xl text-xs"
+                  onValueChange={nextValue => setNewType(nextValue as any)}
+                  className="w-full"
                 >
-                  <option value="singbox">Sing-box (JSON 格式)</option>
-                  <option value="mihomo">Mihomo / ShellCrash (YAML 格式)</option>
-                  <option value="loon">Loon (MCF 格式)</option>
-                  <option value="quantumultx">Quantumult X (CONF 格式)</option>
-                  <option value="egern">Egern (YAML 格式)</option>
-                  <option value="shadowrocket">Shadowrocket (CONF 格式)</option>
-                </select>
-              </div>
+                  <SelectItem value="singbox">Sing-box (JSON 格式)</SelectItem>
+                  <SelectItem value="mihomo">Mihomo / ShellCrash (YAML 格式)</SelectItem>
+                  <SelectItem value="loon">Loon (MCF 格式)</SelectItem>
+                  <SelectItem value="quantumultx">Quantumult X (CONF 格式)</SelectItem>
+                  <SelectItem value="egern">Egern (YAML 格式)</SelectItem>
+                  <SelectItem value="shadowrocket">Shadowrocket (CONF 格式)</SelectItem>
+                </Select>
+              </Field>
 
-              <div>
-                <label className="block text-xs font-medium text-ui-secondary mb-1.5">模版备注描述 (可选)</label>
-                <input
+              <Field>
+                <Label className="block">模版备注描述 (可选)</Label>
+                <Input
                   type="text"
                   placeholder=""
                   value={newDesc}
                   onChange={e => setNewDesc(e.target.value)}
-                  className="w-full px-3.5 py-2 ui-input rounded-xl text-xs"
+                  className="w-full"
                 />
-              </div>
+              </Field>
             </ModalBody>
             <ModalFooter>
               <button

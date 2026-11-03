@@ -1,9 +1,14 @@
+import { Table, TableHead, TableCell } from './ui/Table';
+import { Input } from './ui/Input';
+import { Textarea } from './ui/Textarea';
+import { Select, SelectItem } from './ui/Select';
+import { Field, Label } from './ui/Field';
+import { Badge } from './ui/Badge';
 import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
 import React, { useState, useMemo } from 'react';
 import {
   Check,
   CheckCircle2,
-  ChevronDown,
   Copy,
   Download,
   Edit2,
@@ -235,12 +240,12 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
     setShowGroupModal(false);
   };
 
-  const getTypeStyle = (type: string, kind: string) => {
-    if (kind === 'remote') return 'bg-[#F2F0F7] text-[#635588] border-[#DDD8EB]';
-    if (type.includes('DOMAIN')) return 'bg-[#EFF6F4] text-[#367A68] border-[#D1E5DF]';
-    if (type.includes('IP')) return 'bg-[#FAF0E6] text-[#B85D38] border-[#E8D7C7]';
-    if (type === 'GEOIP') return 'bg-[#F0F5FA] text-[#3D6B99] border-[#D4E2F0]';
-    return 'bg-[#F3EFEA] text-ui-secondary border-ui-border';
+  const getTypeTone = (type: string, kind: string): 'neutral' | 'accent' | 'success' | 'info' => {
+    if (kind === 'remote') return 'info';
+    if (type.includes('DOMAIN')) return 'success';
+    if (type === 'GEOIP') return 'info';
+    if (type.includes('IP')) return 'accent';
+    return 'neutral';
   };
 
   return (
@@ -283,9 +288,9 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
               className="flex items-center gap-1.5 px-3 py-1.5 bg-ui-subtle border border-ui-border rounded-xl text-xs text-ui-text hover:border-[#D5CFC5] transition-all group"
             >
               <span className="font-semibold">{grp.name}</span>
-              <span className="text-[10px] font-mono px-1.5 py-0.2 bg-ui-divider text-ui-secondary rounded">
+              <Badge tone="neutral" className="font-mono">
                 {grp.type}
-              </span>
+              </Badge>
               <button
                 onClick={() => onDeleteGroup(grp.id)}
                 className="opacity-0 group-hover:opacity-100 p-0.5 text-[#A8483B] hover:text-red-700 transition-opacity ml-1"
@@ -303,38 +308,40 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
 
       {/* 2. Rules Control Bar & Action Buttons */}
       <div className="ui-panel p-4 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div className="flex items-center gap-2 flex-1 max-w-lg">
-          <div className="relative flex-1">
+        <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:max-w-2xl">
+          <div className="relative w-full min-w-0 sm:min-w-[180px] sm:flex-1">
             <Search className="w-4 h-4 text-ui-muted absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
+            <Input aria-label="搜索规则名称、域名、IP 或 URL..."
               type="text"
               placeholder="搜索规则名称、域名、IP 或 URL..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3.5 py-2 ui-input rounded-xl text-xs"
+              className="w-full pl-9 pr-3.5"
             />
           </div>
 
-          <select
-            value={kindFilter}
-            onChange={e => setKindFilter(e.target.value as any)}
-            className="px-3 py-2 ui-input rounded-xl text-xs cursor-pointer"
-          >
-            <option value="all">全部类型 ({rulesList.length})</option>
-            <option value="local">仅本地规则 ({rulesList.filter(r => r.kind === 'local').length})</option>
-            <option value="remote">仅远程规则集 ({rulesList.filter(r => r.kind === 'remote').length})</option>
-          </select>
+          <div className="flex w-full min-w-0 gap-2 sm:w-auto sm:max-w-[340px]">
+            <Select aria-label="规则类型筛选"
+              value={kindFilter}
+              onValueChange={nextValue => setKindFilter(nextValue as any)}
+              className="min-w-0 flex-1 cursor-pointer"
+            >
+              <SelectItem value="all">全部类型 ({rulesList.length})</SelectItem>
+              <SelectItem value="local">仅本地规则 ({rulesList.filter(r => r.kind === 'local').length})</SelectItem>
+              <SelectItem value="remote">仅远程规则集 ({rulesList.filter(r => r.kind === 'remote').length})</SelectItem>
+            </Select>
 
-          <select
-            value={groupFilter}
-            onChange={e => setGroupFilter(e.target.value)}
-            className="px-3 py-2 ui-input rounded-xl text-xs cursor-pointer max-w-[150px] truncate"
-          >
-            <option value="all">全部分组去向</option>
-            {availableOutbounds.map(ob => (
-              <option key={ob} value={ob}>{ob === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : ob}</option>
-            ))}
-          </select>
+            <Select aria-label="目标策略筛选"
+              value={groupFilter}
+              onValueChange={nextValue => setGroupFilter(nextValue)}
+              className="min-w-0 flex-1 cursor-pointer"
+            >
+              <SelectItem value="all">全部分组去向</SelectItem>
+              {availableOutbounds.map(ob => (
+                <SelectItem key={ob} value={ob}>{ob === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : ob}</SelectItem>
+              ))}
+            </Select>
+          </div>
         </div>
 
         {/* Action Buttons */}
@@ -378,98 +385,96 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
 
       {/* 3. Rules Matrix Table */}
       <div className="ui-panel rounded-2xl overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
-            <thead>
-              <tr className="bg-ui-subtle border-b border-ui-border text-ui-secondary font-semibold">
-                <th className="py-3 px-4 w-12 text-center">状态</th>
-                <th className="py-3 px-4 w-28">类型</th>
-                <th className="py-3 px-4">规则名称 & 匹配条件 / URL</th>
-                <th className="py-3 px-4 w-56">去向策略组 (可秒切)</th>
-                <th className="py-3 px-4 w-20 text-right">操作</th>
+
+        <Table label="分流规则">
+          <thead>
+            <tr>
+              <TableHead className="text-center">状态</TableHead>
+              <TableHead>类型</TableHead>
+              <TableHead>规则名称 & 匹配条件 / URL</TableHead>
+              <TableHead>去向策略组 (可秒切)</TableHead>
+              <TableHead fixed="right" className="text-right">操作</TableHead>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredRules.map(rule => (
+              <tr data-disabled={!rule.enabled || undefined}
+                key={rule.id}
+              >
+                {/* Status Toggle */}
+                <TableCell className="text-center">
+                  <button
+                    onClick={() => onUpdateRule(rule.id, { enabled: !rule.enabled })}
+                    title={rule.enabled ? '点击禁用' : '点击启用'}
+                  >
+                    {rule.enabled ? (
+                      <CheckCircle2 className="w-4 h-4 text-[#367A68]" />
+                    ) : (
+                      <XCircle className="w-4 h-4 text-ui-muted" />
+                    )}
+                  </button>
+                </TableCell>
+
+                {/* Rule Type Badge */}
+                <TableCell>
+                  <Badge tone={getTypeTone(rule.type, rule.kind)} className="font-mono">
+                    {rule.kind === 'remote' ? 'RULE-SET' : rule.type}
+                  </Badge>
+                </TableCell>
+
+                {/* Name & Payload */}
+                <TableCell minWidth={220} maxWidth={560}>
+                  <div className="font-bold text-ui-text mb-0.5 truncate">{rule.name}</div>
+                  <div className="font-mono text-[11px] text-ui-secondary truncate max-w-xl select-all">
+                    {rule.payload}
+                  </div>
+                </TableCell>
+
+                {/* Target Outbound Dropdown Selector (Core Feature!) */}
+                <TableCell minWidth={180} maxWidth={280}>
+                  <div className="relative">
+                    <Select controlSize="sm" aria-label={`${rule.name}的去向策略组`}
+                      value={rule.outbound}
+                      onValueChange={nextValue => onUpdateRule(rule.id, { outbound: nextValue })}
+                      className="w-full cursor-pointer"
+                    >
+                      {availableOutbounds.map(ob => (
+                        <SelectItem key={ob} value={ob}>{ob === 'REJECT' ? '🛑 REJECT' : `➔ ${ob}`}</SelectItem>
+                      ))}
+                    </Select>
+
+                  </div>
+                </TableCell>
+
+                {/* Actions */}
+                <TableCell fixed="right" className="text-right">
+                  <button
+                    onClick={() => onDeleteRule(rule.id)}
+                    className="p-1.5 text-[#A8483B] hover:bg-[#FDF2F0] rounded-lg transition-colors"
+                    title="直接删除规则"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </TableCell>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-[#EFECE6]">
-              {filteredRules.map(rule => (
-                <tr
-                  key={rule.id}
-                  className={`hover:bg-[#FAF9F6] transition-colors ${!rule.enabled ? 'opacity-50 bg-[#FBF9F7]' : ''
-                    }`}
-                >
-                  {/* Status Toggle */}
-                  <td className="py-3 px-4 text-center">
-                    <button
-                      onClick={() => onUpdateRule(rule.id, { enabled: !rule.enabled })}
-                      title={rule.enabled ? '点击禁用' : '点击启用'}
-                    >
-                      {rule.enabled ? (
-                        <CheckCircle2 className="w-4 h-4 text-[#367A68]" />
-                      ) : (
-                        <XCircle className="w-4 h-4 text-ui-muted" />
-                      )}
-                    </button>
-                  </td>
+            ))}
 
-                  {/* Rule Type Badge */}
-                  <td className="py-3 px-4 whitespace-nowrap">
-                    <span className={`px-2 py-0.5 text-[10px] font-mono font-bold rounded-md border ${getTypeStyle(rule.type, rule.kind)}`}>
-                      {rule.kind === 'remote' ? 'RULE-SET' : rule.type}
-                    </span>
-                  </td>
+            {filteredRules.length === 0 && (
+              <tr>
+                <TableCell colSpan={5} className="text-center text-ui-muted">
+                  未找到匹配的规则条目，请点击上方按钮贴入或新建
+                </TableCell>
+              </tr>
+            )}
+          </tbody>
+        </Table>
 
-                  {/* Name & Payload */}
-                  <td className="py-3 px-4 min-w-0">
-                    <div className="font-bold text-ui-text mb-0.5 truncate">{rule.name}</div>
-                    <div className="font-mono text-[11px] text-ui-secondary truncate max-w-xl select-all">
-                      {rule.payload}
-                    </div>
-                  </td>
-
-                  {/* Target Outbound Dropdown Selector (Core Feature!) */}
-                  <td className="py-3 px-4">
-                    <div className="relative">
-                      <select
-                        value={rule.outbound}
-                        onChange={e => onUpdateRule(rule.id, { outbound: e.target.value })}
-                        className="w-full appearance-none pl-3 pr-8 py-1.5 bg-ui-surface border border-ui-border rounded-xl text-xs font-semibold text-ui-text focus:outline-none focus:border-ui-accent shadow-2xs cursor-pointer hover:border-ui-accent/60 transition-colors"
-                      >
-                        {availableOutbounds.map(ob => (
-                          <option key={ob} value={ob}>{ob === 'REJECT' ? '🛑 REJECT' : `➔ ${ob}`}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="w-3.5 h-3.5 text-ui-muted absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    </div>
-                  </td>
-
-                  {/* Actions */}
-                  <td className="py-3 px-4 text-right">
-                    <button
-                      onClick={() => onDeleteRule(rule.id)}
-                      className="p-1.5 text-[#A8483B] hover:bg-[#FDF2F0] rounded-lg transition-colors"
-                      title="直接删除规则"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-
-              {filteredRules.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="py-12 text-center text-xs text-ui-muted">
-                    未找到匹配的规则条目，请点击上方按钮贴入或新建
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
       </div>
 
       {/* MODAL: Full Text Rules Editor (文本直接编辑) */}
       <Modal
         open={!!(showFullTextModal)}
-        title={(showFullTextModal) ? <>规则文本编辑</> : ''}
+        title="规则文本编辑"
         size="wide"
         layout="editor"
         onClose={() => setShowFullTextModal(false)}
@@ -496,13 +501,13 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
               </div>
 
               <div className="flex-1 relative min-h-0 bg-ui-surface rounded-xl border border-ui-border overflow-hidden">
-                <textarea
+                <Textarea variant="code"
                   required
                   value={fullRulesText}
                   onChange={e => setFullRulesText(e.target.value)}
                   spellCheck={false}
                   placeholder={`# 示例规则：\n- IP-CIDR,192.168.1.100/32,🎯 本地直连,no-resolve  # 本地NAS\n- IP-CIDR,10.0.0.50/32,💻 远程运维,no-resolve  # 远程跳板机\n- DOMAIN-SUFFIX,apple.com,🎯 本地直连  # Apple 服务\n- RULE-SET,https://raw.githubusercontent.com/.../ai.srs,🤖 AI 服务`}
-                  className="w-full h-full p-4 font-mono text-xs text-ui-text focus:outline-none resize-none leading-relaxed overflow-y-auto"
+                  className="w-full h-full font-mono resize-none"
                 />
               </div>
             </ModalBody>
@@ -533,7 +538,7 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
       {/* MODAL 1: Batch Import Groups */}
       <Modal
         open={!!(showImportGroupsModal)}
-        title={(showImportGroupsModal) ? <>批量贴入策略分组 (Proxy Groups)</> : ''}
+        title="批量贴入策略分组 (Proxy Groups)"
         description={(showImportGroupsModal) ? <>支持直接粘贴 YAML proxy-groups、JSON outbounds 或 Loon MCF 文本行</> : undefined}
         size="wide"
         layout="editor"
@@ -543,26 +548,25 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
           <ModalForm onSubmit={handleImportGroupsSubmit}>
             <ModalBody editor>
               <div className="flex-1 min-h-0 w-full relative">
-                <textarea
+                <Textarea variant="code"
                   required
                   placeholder={`支持粘贴 YAML 列表：\n- name: 🤖 AI 服务\n  type: select\n  proxies:\n    - 🚀 节点选择\n    - 🇺🇸 美国节点\n\n或 Loon 格式：\n📹 YouTube = select,🚀 节点选择,🇺🇸 美国节点\n\n或直接逗号分隔分组名称列表...`}
                   value={groupsImportText}
                   onChange={e => setGroupsImportText(e.target.value)}
                   spellCheck={false}
-                  className="absolute inset-0 w-full h-full p-4 bg-ui-subtle border border-ui-border rounded-xl font-mono text-xs text-ui-text focus:outline-none focus:border-ui-accent resize-none leading-relaxed"
+                  className="absolute inset-0 w-full h-full font-mono resize-none"
                 />
               </div>
             </ModalBody>
             <ModalFooter className="justify-between">
-              <label className="flex items-center gap-2 text-xs text-ui-secondary cursor-pointer">
-                <input
+              <Label className="flex items-center gap-2 cursor-pointer">
+                <Input
                   type="checkbox"
                   checked={groupsReplaceAll}
                   onChange={e => setGroupsReplaceAll(e.target.checked)}
-                  className="rounded text-ui-accent focus:ring-ui-accent"
                 />
                 <span>清空并替换现有所有分组（默认追加合并）</span>
-              </label>
+              </Label>
 
               <div className="flex items-center gap-2">
                 <button
@@ -587,7 +591,7 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
       {/* MODAL 2: Batch Import Local Rules */}
       <Modal
         open={!!(showImportLocalModal)}
-        title={(showImportLocalModal) ? <>批量贴入本地规则 (Local Rules)</> : ''}
+        title="批量贴入本地规则 (Local Rules)"
         description={(showImportLocalModal) ? <>支持粘贴 Clash YAML rules、Sing-box JSON 路由规则或 Surge/Loon 文本行</> : undefined}
         size="wide"
         layout="editor"
@@ -596,29 +600,29 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
         {(showImportLocalModal) && (
           <ModalForm onSubmit={handleImportLocalSubmit}>
             <ModalBody editor>
-              <div className="shrink-0">
-                <label className="block text-xs font-medium text-ui-secondary mb-1.5">
+              <Field className="shrink-0">
+                <Label className="block">
                   默认去向分组（若粘贴的规则中已指定去向，则以规则中的去向为准）
-                </label>
-                <select
+                </Label>
+                <Select
                   value={localDefaultOutbound}
-                  onChange={e => setLocalDefaultOutbound(e.target.value)}
-                  className="w-full px-3.5 py-2 ui-input rounded-xl text-xs"
+                  onValueChange={nextValue => setLocalDefaultOutbound(nextValue)}
+                  className="w-full"
                 >
                   {availableOutbounds.map(ob => (
-                    <option key={ob} value={ob}>{ob === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : `➔ ${ob}`}</option>
+                    <SelectItem key={ob} value={ob}>{ob === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : `➔ ${ob}`}</SelectItem>
                   ))}
-                </select>
-              </div>
+                </Select>
+              </Field>
 
               <div className="flex-1 min-h-0 w-full relative">
-                <textarea
+                <Textarea variant="code"
                   required
                   placeholder={`- IP-CIDR,192.168.1.100/32,🎯 本地直连,no-resolve  # 本地NAS\n- IP-CIDR,10.0.0.50/32,💻 远程运维,no-resolve  # 远程跳板机\n- DOMAIN-SUFFIX,apple.com,🎯 本地直连\n- DOMAIN-KEYWORD,torrent,🎯 本地直连\n- GEOIP,CN,🎯 本地直连`}
                   value={localImportText}
                   onChange={e => setLocalImportText(e.target.value)}
                   spellCheck={false}
-                  className="absolute inset-0 w-full h-full p-4 bg-ui-subtle border border-ui-border rounded-xl font-mono text-xs text-ui-text focus:outline-none focus:border-ui-accent resize-none leading-relaxed"
+                  className="absolute inset-0 w-full h-full font-mono resize-none"
                 />
               </div>
             </ModalBody>
@@ -644,7 +648,7 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
       {/* MODAL 3: Batch Import Remote Rules */}
       <Modal
         open={!!(showImportRemoteModal)}
-        title={(showImportRemoteModal) ? <>批量贴入远程规则集 (Remote Rule-Sets)</> : ''}
+        title="批量贴入远程规则集 (Remote Rule-Sets)"
         description={(showImportRemoteModal) ? <>支持粘贴 Sing-box rule_set JSON、Clash rule-providers 或 Loon [Remote Rule] 列表</> : undefined}
         size="wide"
         layout="editor"
@@ -653,29 +657,29 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
         {(showImportRemoteModal) && (
           <ModalForm onSubmit={handleImportRemoteSubmit}>
             <ModalBody editor>
-              <div className="shrink-0">
-                <label className="block text-xs font-medium text-ui-secondary mb-1.5">
+              <Field className="shrink-0">
+                <Label className="block">
                   默认去向分组（若粘贴的规则中已指定去向，则以规则中的去向为准）
-                </label>
-                <select
+                </Label>
+                <Select
                   value={remoteDefaultOutbound}
-                  onChange={e => setRemoteDefaultOutbound(e.target.value)}
-                  className="w-full px-3.5 py-2 ui-input rounded-xl text-xs"
+                  onValueChange={nextValue => setRemoteDefaultOutbound(nextValue)}
+                  className="w-full"
                 >
                   {availableOutbounds.map(ob => (
-                    <option key={ob} value={ob}>{ob === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : `➔ ${ob}`}</option>
+                    <SelectItem key={ob} value={ob}>{ob === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : `➔ ${ob}`}</SelectItem>
                   ))}
-                </select>
-              </div>
+                </Select>
+              </Field>
 
               <div className="flex-1 min-h-0 w-full relative">
-                <textarea
+                <Textarea variant="code"
                   required
                   placeholder={`https://gh-proxy.com/https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ai-!cn.srs, policy=🤖 AI 服务, tag=AI服务\nhttps://gh-proxy.com/https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/youtube.srs, policy=📹 YouTube, tag=YouTube\nhttps://gh-proxy.com/https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs, policy=🇨🇳 国内服务, tag=国内直连`}
                   value={remoteImportText}
                   onChange={e => setRemoteImportText(e.target.value)}
                   spellCheck={false}
-                  className="absolute inset-0 w-full h-full p-4 bg-ui-subtle border border-ui-border rounded-xl font-mono text-xs text-ui-text focus:outline-none focus:border-ui-accent resize-none leading-relaxed"
+                  className="absolute inset-0 w-full h-full font-mono resize-none"
                 />
               </div>
             </ModalBody>
@@ -701,73 +705,73 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
       {/* MODAL 4: Create Single Rule */}
       <Modal
         open={!!(showAddSingleModal)}
-        title={(showAddSingleModal) ? <>新建单条分流规则</> : ''}
+        title="新建单条分流规则"
         size="lg"
         onClose={() => setShowAddSingleModal(false)}
       >
         {(showAddSingleModal) && (
           <ModalForm onSubmit={handleAddSingleSubmit}>
             <ModalBody>
-              <div>
-                <label className="block text-xs font-medium text-ui-secondary mb-1.5">规则名称 / 备注 (可选)</label>
-                <input
+              <Field>
+                <Label className="block">规则名称 / 备注 (可选)</Label>
+                <Input
                   type="text"
                   value={singleName}
                   onChange={e => setSingleName(e.target.value)}
-                  className="w-full px-3.5 py-2 ui-input rounded-xl text-xs"
+                  className="w-full"
                 />
-              </div>
+              </Field>
 
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-ui-secondary mb-1.5">规则类型</label>
-                  <select
+                <Field>
+                  <Label className="block">规则类型</Label>
+                  <Select
                     value={singleType}
-                    onChange={e => {
-                      const val = e.target.value as any;
+                    onValueChange={nextValue => {
+                      const val = nextValue as any;
                       setSingleType(val);
                       if (val === 'RULE-SET') setSingleKind('remote');
                       else setSingleKind('local');
                     }}
-                    className="w-full px-3.5 py-2 ui-input rounded-xl text-xs"
+                    className="w-full"
                   >
-                    <option value="DOMAIN-SUFFIX">DOMAIN-SUFFIX (域名后缀)</option>
-                    <option value="DOMAIN-KEYWORD">DOMAIN-KEYWORD (域名关键字)</option>
-                    <option value="DOMAIN">DOMAIN (完整域名)</option>
-                    <option value="IP-CIDR">IP-CIDR (IP/网段)</option>
-                    <option value="SRC-IP-CIDR">SRC-IP-CIDR (源IP/网段)</option>
-                    <option value="GEOIP">GEOIP (地理IP库)</option>
-                    <option value="RULE-SET">RULE-SET (远程规则集)</option>
-                    <option value="FINAL">FINAL / MATCH (最终规则)</option>
-                  </select>
-                </div>
+                    <SelectItem value="DOMAIN-SUFFIX">DOMAIN-SUFFIX (域名后缀)</SelectItem>
+                    <SelectItem value="DOMAIN-KEYWORD">DOMAIN-KEYWORD (域名关键字)</SelectItem>
+                    <SelectItem value="DOMAIN">DOMAIN (完整域名)</SelectItem>
+                    <SelectItem value="IP-CIDR">IP-CIDR (IP/网段)</SelectItem>
+                    <SelectItem value="SRC-IP-CIDR">SRC-IP-CIDR (源IP/网段)</SelectItem>
+                    <SelectItem value="GEOIP">GEOIP (地理IP库)</SelectItem>
+                    <SelectItem value="RULE-SET">RULE-SET (远程规则集)</SelectItem>
+                    <SelectItem value="FINAL">FINAL / MATCH (最终规则)</SelectItem>
+                  </Select>
+                </Field>
 
-                <div>
-                  <label className="block text-xs font-medium text-ui-secondary mb-1.5">去向策略组</label>
-                  <select
+                <Field>
+                  <Label className="block">去向策略组</Label>
+                  <Select
                     value={singleOutbound}
-                    onChange={e => setSingleOutbound(e.target.value)}
-                    className="w-full px-3.5 py-2 ui-input rounded-xl text-xs font-semibold"
+                    onValueChange={nextValue => setSingleOutbound(nextValue)}
+                    className="w-full"
                   >
                     {availableOutbounds.map(ob => (
-                      <option key={ob} value={ob}>{ob === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : `➔ ${ob}`}</option>
+                      <SelectItem key={ob} value={ob}>{ob === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : `➔ ${ob}`}</SelectItem>
                     ))}
-                  </select>
-                </div>
+                  </Select>
+                </Field>
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-ui-secondary mb-1.5">
+              <Field>
+                <Label className="block">
                   匹配参数 / 规则内容 / 远程 URL
-                </label>
-                <input
+                </Label>
+                <Input
                   type="text"
                   required
                   value={singlePayload}
                   onChange={e => setSinglePayload(e.target.value)}
-                  className="w-full px-3.5 py-2 ui-input rounded-xl text-xs font-mono"
+                  className="w-full font-mono"
                 />
-              </div>
+              </Field>
             </ModalBody>
             <ModalFooter>
               <button
@@ -791,37 +795,37 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
       {/* MODAL 5: Create New Proxy Group */}
       <Modal
         open={!!(showGroupModal)}
-        title={(showGroupModal) ? <>添加策略分组</> : ''}
+        title="添加策略分组"
         size="md"
         onClose={() => setShowGroupModal(false)}
       >
         {(showGroupModal) && (
           <ModalForm onSubmit={handleAddGroupSubmit}>
             <ModalBody>
-              <div>
-                <label className="block text-xs font-medium text-ui-secondary mb-1.5">分组名称 (支持 Emoji)</label>
-                <input
+              <Field>
+                <Label className="block">分组名称 (支持 Emoji)</Label>
+                <Input
                   type="text"
                   required
                   placeholder=""
                   value={newGroupName}
                   onChange={e => setNewGroupName(e.target.value)}
-                  className="w-full px-3.5 py-2 ui-input rounded-xl text-xs"
+                  className="w-full"
                 />
-              </div>
+              </Field>
 
-              <div>
-                <label className="block text-xs font-medium text-ui-secondary mb-1.5">策略组类型</label>
-                <select
+              <Field>
+                <Label className="block">策略组类型</Label>
+                <Select
                   value={newGroupType}
-                  onChange={e => setNewGroupType(e.target.value as any)}
-                  className="w-full px-3.5 py-2 ui-input rounded-xl text-xs"
+                  onValueChange={nextValue => setNewGroupType(nextValue as any)}
+                  className="w-full"
                 >
-                  <option value="select">手动选择 (Select)</option>
-                  <option value="urltest">自动测速 (URL-Test)</option>
-                  <option value="direct">本地直连 (Direct)</option>
-                </select>
-              </div>
+                  <SelectItem value="select">手动选择 (Select)</SelectItem>
+                  <SelectItem value="urltest">自动测速 (URL-Test)</SelectItem>
+                  <SelectItem value="direct">本地直连 (Direct)</SelectItem>
+                </Select>
+              </Field>
             </ModalBody>
             <ModalFooter>
               <button

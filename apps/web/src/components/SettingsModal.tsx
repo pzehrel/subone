@@ -1,3 +1,5 @@
+import { Input } from './ui/Input';
+import { Field, Label } from './ui/Field';
 import React, { useState } from 'react';
 import { ModalBody } from './Modal';
 import { KeyRound, Save, RefreshCw, Check, ShieldAlert, Palette } from 'lucide-react';
@@ -104,8 +106,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {iconMsg && (
           <div
             className={`p-2.5 rounded-xl text-xs flex items-center gap-2 ${iconMsg.type === 'success'
-                ? 'bg-[#EAF2EE] border border-[#D5E5DE] text-[#367A68]'
-                : 'bg-[#FDF2F0] border border-[#F2D6D3] text-[#A8483B]'
+              ? 'bg-[#EAF2EE] border border-[#D5E5DE] text-[#367A68]'
+              : 'bg-[#FDF2F0] border border-[#F2D6D3] text-[#A8483B]'
               }`}
           >
             {iconMsg.type === 'success' ? <Check className="w-3.5 h-3.5" /> : <ShieldAlert className="w-3.5 h-3.5" />}
@@ -115,54 +117,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         <form onSubmit={handleSaveIcons} className="space-y-3">
           <div className="grid grid-cols-3 gap-2.5">
-            <div>
-              <label className="block text-[11px] font-medium text-ui-secondary mb-1">
+            <Field>
+              <Label className="block">
                 自建/独立源
-              </label>
+              </Label>
               <div className="flex items-center gap-1.5">
-                <input
+                <Input
                   type="text"
                   required
                   placeholder="🖥️"
                   value={customIcon}
                   onChange={e => setCustomIcon(e.target.value)}
-                  className="w-full px-2.5 py-1.5 ui-input rounded-xl text-xs text-center font-mono"
+                  className="w-full font-mono"
                 />
               </div>
               <span className="text-[10px] text-ui-muted mt-0.5 block">例如: 🖥️</span>
-            </div>
-            <div>
-              <label className="block text-[11px] font-medium text-ui-secondary mb-1">
+            </Field>
+            <Field>
+              <Label className="block">
                 过滤源
-              </label>
+              </Label>
               <div className="flex items-center gap-1.5">
-                <input
+                <Input
                   type="text"
                   required
                   placeholder="✨"
                   value={filterIcon}
                   onChange={e => setFilterIcon(e.target.value)}
-                  className="w-full px-2.5 py-1.5 ui-input rounded-xl text-xs text-center font-mono"
+                  className="w-full font-mono"
                 />
               </div>
               <span className="text-[10px] text-ui-muted mt-0.5 block">例如: ✨</span>
-            </div>
-            <div>
-              <label className="block text-[11px] font-medium text-ui-secondary mb-1">
+            </Field>
+            <Field>
+              <Label className="block">
                 机场订阅
-              </label>
+              </Label>
               <div className="flex items-center gap-1.5">
-                <input
+                <Input
                   type="text"
                   required
                   placeholder="⚡️"
                   value={remoteIcon}
                   onChange={e => setRemoteIcon(e.target.value)}
-                  className="w-full px-2.5 py-1.5 ui-input rounded-xl text-xs text-center font-mono"
+                  className="w-full font-mono"
                 />
               </div>
               <span className="text-[10px] text-ui-muted mt-0.5 block">例如: ⚡️</span>
-            </div>
+            </Field>
           </div>
 
           <div className="flex justify-end">
@@ -192,8 +194,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {pwdMsg && (
           <div
             className={`p-2.5 rounded-xl text-xs flex items-center gap-2 ${pwdMsg.type === 'success'
-                ? 'bg-[#EAF2EE] border border-[#D5E5DE] text-[#367A68]'
-                : 'bg-[#FDF2F0] border border-[#F2D6D3] text-[#A8483B]'
+              ? 'bg-[#EAF2EE] border border-[#D5E5DE] text-[#367A68]'
+              : 'bg-[#FDF2F0] border border-[#F2D6D3] text-[#A8483B]'
               }`}
           >
             {pwdMsg.type === 'success' ? <Check className="w-3.5 h-3.5" /> : <ShieldAlert className="w-3.5 h-3.5" />}
@@ -203,47 +205,47 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         <form onSubmit={handleUpdatePassword} className="space-y-3">
           {config.settings.adminPassword && (
-            <div>
-              <label className="block text-[11px] font-medium text-ui-secondary mb-1">
+            <Field>
+              <Label className="block">
                 原登录密码
-              </label>
-              <input
+              </Label>
+              <Input
                 type="password"
                 placeholder="请输入当前密码"
                 value={oldPassword}
                 onChange={e => setOldPassword(e.target.value)}
-                className="w-full px-3 py-2 ui-input rounded-xl text-xs font-mono"
+                className="w-full font-mono"
               />
-            </div>
+            </Field>
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            <div>
-              <label className="block text-[11px] font-medium text-ui-secondary mb-1">
+            <Field>
+              <Label className="block">
                 新登录密码
-              </label>
-              <input
+              </Label>
+              <Input
                 type="password"
                 required
                 placeholder="输入新密码"
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
-                className="w-full px-3 py-2 ui-input rounded-xl text-xs font-mono"
+                className="w-full font-mono"
               />
-            </div>
-            <div>
-              <label className="block text-[11px] font-medium text-ui-secondary mb-1">
+            </Field>
+            <Field>
+              <Label className="block">
                 确认新密码
-              </label>
-              <input
+              </Label>
+              <Input
                 type="password"
                 required
                 placeholder="再次输入新密码"
                 value={confirmPassword}
                 onChange={e => setConfirmPassword(e.target.value)}
-                className="w-full px-3 py-2 ui-input rounded-xl text-xs font-mono"
+                className="w-full font-mono"
               />
-            </div>
+            </Field>
           </div>
 
           <div className="flex justify-end">

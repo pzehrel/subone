@@ -1,3 +1,6 @@
+import type { SubscriptionInfo } from '../../../shared/subscription-info';
+export type { SubscriptionInfo } from '../../../shared/subscription-info';
+
 export interface ProxyNode {
   id: string;
   name: string;
@@ -26,7 +29,7 @@ export interface SubscriptionSource {
   name: string;
   url: string;
   enabled: boolean;
-  type?: 'remote' | 'manual' | 'auto' | 'base64' | 'clash' | 'singbox' | 'custom' | string;
+  type?: 'remote' | 'manual' | 'auto' | 'base64' | 'clash' | 'singbox' | 'quantumultx' | 'custom' | string;
   lastUpdated?: string;
   nodeCount?: number;
   nodes?: ProxyNode[];
@@ -34,17 +37,6 @@ export interface SubscriptionSource {
   expiryNodeRegex?: string;
   infoNodes?: ProxyNode[];
   subscriptionInfo?: SubscriptionInfo;
-}
-
-export interface SubscriptionInfo {
-  upload?: number;
-  download?: number;
-  total?: number;
-  remaining?: number;
-  used?: number;
-  expire?: number;
-  trafficText?: string;
-  expiryText?: string;
 }
 
 export interface ExtractionRule {

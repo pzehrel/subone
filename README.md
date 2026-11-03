@@ -83,14 +83,16 @@ Docker 配置保存在 `data/server-config.json`。重建容器时，请保留 `
 - **多 Profile**：
   - 在 subone 中管理多个 Profile，如手机、笔记本、台机、旁路由，可能使用不同的客户端，相应使用不同的配置，每个 Profile 各自使用一个 Token 链接；
   - 每个 Profile 可按需勾选不同源节点、自选策略组、分流规则及各自的模版；
+  - 订阅卡片和客户端订阅会汇总所选且已启用上游的用量、总额度与剩余流量，到期时间取最早值。未选择分组时汇总全部已启用上游；未提供的信息保持未知；
 - **独立节点与上游机场订阅源聚合**：
   - 支持导入各类上游机场订阅，提取节点并按地区或关键字筛选分组；
   - 添加或编辑网络订阅源时，可用正则分别匹配流量、到期时间提示项，并预览匹配结果。匹配项会从可用节点和导出节点中移除，信息显示在订阅卡片上；
   - 流量与到期时间优先采用机场响应头中的信息，缺失时使用匹配项。修改规则立即作用于已有节点，清空规则可恢复提示项，无需重新拉取订阅；
-  - 支持添加自建独立节点，支持单条/批量 URI、Clash YAML、Sing-box JSON 格式录入与解析；
+  - 支持添加自建独立节点，支持单条/批量 URI、Clash YAML、Sing-box JSON、QuanX 节点格式录入与解析；
 - **协议与传输支持**：
   - **支持导入解析**：VLESS (Reality/Vision/gRPC/WS)、VMess、Shadowsocks (SS 2022/AEAD)、Trojan、Hysteria 2、TUIC v5、AnyTLS、WireGuard、Snell (v1~v4)、SOCKS5、HTTP、v2rayn 等协议；
-  - **支持输入格式**：URI 链接列表、Base64 订阅、Clash/Mihomo YAML、Sing-box JSON；
+  - **支持输入格式**：URI 链接列表、Base64 订阅、Clash/Mihomo YAML、Sing-box JSON、QuanX 原生节点列表及完整配置中的本地节点；
+  - QuanX 订阅可自动识别，也可在“格式解析模式”中选择“QuanX (Quantumult X)”。支持 Base64 包装，切换解析模式后会重新拉取节点；
 - **策略组与分流规则**：
   - 策略组支持 select、url-test、fallback、relay（链式代理）等类型，支持节点按正则过滤与多级嵌套；
   - 本地规则：CIDR、DOMAIN、DOMAIN-SUFFIX、DOMAIN-KEYWORD 等；

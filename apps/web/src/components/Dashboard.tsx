@@ -1,3 +1,8 @@
+import { Input } from './ui/Input';
+import { Select, SelectItem } from './ui/Select';
+import { Field, Label } from './ui/Field';
+import { Badge } from './ui/Badge';
+import { HelpTooltip } from './HelpTooltip';
 import React, { useState, useEffect, useMemo } from 'react';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import {
@@ -26,11 +31,14 @@ import {
   AppConfig,
   ProxyNode,
   SubscriptionProfile,
+  SubscriptionSource,
   ConfigTemplate,
   ClientType,
 } from '../types';
 import { apiFetch, API_BASE } from '../api';
 import { copyToClipboard } from '../utils/clipboard';
+import { formatSubscriptionExpiry, formatSubscriptionTraffic } from '../utils/subscriptionInfo';
+import { aggregateSubscriptionInfo, selectSubscriptionSources } from '../../../../shared/subscription-info';
 
 export const CLIENT_CONFIG_OPTIONS: { type: ClientType; label: string }[] = [
   { type: 'singbox', label: 'Sing-box' },
@@ -48,6 +56,23 @@ function generateRandomSubToken(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function ProfileUsage({ sources, sourceIds }: { sources: SubscriptionSource[]; sourceIds?: string[] }) {
+  const info = aggregateSubscriptionInfo(selectSubscriptionSources(sources, sourceIds).map(source => source.subscriptionInfo));
+  const traffic = formatSubscriptionTraffic(info);
+  const expiry = formatSubscriptionExpiry(info);
+  if (!traffic && !expiry) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-ui-secondary">
+      <span className="inline-flex items-center gap-1.5 font-medium">
+        用量信息
+        <HelpTooltip label="用量信息说明" content="用量按所选且已启用的上游汇总，仅统计上游提供的信息。到期时间取最早值。" />
+      </span>
+      {traffic && <span>{traffic}</span>}
+      {expiry && <span>{expiry}</span>}
+    </div>
+  );
 }
 
 interface DashboardProps {
@@ -419,9 +444,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-bold text-ui-text">订阅配置 (Profiles)</h2>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-ui-hover text-ui-secondary font-medium">
+            <Badge tone="neutral" className="font-medium">
               共 {profiles.length} 个订阅
-            </span>
+            </Badge>
           </div>
 
           <button
@@ -464,9 +489,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <div className="flex flex-wrap items-center gap-2.5">
                     <span className="text-sm font-bold text-ui-text">{prof.name}</span>
                     {!prof.enabled && (
-                      <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-ui-hover text-ui-muted">
+                      <Badge tone="neutral" className="font-medium">
                         已停用
-                      </span>
+                      </Badge>
                     )}
                     {prof.description && (
                       <span className="text-xs text-ui-muted hidden md:inline border-l border-ui-border pl-2.5">
@@ -503,47 +528,49 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                 {/* 中间行：指标特性 */}
                 <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.8 rounded-lg bg-ui-subtle border border-ui-border text-[#3D3A37] font-medium">
+                  <Badge tone="neutral" className="border font-medium">
                     <Radio className="w-3 h-3 text-ui-accent" />
                     <span>{count} 节点</span>
                     {prof.nodeFilter?.selectedNodeIds && prof.nodeFilter.selectedNodeIds.length > 0}
-                  </span>
+                  </Badge>
 
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.8 rounded-lg bg-ui-subtle border border-ui-border text-[#3D3A37] font-medium">
+                  <Badge tone="neutral" className="border font-medium">
                     <SlidersHorizontal className="w-3 h-3 text-[#5A7A6F]" />
                     <span>{groupCount} 策略组</span>
-                  </span>
+                  </Badge>
 
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.8 rounded-lg bg-ui-subtle border border-ui-border text-[#3D3A37] font-medium">
+                  <Badge tone="neutral" className="border font-medium">
                     <Filter className="w-3 h-3 text-[#8A7558]" />
                     <span>{ruleCount} 条分流</span>
-                  </span>
+                  </Badge>
 
                   {CLIENT_CONFIG_OPTIONS.map(c => {
                     const tplId = prof.templates?.[c.type];
                     if (!tplId) return null;
                     const tpl = config?.templates?.find(t => t.id === tplId);
                     return (
-                      <span
+                      <Badge
                         key={c.type}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-ui-subtle border border-ui-border text-[11px] text-ui-secondary"
+                        tone="neutral" className="border"
                         title={`${c.label} 独立绑定: ${tpl?.name || tplId}`}
                       >
                         <span className="text-ui-muted">{c.label}:</span>
                         <span className="text-ui-text font-medium">{tpl?.name || '指定模版'}</span>
-                      </span>
+                      </Badge>
                     );
                   })}
                 </div>
 
+                <ProfileUsage sources={config?.sources || []} sourceIds={prof.nodeFilter?.sourceIds} />
+
                 {/* 底部行：订阅链接与下拉组合复制 */}
                 <div className="pt-2 border-t border-ui-border/80 flex items-center justify-between gap-3">
                   <div className="flex-1 flex items-center gap-2 min-w-0">
-                    <input
+                    <Input
                       type="text"
                       readOnly
                       value={autoUrl}
-                      className="flex-1 min-w-0 bg-ui-subtle px-3.5 py-1.5 rounded-xl border border-ui-border text-xs font-mono text-ui-text select-all focus:outline-none"
+                      className="flex-1 min-w-0 font-mono select-all"
                     />
 
                     {/* 组合下拉复制按钮 */}
@@ -978,40 +1005,40 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
         {/* ================= TAB 1: BASIC & TEMPLATES (FIRST!) ================= */}
         {activeTab === 'basic' && (
           <div className="space-y-5 max-w-xl">
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-ui-text">订阅名称 *</label>
-              <input
+            <Field className="space-y-1.5">
+              <Label>订阅名称 *</Label>
+              <Input
                 type="text"
                 value={profile.name}
                 onChange={e => onChangeProfile(prev => prev ? { ...prev, name: e.target.value } : prev)}
-                className="w-full px-3.5 py-2.5 bg-ui-subtle border border-ui-border rounded-xl text-xs text-ui-text focus:outline-none focus:border-ui-accent"
+                className="w-full"
               />
-            </div>
+            </Field>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-ui-text">描述说明</label>
-              <input
+            <Field className="space-y-1.5">
+              <Label>描述说明</Label>
+              <Input
                 type="text"
                 placeholder="说明此订阅的适用设备或使用场景"
                 value={profile.description || ''}
                 onChange={e => onChangeProfile(prev => prev ? { ...prev, description: e.target.value } : prev)}
-                className="w-full px-3.5 py-2.5 bg-ui-subtle border border-ui-border rounded-xl text-xs text-ui-text focus:outline-none focus:border-ui-accent"
+                className="w-full"
               />
-            </div>
+            </Field>
 
             {/* 订阅凭据 (Token) */}
-            <div className="pt-3 border-t border-ui-border space-y-2">
+            <Field className="pt-3 border-t border-ui-border space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-ui-text">订阅凭据 (Token)</label>
+                <Label>订阅凭据 (Token)</Label>
               </div>
 
               <div className="flex items-center gap-2">
-                <input
+                <Input
                   type="text"
                   value={profile.token || ''}
                   onChange={e => onChangeProfile(prev => prev ? { ...prev, token: e.target.value } : prev)}
                   placeholder="输入或生成订阅 Token"
-                  className="flex-1 px-3.5 py-2.5 bg-ui-subtle border border-ui-border rounded-xl text-xs font-mono text-ui-text focus:outline-none focus:border-ui-accent"
+                  className="flex-1 font-mono"
                 />
                 <button
                   type="button"
@@ -1059,7 +1086,7 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
                   <span>重新生成</span>
                 </button>
               </div>
-            </div>
+            </Field>
 
             {/* 模版绑定：按需覆盖模式 */}
             <div className="pt-3 border-t border-ui-border space-y-3">
@@ -1073,10 +1100,10 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
 
                 {availableClients.length > 0 && (
                   <div className="shrink-0">
-                    <select
+                    <Select aria-label="绑定客户端"
                       value=""
-                      onChange={e => {
-                        const cType = e.target.value as ClientType;
+                      onValueChange={nextValue => {
+                        const cType = nextValue as ClientType;
                         if (!cType) return;
                         const defaultTpl = config?.templates?.find(t => t.type === cType && t.isDefault)
                           || config?.templates?.find(t => t.type === cType);
@@ -1088,15 +1115,15 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
                           }
                         } : prev);
                       }}
-                      className="px-2.5 py-1.5 bg-ui-surface hover:bg-ui-subtle border border-ui-accent/40 text-ui-accent rounded-lg text-xs font-medium cursor-pointer transition-colors shadow-2xs focus:outline-none"
+                      className="cursor-pointer"
                     >
-                      <option value="" disabled>+ 绑定指定客户端</option>
+                      <SelectItem value="" disabled>+ 绑定指定客户端</SelectItem>
                       {availableClients.map(c => (
-                        <option key={c.type} value={c.type}>
+                        <SelectItem key={c.type} value={c.type}>
                           {c.label}
-                        </option>
+                        </SelectItem>
                       ))}
-                    </select>
+                    </Select>
                   </div>
                 )}
               </div>
@@ -1122,10 +1149,10 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
                         </div>
 
                         <div className="flex-1 min-w-0">
-                          <select
+                          <Select
                             value={currentTplId}
-                            onChange={e => {
-                              const val = e.target.value;
+                            onValueChange={nextValue => {
+                              const val = nextValue;
                               onChangeProfile(prev => prev ? {
                                 ...prev,
                                 templates: {
@@ -1134,14 +1161,14 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
                                 }
                               } : prev);
                             }}
-                            className="w-full px-3 py-1.5 bg-ui-subtle border border-ui-border rounded-lg text-xs text-ui-text focus:outline-none focus:border-ui-accent"
+                            className="w-full"
                           >
                             {clientTemplates.map(t => (
-                              <option key={t.id} value={t.id}>
+                              <SelectItem key={t.id} value={t.id}>
                                 {t.name} {t.isDefault ? '(系统默认)' : ''}
-                              </option>
+                              </SelectItem>
                             ))}
-                          </select>
+                          </Select>
                         </div>
 
                         <button
@@ -1195,6 +1222,8 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
               </div>
             </div>
 
+            <ProfileUsage sources={allAvailableSources} sourceIds={profile.nodeFilter?.sourceIds} />
+
             {/* 分组卡片网格展示区 */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pr-1">
               {allAvailableSources.map(source => {
@@ -1227,13 +1256,13 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
                         <div className="min-w-0 flex-1 space-y-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {isCustom ? (
-                              <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-[#FBF2EA] text-[#C45E38] border border-[#F2D8C9] shrink-0">
+                              <Badge tone="accent" className="border">
                                 独立组
-                              </span>
+                              </Badge>
                             ) : (
-                              <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-[#EAF2EE] text-[#2D6A5A] border border-[#D5E5DE] shrink-0">
+                              <Badge tone="success" className="border">
                                 订阅
-                              </span>
+                              </Badge>
                             )}
 
                             <span className="text-xs font-bold text-ui-text truncate">
@@ -1252,9 +1281,9 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        <span className="px-2 py-0.5 text-[10px] font-mono font-semibold rounded bg-ui-subtle border border-ui-border text-ui-secondary">
+                        <Badge tone="neutral" className="font-mono border">
                           {nodesList.length} 节点
-                        </span>
+                        </Badge>
 
                         <button
                           type="button"
@@ -1418,9 +1447,9 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
                           <span className="text-xs font-bold text-ui-text truncate">
                             {rule.name}
                           </span>
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-ui-hover text-ui-secondary">
+                          <Badge tone="neutral">
                             {rule.type}
-                          </span>
+                          </Badge>
                         </div>
                         <div className="text-[10px] text-ui-muted truncate mt-0.5 flex items-center gap-1.5">
                           <span>指向: <span className="font-semibold text-ui-accent">{rule.outbound}</span></span>

@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { FormHTMLAttributes, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ModalCloseButton } from './ModalCloseButton';
+import { ModalLayerContext } from './modal-layer';
 
 interface ModalProps {
   open: boolean;
@@ -55,6 +56,7 @@ export function Modal({ open, title, description, size = 'md', layout = 'content
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || activeModals.at(-1) !== root) return;
+      if (event.target instanceof Element && event.target.closest('[data-ui-select-content]')) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         onCloseRef.current();
@@ -62,7 +64,7 @@ export function Modal({ open, title, description, size = 'md', layout = 'content
       if (event.key !== 'Tab') return;
       const controls = Array.from(panel.querySelectorAll<HTMLElement>(
         'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      )).filter(element => element.getClientRects().length > 0 && !element.closest('[inert]'));
+      )).filter(element => element.tabIndex >= 0 && element.getClientRects().length > 0 && !element.closest('[inert]'));
       const first = controls[0];
       const last = controls.at(-1);
       if (!first || !last) {
@@ -105,26 +107,28 @@ export function Modal({ open, title, description, size = 'md', layout = 'content
       onAnimationEnd={event => { if (event.target === event.currentTarget && !open) setSnapshot(null); }}
       className="ui-modal-backdrop"
     >
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={displayed.description ? descriptionId : undefined}
-        tabIndex={-1}
-        data-size={size}
-        data-layout={layout}
-        className="ui-modal-panel"
-      >
-        <div className="ui-modal-header">
-          <div className="min-w-0">
-            <h2 id={titleId} className="ui-modal-title">{displayed.title}</h2>
-            {displayed.description && <div id={descriptionId} className="ui-modal-description">{displayed.description}</div>}
+      <ModalLayerContext.Provider value={rootRef}>
+        <div
+          ref={panelRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={displayed.description ? descriptionId : undefined}
+          tabIndex={-1}
+          data-size={size}
+          data-layout={layout}
+          className="ui-modal-panel"
+        >
+          <div className="ui-modal-header">
+            <div className="min-w-0">
+              <h2 id={titleId} className="ui-modal-title">{displayed.title}</h2>
+              {displayed.description && <div id={descriptionId} className="ui-modal-description">{displayed.description}</div>}
+            </div>
+            <ModalCloseButton onClick={onClose} />
           </div>
-          <ModalCloseButton onClick={onClose} />
+          <div className="ui-modal-content">{displayed.children}</div>
         </div>
-        <div className="ui-modal-content">{displayed.children}</div>
-      </div>
+      </ModalLayerContext.Provider>
     </div>,
     document.body,
   );

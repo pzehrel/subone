@@ -38,6 +38,14 @@
   --color-ui-accent: var(--ui-accent);
   --color-ui-accent-hover: var(--ui-accent-hover);
   --color-ui-accent-soft: var(--ui-accent-soft);
+  --color-ui-danger: var(--ui-danger);
+  --color-ui-danger-soft: var(--ui-danger-soft);
+  --color-ui-success: var(--ui-success);
+  --color-ui-success-soft: var(--ui-success-soft);
+  --color-ui-warning: var(--ui-warning);
+  --color-ui-warning-soft: var(--ui-warning-soft);
+  --color-ui-info: var(--ui-info);
+  --color-ui-info-soft: var(--ui-info-soft);
 }
 
 @layer components {
@@ -182,15 +190,7 @@
     line-height: 20px;
   }
 
-  .ui-modal-body :is(input:not([type="checkbox"]):not([type="radio"]):not([type="color"]), select, textarea) {
-    border-color: var(--ui-border);
-    border-radius: var(--ui-radius-control);
-  }
 
-  .ui-modal-body :is(input, select, textarea):focus-visible {
-    outline: 2px solid var(--ui-accent);
-    outline-offset: 2px;
-  }
 }
 
 .ui-modal-backdrop[data-state="open"] { animation: modal-fade-in var(--ui-dialog-enter-duration) ease-out both; }

@@ -342,6 +342,56 @@ test('info rules immediately reclassify cached nodes and filter every subscripti
   assert.equal(restored.body.data.subscriptionInfo, undefined);
 });
 
+test('profile subscriptions aggregate only selected enabled upstreams for every client format', async () => {
+  const config = fixture();
+  const source = (id: string, download: number, enabled = true): SubscriptionSource => ({
+    id, name: id, type: 'remote', url: `https://${id}.example.test/sub`, enabled,
+    nodes: [{ id: `node-${id}`, name: id, type: 'ss', server: `${id}.example.test`, port: 443, method: 'aes-128-gcm', password: 'test' }],
+    subscriptionInfo: { upload: 1024, download, total: 10240, expire: id === 'b' ? 1861920000 : 1893456000 },
+  });
+  config.sources = [source('a', 2048), source('b', 4096), source('unselected', 50000), source('disabled', 60000, false)];
+  config.profiles = [{
+    id: 'profile', name: 'Phone', token: 'usage-test', enabled: true,
+    nodeFilter: { mode: 'all', sourceIds: ['a', 'b', 'b', 'disabled'] },
+  }];
+  context.setAppConfig(config);
+
+  for (const target of ['', '/mihomo', '/singbox', '/loon', '/qx', '/egern', '/shadowrocket', '/shadowrocket?format=base64']) {
+    const response = await fetch(`${origin}/s/usage-test${target}`);
+    assert.equal(response.status, 200, target);
+    assert.equal(response.headers.get('subscription-userinfo'), 'upload=2048; download=6144; total=20480; expire=1861920000', target);
+    await response.text();
+  }
+
+  const profile = context.getAppConfig().profiles![0];
+  profile.nodeFilter.sourceIds = ['b'];
+  let response = await fetch(`${origin}/s/usage-test/mihomo`);
+  assert.equal(response.headers.get('subscription-userinfo'), 'upload=1024; download=4096; total=10240; expire=1861920000');
+  await response.text();
+  config.sources[1].subscriptionInfo!.download = 5120;
+  response = await fetch(`${origin}/s/usage-test/mihomo`);
+  assert.equal(response.headers.get('subscription-userinfo'), 'upload=1024; download=5120; total=10240; expire=1861920000');
+  await response.text();
+
+  profile.nodeFilter.sourceIds = [];
+  response = await fetch(`${origin}/s/usage-test/mihomo`);
+  assert.equal(response.headers.get('subscription-userinfo'), 'upload=3072; download=57168; total=30720; expire=1861920000');
+  await response.text();
+});
+
+test('profile subscriptions omit fake traffic when upstream metadata is unavailable', async () => {
+  const config = fixture();
+  config.sources = [{ id: 'manual', name: 'Manual', type: 'manual', enabled: true, nodes: [] }];
+  config.profiles = [{ id: 'profile', name: 'Phone', token: 'no-usage', enabled: true, nodeFilter: { mode: 'all' } }];
+  context.setAppConfig(config);
+  for (const target of ['mihomo', 'singbox', 'loon', 'qx', 'egern', 'shadowrocket']) {
+    const response = await fetch(`${origin}/s/no-usage/${target}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('subscription-userinfo'), null);
+    await response.text();
+  }
+});
+
 test('source creation, URL changes and refresh preserve upstream metadata', async t => {
   let expire = 1893456000;
   const upstream = createServer((_request, response) => {
@@ -562,4 +612,41 @@ test('classical rule subscriptions authorize before fetching and convert domain 
   assert.match(converted.headers.get('content-type') || '', /text\/plain/);
   assert.equal(await converted.text(), 'host,api.example.test,direct\nip6-cidr,2001:db8::/32,direct,no-resolve\n');
   assert.equal(upstreamReads, 1);
+});
+
+test('QuanX source creation, format changes and refresh preserve the selected parser', async t => {
+  const userAgents: string[] = [];
+  const upstream = createServer((request, response) => {
+    const ua = request.headers['user-agent'] || '';
+    userAgents.push(ua);
+    if (ua.includes('Quantumult')) {
+      response.end('shadowsocks=quanx.example.test:443, method=aes-128-gcm, password=test-secret, tag=QuanX node');
+    } else {
+      response.end('ss://' + Buffer.from('aes-128-gcm:test-secret').toString('base64') + '@auto.example.test:443#Auto');
+    }
+  });
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  t.after(() => new Promise<void>((resolve, reject) => upstream.close(error => error ? reject(error) : resolve())));
+  const address = upstream.address();
+  assert.ok(address && typeof address !== 'string');
+  const url = `http://127.0.0.1:${address.port}/subscription`;
+  const created = await post<SubscriptionSource>('/api/sources', { name: 'QuanX upstream', url, type: 'auto' });
+  assert.equal(created.status, 200);
+  assert.equal(created.body.data.nodes?.[0].name, 'Auto');
+  const id = created.body.data.id;
+  const updatedResponse = await fetch(`${origin}/api/sources/${id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'quantumultx' }),
+  });
+  const updated = await readApiResponse<SubscriptionSource>(updatedResponse);
+  assert.equal(updatedResponse.status, 200);
+  assert.equal(updated.data.type, 'quantumultx');
+  assert.equal(updated.data.url, url);
+  assert.equal(updated.data.nodes?.[0].name, 'QuanX node');
+  assert.equal(updated.data.nodes?.[0].server, 'quanx.example.test');
+  assert.match(userAgents.at(-1) || '', /Quantumult/);
+  const refreshed = await post(`/api/sources/${id}/refresh`, {});
+  assert.equal(refreshed.status, 200);
+  assert.equal(context.appConfig.sources[0].nodes?.[0].name, 'QuanX node');
+  assert.equal(context.appConfig.sources[0].type, 'quantumultx');
 });

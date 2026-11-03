@@ -1,3 +1,8 @@
+import { Input } from './ui/Input';
+import { Textarea } from './ui/Textarea';
+import { Select, SelectItem } from './ui/Select';
+import { Field, Label } from './ui/Field';
+import { Badge } from './ui/Badge';
 import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
 import React, { useState, useMemo } from 'react';
 import {
@@ -407,37 +412,37 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
           <div className="flex items-center gap-2">
             <Layers className="w-5 h-5 text-ui-accent" />
             <h1 className="text-base font-bold text-ui-text">上游订阅</h1>
-            <span className="px-2.5 py-0.5 bg-ui-accent-soft text-[#B85D3F] rounded-md font-mono text-xs font-bold border border-[#F3DDD3]">
+            <Badge tone="accent" className="font-mono border">
               共 {totalNodesCount} 节点
-            </span>
+            </Badge>
           </div>
           <div className="flex items-center gap-2 mt-1 text-xs text-ui-secondary flex-wrap">
             <span className="text-[#D0C9BD]">•</span>
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-ui-subtle border border-ui-border text-ui-secondary text-[11px] font-medium">
+            <Badge tone="neutral" className="border font-medium">
               <span>{customSources.length} 独立组</span>
-            </span>
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#EAF2EE] border border-[#D5E5DE] text-[#2D6A5A] text-[11px] font-medium">
+            </Badge>
+            <Badge tone="success" className="border font-medium">
               <span>{networkSources.length} 网络订阅</span>
-            </span>
+            </Badge>
           </div>
         </div>
 
         {/* 顶部操作按钮组 */}
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
           <button
-            onClick={() => handleOpenImportModal()}
+            onClick={handleOpenAddNetworkModal}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold ui-button-primary rounded-xl shadow-2xs cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span>导入节点</span>
+            <span>添加订阅</span>
           </button>
 
           <button
-            onClick={handleOpenAddNetworkModal}
+            onClick={() => handleOpenImportModal()}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold ui-button-secondary rounded-xl shadow-2xs cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span>添加订阅</span>
+            <span>导入节点</span>
           </button>
 
           <button
@@ -493,13 +498,13 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                     <div className="flex items-center gap-2 flex-wrap">
                       {/* 类型徽章 */}
                       {isCustom ? (
-                        <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-[#FBF2EA] text-[#C45E38] border border-[#F2D8C9] shrink-0 font-mono">
+                        <Badge tone="accent" className="border font-mono">
                           独立组
-                        </span>
+                        </Badge>
                       ) : (
-                        <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-[#EAF2EE] text-[#2D6A5A] border border-[#D5E5DE] shrink-0 font-mono">
+                        <Badge tone="success" className="border font-mono">
                           订阅
-                        </span>
+                        </Badge>
                       )}
 
                       {/* 标题 */}
@@ -508,15 +513,15 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                       </h3>
 
                       {/* 节点数徽章 */}
-                      <span className={`px-2 py-0.5 text-[10px] font-mono font-semibold rounded shrink-0 ${source.enabled === false ? 'bg-[#ECE8E1] text-ui-muted' : 'bg-ui-divider text-ui-secondary'}`}>
+                      <Badge className="font-mono">
                         {nodesList.length} 节点
-                      </span>
+                      </Badge>
 
                       {/* 停用状态提示徽章 */}
                       {source.enabled === false && (
-                        <span className="px-1.5 py-0.2 text-[10px] font-semibold rounded bg-[#F0EBE1] text-ui-muted border border-[#DDD6C9] shrink-0">
+                        <Badge tone="neutral" className="border">
                           已停用 (不导出)
-                        </span>
+                        </Badge>
                       )}
                     </div>
 
@@ -663,13 +668,13 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                                 {node.name}
                               </span>
                               <div className="flex items-center gap-1.5 shrink-0">
-                                <span className="px-1.5 py-0.2 bg-ui-divider text-ui-secondary rounded text-[10px] font-mono font-bold">
+                                <Badge tone="neutral" className="font-mono">
                                   {(node.type || 'vless').toUpperCase()}
-                                </span>
+                                </Badge>
                                 {node.detour && (
-                                  <span className="px-1.5 py-0.2 bg-ui-accent-soft text-ui-accent border border-[#F3D5CA] rounded text-[10px] font-medium">
+                                  <Badge tone="accent" className="border font-medium">
                                     {node.detour}
-                                  </span>
+                                  </Badge>
                                 )}
                                 <span className="text-[11px] font-mono text-ui-muted truncate">
                                   {node.server}:{node.port}
@@ -766,21 +771,21 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
       >
         <ModalForm onSubmit={handleAddNetworkSubmit}>
           <ModalBody>
-            <div>
-              <label className="block text-xs font-semibold text-ui-text mb-1">订阅源名称</label>
-              <input
+            <Field>
+              <Label className="block">订阅源名称</Label>
+              <Input
                 type="text"
                 required
                 placeholder=""
                 value={newNetworkName}
                 onChange={e => setNewNetworkName(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-ui-surface border border-ui-border rounded-xl text-ui-text focus:outline-none focus:border-ui-accent"
+                className="w-full"
               />
-            </div>
+            </Field>
 
-            <div>
-              <label className="block text-xs font-semibold text-ui-text mb-1">订阅 URL</label>
-              <textarea
+            <Field>
+              <Label className="block">订阅 URL</Label>
+              <Textarea variant="default"
                 rows={3}
                 required
                 placeholder="https://airport.com/api/v1/client/subscribe?token=..."
@@ -792,35 +797,36 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                   e.target.setCustomValidity(input.validity.typeMismatch ? '请输入有效的订阅 URL' : '');
                   setNewNetworkUrl(e.target.value);
                 }}
-                className="w-full px-3 py-2 text-xs bg-ui-surface border border-ui-border rounded-xl text-ui-text focus:outline-none focus:border-ui-accent font-mono text-[11px] resize-y"
+                className="w-full font-mono resize-y"
               />
-            </div>
+            </Field>
 
-            <div>
-              <label className="block text-xs font-semibold text-ui-text mb-1">格式解析模式</label>
-              <select
+            <Field>
+              <Label className="block">格式解析模式</Label>
+              <Select
                 value={newNetworkType}
-                onChange={e => setNewNetworkType(e.target.value as NonNullable<SubscriptionSource['type']>)}
-                className="w-full px-3 py-2 text-xs bg-ui-surface border border-ui-border rounded-xl text-ui-text focus:outline-none focus:border-ui-accent"
+                onValueChange={nextValue => setNewNetworkType(nextValue as NonNullable<SubscriptionSource['type']>)}
+                className="w-full"
               >
-                <option value="auto">自动识别 (Auto)</option>
-                <option value="clash">Clash YAML</option>
-                <option value="singbox">Singbox JSON</option>
-                <option value="base64">Base64 编码节点串</option>
-              </select>
-            </div>
+                <SelectItem value="auto">自动识别 (Auto)</SelectItem>
+                <SelectItem value="clash">Clash YAML</SelectItem>
+                <SelectItem value="singbox">Singbox JSON</SelectItem>
+                <SelectItem value="quantumultx">QuanX (Quantumult X)</SelectItem>
+                <SelectItem value="base64">Base64 编码节点串</SelectItem>
+              </Select>
+            </Field>
 
             <div className="space-y-3">
               {[
                 { id: 'traffic-node-regex', label: '流量信息匹配', help: '按节点名称匹配流量信息，例如“剩余流量|已用流量”。匹配项显示为订阅信息，不计入可用节点。留空则不匹配。', value: trafficNodeRegex, setValue: setTrafficNodeRegex, placeholder: '剩余流量|已用流量|流量用量', preview: trafficMatches },
                 { id: 'expiry-node-regex', label: '到期信息匹配', help: '按节点名称匹配到期信息，例如“套餐到期|有效期”。匹配项显示为订阅信息，不计入可用节点。留空则不匹配。', value: expiryNodeRegex, setValue: setExpiryNodeRegex, placeholder: '套餐到期|到期时间|有效期', preview: expiryMatches },
               ].map(field => (
-                <div key={field.id}>
+                <Field id={field.id} key={field.id}>
                   <div className="mb-1 flex items-center gap-1">
-                    <label htmlFor={field.id} className="text-xs font-semibold text-ui-text">{field.label}</label>
+                    <Label htmlFor={field.id}>{field.label}</Label>
                     <HelpTooltip label={`${field.label}说明`} content={field.help} />
                   </div>
-                  <input
+                  <Input
                     id={field.id}
                     type="text"
                     value={field.value}
@@ -828,7 +834,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                     placeholder={field.placeholder}
                     aria-invalid={!!field.preview.error}
                     aria-describedby={`${field.id}-preview`}
-                    className="w-full px-3 py-2 text-xs bg-ui-surface border border-ui-border rounded-xl text-ui-text focus:outline-none focus:border-ui-accent font-mono"
+                    className="w-full font-mono"
                   />
                   <div id={`${field.id}-preview`} className={`mt-1 text-[11px] ${field.preview.error ? 'text-red-600' : 'text-ui-secondary'}`}>
                     {field.preview.error || (field.value.trim() && (editingNetworkSource ? `匹配 ${field.preview.names.length} 项` : '添加并拉取后匹配'))}
@@ -838,7 +844,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                       </ul>
                     )}
                   </div>
-                </div>
+                </Field>
               ))}
             </div>
 
@@ -866,7 +872,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
       {/* 弹窗：编辑所有订阅文本 */}
       <Modal
         open={!!(showBulkEditModal && bulkEditingSource)}
-        title={(showBulkEditModal && bulkEditingSource) ? <>批量编辑节点文本</> : ''}
+        title="批量编辑节点文本"
         description={(showBulkEditModal && bulkEditingSource) ? <>{bulkEditingSource.name} · 直接查看或批量修改此组包含的所有节点链接，保存将自动重新解析并覆盖更新。</> : undefined}
         size="xl"
         onClose={() => {
@@ -918,12 +924,12 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
 
               {/* 文本编辑区域 */}
               <div>
-                <textarea
+                <Textarea variant="code"
                   rows={13}
                   value={bulkEditText}
                   onChange={e => setBulkEditText(e.target.value)}
-                  placeholder={`支持每行一个节点链接：\nvless://...\nhysteria2://...\nss://...\ntrojan://...\n或完整的 Clash YAML / Singbox JSON`}
-                  className="w-full px-3.5 py-2.5 text-xs font-mono bg-ui-subtle border border-ui-border rounded-xl text-ui-text focus:outline-none focus:border-ui-accent focus:bg-ui-surface resize-y break-all leading-relaxed"
+                  placeholder={`支持每行一个节点链接：\nvless://...\nhysteria2://...\nss://...\ntrojan://...\n或 Clash YAML / Singbox JSON / QuanX 节点`}
+                  className="w-full font-mono resize-y break-all"
                 />
               </div>
             </ModalBody>
@@ -959,7 +965,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
       {/* 弹窗 2：批量贴入 / 添加自建独立节点弹窗 */}
       <Modal
         open={!!(showImportNodesModal)}
-        title={(showImportNodesModal) ? <>批量贴入独立节点</> : ''}
+        title="批量贴入独立节点"
         size="lg"
         onClose={() => setShowImportNodesModal(false)}
       >
@@ -967,9 +973,9 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
           <ModalForm onSubmit={handleImportSubmit}>
             <ModalBody>
               {/* 目标节点组选择 */}
-              <div>
+              <Field>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-semibold text-ui-text">存入独立节点组</label>
+                  <Label>存入独立节点组</Label>
                   <button
                     type="button"
                     onClick={() => {
@@ -981,30 +987,30 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                     + 新建独立节点组
                   </button>
                 </div>
-                <select
+                <Select
                   value={targetGroupId}
-                  onChange={e => setTargetGroupId(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-ui-surface border border-ui-border rounded-xl text-ui-text focus:outline-none focus:border-ui-accent"
+                  onValueChange={nextValue => setTargetGroupId(nextValue)}
+                  className="w-full"
                 >
                   {customSources.map(cs => (
-                    <option key={cs.id} value={cs.id}>
+                    <SelectItem key={cs.id} value={cs.id}>
                       {cs.name} ({cs.nodes?.length || 0} 个节点)
-                    </option>
+                    </SelectItem>
                   ))}
-                </select>
-              </div>
+                </Select>
+              </Field>
 
               {/* 链接文本输入域 */}
-              <div>
-                <label className="block text-xs font-semibold text-ui-text mb-1">节点链接 / 片段</label>
-                <textarea
+              <Field>
+                <Label className="block">节点链接 / 片段</Label>
+                <Textarea variant="code"
                   required
                   rows={9}
                   value={customText}
                   onChange={e => setCustomText(e.target.value)}
-                  className="w-full px-3 py-2 text-[11px] font-mono bg-ui-subtle border border-ui-border rounded-xl text-ui-text focus:outline-none focus:border-ui-accent"
+                  className="w-full font-mono"
                 />
-              </div>
+              </Field>
             </ModalBody>
             <ModalFooter>
               <div className="flex gap-2">
@@ -1031,25 +1037,25 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
       {/* 弹窗 3：新建自建组弹窗 */}
       <Modal
         open={!!(showCreateGroupModal)}
-        title={(showCreateGroupModal) ? <>新建独立节点组</> : ''}
+        title="新建独立节点组"
         size="sm"
         onClose={() => setShowCreateGroupModal(false)}
       >
         {(showCreateGroupModal) && (
           <ModalForm onSubmit={handleCreateGroupSubmit}>
             <ModalBody>
-              <div>
-                <label className="block text-xs font-semibold text-ui-text mb-1">节点组名称</label>
-                <input
+              <Field>
+                <Label className="block">节点组名称</Label>
+                <Input
                   type="text"
                   required
                   autoFocus
                   placeholder=""
                   value={newGroupNameInput}
                   onChange={e => setNewGroupNameInput(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-ui-surface border border-ui-border rounded-xl text-ui-text focus:outline-none focus:border-ui-accent"
+                  className="w-full"
                 />
-              </div>
+              </Field>
             </ModalBody>
             <ModalFooter>
               <button
@@ -1074,24 +1080,24 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
       {/* 弹窗 4：重命名节点组弹窗 */}
       <Modal
         open={!!(renamingSource)}
-        title={(renamingSource) ? <>重命名节点组</> : ''}
+        title="重命名节点组"
         size="sm"
         onClose={() => setRenamingSource(null)}
       >
         {(renamingSource) && (
           <ModalForm onSubmit={handleRenameSubmit}>
             <ModalBody>
-              <div>
-                <label className="block text-xs font-semibold text-ui-text mb-1">新组名</label>
-                <input
+              <Field>
+                <Label className="block">新组名</Label>
+                <Input
                   type="text"
                   required
                   autoFocus
                   value={newGroupNameInput}
                   onChange={e => setNewGroupNameInput(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-ui-surface border border-ui-border rounded-xl text-ui-text focus:outline-none focus:border-ui-accent"
+                  className="w-full"
                 />
-              </div>
+              </Field>
             </ModalBody>
             <ModalFooter>
               <button
@@ -1115,7 +1121,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
       {/* 编辑节点与配置文本弹窗 */}
       <Modal
         open={!!(editingNode)}
-        title={(editingNode) ? <>编辑节点配置</> : ''}
+        title="编辑节点配置"
         size="lg"
         onClose={() => {
           setEditingNode(null);
@@ -1125,66 +1131,66 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
         {(editingNode) && (
           <ModalForm onSubmit={handleEditNodeSubmit}>
             <ModalBody>
-              <div>
-                <label className="block text-xs font-semibold text-ui-text mb-1">
+              <Field>
+                <Label className="block">
                   节点名称
-                </label>
-                <input
+                </Label>
+                <Input
                   type="text"
                   required
                   value={editNodeNameInput}
                   onChange={e => setEditNodeNameInput(e.target.value)}
                   placeholder="节点备注名称"
-                  className="w-full px-3 py-2 text-xs bg-ui-surface border border-ui-border rounded-xl text-ui-text focus:outline-none focus:border-ui-accent"
+                  className="w-full"
                 />
-              </div>
+              </Field>
 
-              <div>
+              <Field>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-semibold text-ui-text">
+                  <Label className="block">
                     配置内容文本
-                  </label>
+                  </Label>
                   <span className="text-[10px] text-ui-muted">支持修改 URI 链接 / 参数</span>
                 </div>
-                <textarea
+                <Textarea variant="code"
                   rows={5}
                   value={editNodeTextInput}
                   onChange={e => setEditNodeTextInput(e.target.value)}
                   placeholder="vless://... 或 hysteria2://... 或 ss://... 等节点链接"
-                  className="w-full px-3 py-2 text-xs font-mono bg-ui-surface border border-ui-border rounded-xl text-ui-text focus:outline-none focus:border-ui-accent resize-y break-all"
+                  className="w-full font-mono resize-y break-all"
                 />
-              </div>
+              </Field>
 
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-semibold text-ui-text">
+                  <Label className="block">
                     底层出口 (Detour)
-                  </label>
+                  </Label>
                   <span className="text-[10px] text-ui-muted">指定握手建立隧道的物理宽带出口</span>
                 </div>
                 {availableDetourOutbounds.length > 0 ? (
-                  <select
+                  <Select
                     value={editNodeDetourInput}
-                    onChange={e => setEditNodeDetourInput(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-ui-surface border border-ui-border rounded-xl text-ui-text focus:outline-none focus:border-ui-accent"
+                    onValueChange={nextValue => setEditNodeDetourInput(nextValue)}
+                    className="w-full"
                   >
-                    <option value="">默认 (系统默认出口)</option>
+                    <SelectItem value="">默认 (系统默认出口)</SelectItem>
                     {availableDetourOutbounds.map(tag => (
-                      <option key={tag} value={tag}>
+                      <SelectItem key={tag} value={tag}>
                         {tag}
-                      </option>
+                      </SelectItem>
                     ))}
                     {editNodeDetourInput && !availableDetourOutbounds.includes(editNodeDetourInput) && (
-                      <option value={editNodeDetourInput}>{editNodeDetourInput}</option>
+                      <SelectItem value={editNodeDetourInput}>{editNodeDetourInput}</SelectItem>
                     )}
-                  </select>
+                  </Select>
                 ) : (
-                  <input
+                  <Input aria-label="默认 (系统默认出口) - 留空即默认，或输入指定出口标签"
                     type="text"
                     value={editNodeDetourInput}
                     onChange={e => setEditNodeDetourInput(e.target.value)}
                     placeholder="默认 (系统默认出口) - 留空即默认，或输入指定出口标签"
-                    className="w-full px-3 py-2 text-xs bg-ui-surface border border-ui-border rounded-xl text-ui-text focus:outline-none focus:border-ui-accent"
+                    className="w-full"
                   />
                 )}
               </div>
