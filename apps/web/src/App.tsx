@@ -224,7 +224,13 @@ export function App() {
   };
 
   const handleDeleteCustomNode = async (id: string) => {
-    // 0ms Optimistic UI update: immediately remove from UI list & badge count
+    const res = await apiFetch(`${API_BASE}/custom-nodes/${id}`, { method: 'DELETE' });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.success === false) {
+      throw new Error(json?.message || '删除节点失败，请重试');
+    }
+
+    // Remove nodes only after the server confirms deletion.
     setConfig(prev => {
       if (!prev) return prev;
       return {
@@ -243,16 +249,6 @@ export function App() {
       };
     });
     setNodes(prev => (prev || []).filter(n => n.id !== id));
-
-    try {
-      const res = await apiFetch(`${API_BASE}/custom-nodes/${id}`, { method: 'DELETE' });
-      if (!res.ok) {
-        await fetchData();
-      }
-    } catch (err) {
-      console.error('handleDeleteCustomNode error:', err);
-      await fetchData();
-    }
   };
 
   const handleUpdateCustomNode = async (id: string, updates: Partial<ProxyNode> & { text?: string }) => {
@@ -417,18 +413,15 @@ export function App() {
   };
 
   const handleDeleteSource = async (id: string) => {
+    const res = await apiFetch(`${API_BASE}/sources/${id}`, { method: 'DELETE' });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.success === false) {
+      throw new Error(json?.message || '删除失败，请重试');
+    }
     setConfig(prev => prev ? {
       ...prev,
       sources: (prev.sources || []).filter(s => s.id !== id),
     } : prev);
-
-    try {
-      const res = await apiFetch(`${API_BASE}/sources/${id}`, { method: 'DELETE' });
-      if (!res.ok) await fetchConfigOnly();
-    } catch (err: any) {
-      console.error('handleDeleteSource error:', err);
-      await fetchConfigOnly();
-    }
   };
 
   const handleRefreshSource = async (id: string) => {

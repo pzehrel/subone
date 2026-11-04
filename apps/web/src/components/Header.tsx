@@ -4,12 +4,10 @@ import {
   Settings,
   LogOut,
   LayoutDashboard,
-  Radio,
-  SlidersHorizontal,
-  GitBranch,
   FileCode,
   BookOpen,
 } from 'lucide-react';
+import { SourcesIcon, GroupsIcon, RulesIcon } from './ui/module-icons';
 
 interface HeaderProps {
   activeTab: 'dashboard' | 'sources' | 'groups' | 'rules' | 'templates';
@@ -30,9 +28,9 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const tabs = [
     { id: 'dashboard', label: '首页', shortLabel: '首页', icon: LayoutDashboard },
-    { id: 'sources', label: '上游订阅', shortLabel: '上游订阅', icon: Radio },
-    { id: 'groups', label: '策略组', shortLabel: '策略组', icon: SlidersHorizontal },
-    { id: 'rules', label: '分流规则', shortLabel: '分流规则', icon: GitBranch },
+    { id: 'sources', label: '上游订阅', shortLabel: '上游订阅', icon: SourcesIcon },
+    { id: 'groups', label: '策略组', shortLabel: '策略组', icon: GroupsIcon },
+    { id: 'rules', label: '分流规则', shortLabel: '分流规则', icon: RulesIcon },
     { id: 'templates', label: '配置模版', shortLabel: '配置模版', icon: FileCode },
   ] as const;
 

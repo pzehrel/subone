@@ -348,7 +348,7 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                       </button>
                       <button
                         onClick={() => onDeleteCountryRule(cr.id)}
-                        className="p-1 text-[#A8483B] hover:bg-[#FDF2F0] rounded-lg"
+                        className="ui-icon-button-danger p-1 rounded-lg"
                         title="删除地区规则"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -451,7 +451,7 @@ export const NodesExtractor: React.FC<NodesExtractorProps> = ({
                       </button>
                       <button
                         onClick={() => onDeleteRule(rule.id)}
-                        className="p-1 text-[#A8483B] hover:bg-[#FDF2F0] rounded-lg"
+                        className="ui-icon-button-danger p-1 rounded-lg"
                         title="删除规则"
                       >
                         <Trash2 className="w-3.5 h-3.5" />

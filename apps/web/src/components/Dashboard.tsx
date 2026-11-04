@@ -2,6 +2,7 @@ import { Input } from './ui/Input';
 import { Select, SelectItem } from './ui/Select';
 import { Field, Label } from './ui/Field';
 import { Badge } from './ui/Badge';
+import { SourcesIcon, GroupsIcon, RulesIcon } from './ui/module-icons';
 import { HelpTooltip } from './HelpTooltip';
 import React, { useState, useEffect, useMemo } from 'react';
 import { Modal, ModalBody, ModalFooter } from './Modal';
@@ -10,7 +11,6 @@ import {
   ChevronDown,
   Copy,
   ExternalLink,
-  Layers,
   Server,
   Zap,
   Plus,
@@ -18,8 +18,6 @@ import {
   Trash2,
   Eye,
   RefreshCw,
-  SlidersHorizontal,
-  Filter,
   CheckSquare,
   Square,
   Radio,
@@ -385,7 +383,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         >
           <div className="flex items-center justify-between">
             <span className="text-xs text-ui-muted font-medium">上游订阅</span>
-            <Layers className="w-3.5 h-3.5 text-ui-muted group-hover:text-ui-accent" />
+            <SourcesIcon className="w-3.5 h-3.5 text-ui-muted group-hover:text-ui-accent" aria-hidden="true" />
           </div>
           <div className="mt-1 flex items-baseline gap-1">
             <span className="text-lg font-bold font-mono text-ui-text">
@@ -401,7 +399,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         >
           <div className="flex items-center justify-between">
             <span className="text-xs text-ui-muted font-medium">策略组</span>
-            <SlidersHorizontal className="w-3.5 h-3.5 text-ui-muted group-hover:text-ui-accent" />
+            <GroupsIcon className="w-3.5 h-3.5 text-ui-muted group-hover:text-ui-accent" aria-hidden="true" />
           </div>
           <div className="mt-1 flex items-baseline gap-1">
             <span className="text-lg font-bold font-mono text-ui-text">{proxyGroupsCount}</span>
@@ -415,7 +413,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         >
           <div className="flex items-center justify-between">
             <span className="text-xs text-ui-muted font-medium">分流规则</span>
-            <Filter className="w-3.5 h-3.5 text-ui-muted group-hover:text-ui-accent" />
+            <RulesIcon className="w-3.5 h-3.5 text-ui-muted group-hover:text-ui-accent" aria-hidden="true" />
           </div>
           <div className="mt-1 flex items-baseline gap-1">
             <span className="text-lg font-bold font-mono text-ui-text">{rulesCount}</span>
@@ -443,7 +441,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         {/* 标题栏与新增按钮 */}
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-bold text-ui-text">订阅配置 (Profiles)</h2>
+            <h2 className="text-sm font-bold text-ui-text">订阅</h2>
             <Badge tone="neutral" className="font-medium">
               共 {profiles.length} 个订阅
             </Badge>
@@ -518,7 +516,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     </button>
                     <button
                       onClick={() => handleDeleteProfile(prof.id, prof.name)}
-                      className="p-1.5 text-ui-muted hover:text-[#A8483B] hover:bg-[#FDF2F0] rounded-lg transition-colors cursor-pointer"
+                      className="ui-icon-button-danger p-1.5 rounded-lg"
                       title="删除订阅"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -535,12 +533,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   </Badge>
 
                   <Badge tone="neutral" className="border font-medium">
-                    <SlidersHorizontal className="w-3 h-3 text-[#5A7A6F]" />
+                    <GroupsIcon className="w-3 h-3 text-[#5A7A6F]" aria-hidden="true" />
                     <span>{groupCount} 策略组</span>
                   </Badge>
 
                   <Badge tone="neutral" className="border font-medium">
-                    <Filter className="w-3 h-3 text-[#8A7558]" />
+                    <RulesIcon className="w-3 h-3 text-[#8A7558]" aria-hidden="true" />
                     <span>{ruleCount} 条分流</span>
                   </Badge>
 
@@ -657,7 +655,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             }}
                             className="w-full text-left px-3 py-1.5 hover:bg-ui-subtle text-ui-text flex items-center justify-between cursor-pointer"
                           >
-                            <span>小火箭 (Shadowrocket)</span>
+                            <span>Shadowrocket (Conf)</span>
                             {copiedId === `shadowrocket-${prof.id}` && <Check className="w-3 h-3 text-[#5A7A6F]" />}
                           </button>
                         </div>
@@ -977,7 +975,7 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
             : 'border-transparent text-ui-secondary hover:text-ui-text'
             }`}
         >
-          <Radio className="w-3.5 h-3.5" />
+          <SourcesIcon className="w-3.5 h-3.5" aria-hidden="true" />
           2. 选择节点分组 ({selectedSourceSet.size}/{allAvailableSources.length})
         </button>
         <button
@@ -987,7 +985,7 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
             : 'border-transparent text-ui-secondary hover:text-ui-text'
             }`}
         >
-          <SlidersHorizontal className="w-3.5 h-3.5" />
+          <GroupsIcon className="w-3.5 h-3.5" aria-hidden="true" />
           3. 策略组 ({profile.selectedGroupIds?.length || 0})
         </button>
         <button
@@ -997,7 +995,7 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
             : 'border-transparent text-ui-secondary hover:text-ui-text'
             }`}
         >
-          <Filter className="w-3.5 h-3.5" />
+          <RulesIcon className="w-3.5 h-3.5" aria-hidden="true" />
           4. 分流规则 ({profile.selectedRuleIds?.length || 0})
         </button>
       </div>

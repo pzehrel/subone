@@ -56,7 +56,8 @@ export function Modal({ open, title, description, size = 'md', layout = 'content
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || activeModals.at(-1) !== root) return;
-      if (event.target instanceof Element && event.target.closest('[data-ui-select-content]')) return;
+      if (event.key === 'Escape' && root.querySelector('[data-ui-popconfirm-content][data-state="open"]')) return;
+      if (event.target instanceof Element && event.target.closest('[data-ui-select-content], [data-ui-popconfirm-content]')) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         onCloseRef.current();

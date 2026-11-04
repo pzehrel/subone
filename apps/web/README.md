@@ -83,6 +83,30 @@ pnpm --filter @subone/web build
 </Field>
 ```
 
+### 操作确认
+
+删除、清空等需要再次确认的操作使用 `components/ui/Popconfirm`，点击按钮后在按钮附近展示确认框。
+
+- 标题、说明、确认和取消文字可配置；危险操作设置 `danger`，统一使用红色确认按钮。
+- 删除、清空等图标按钮使用 `ui-icon-button-danger`，默认显示危险色，悬停使用浅红背景，键盘焦点使用红色轮廓。
+- `onConfirm` 可以返回 Promise。执行时显示“处理中...”，禁止重复提交和取消；成功后关闭，失败时显示错误并支持重试。
+- 点击取消、外部区域或按 Esc 关闭；打开后焦点落在取消按钮，关闭后恢复焦点。确认框内可用 Tab 切换操作。
+- 确认框自动避让视口边缘，在表格或弹窗内也不会被滚动区域裁切。Esc 优先关闭确认框，保留所在弹窗。
+- 开关均有过渡，遵循减少动态效果设置。需要由表单触发时，用 `open` 和 `onOpenChange` 控制显示。
+- 子元素使用一个能接收属性和 ref 的按钮，提交操作放在 `onConfirm` 中。
+
+```tsx
+<Popconfirm
+  title="删除上游订阅？"
+  description={`将删除「${source.name}」及其节点，此操作无法撤销。`}
+  confirmText="删除"
+  danger
+  onConfirm={() => deleteSource(source.id)}
+>
+  <button type="button" className="ui-button-secondary">删除</button>
+</Popconfirm>
+```
+
 ### 表格和徽章
 
 表格使用 `Table`、`TableHead`、`TableCell`，徽章使用 `Badge`。默认采用内容驱动的自动列宽，不给每列规定固定宽度。

@@ -4,6 +4,7 @@ import { Textarea } from './ui/Textarea';
 import { Select, SelectItem } from './ui/Select';
 import { Field, Label } from './ui/Field';
 import { Badge } from './ui/Badge';
+import { RulesIcon } from './ui/module-icons';
 import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
 import React, { useState, useMemo } from 'react';
 import {
@@ -11,13 +12,11 @@ import {
   Edit2,
   FileCode,
   FileText,
-  Filter,
   Plus,
   RotateCcw,
   Search,
   Trash2,
   Upload,
-  Zap,
 } from 'lucide-react';
 import { ProxyGroupItem, UnifiedRuleItem, ConfigTemplate } from '../types';
 
@@ -238,7 +237,7 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-ui-surface p-4 rounded-2xl border border-ui-border shadow-2xs">
         <div>
           <div className="flex items-center gap-2">
-            <Zap className="w-5 h-5 text-ui-accent" />
+            <RulesIcon className="w-5 h-5 text-ui-accent" aria-hidden="true" />
             <h2 className="text-base font-bold text-ui-text">分流规则</h2>
             <Badge tone="accent" className="font-mono border">
               共 {rulesList.length} 组规则
@@ -391,7 +390,7 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
                       </button>
                       <button
                         onClick={() => onDeleteRule(rule.id)}
-                        className="p-1 text-ui-muted hover:text-[#B85D3F] hover:bg-ui-accent-soft rounded-lg transition-colors"
+                        className="ui-icon-button-danger p-1 rounded-lg"
                         title="删除规则"
                       >
                         <Trash2 className="w-3.5 h-3.5" />

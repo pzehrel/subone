@@ -35,7 +35,7 @@ test('fetching separates info nodes and prefers headers, with independent traffi
   assert.deepEqual(source.nodes.map(node => node.name), ['Hong Kong']);
   assert.equal(source.infoNodes?.length, 2);
   assert.deepEqual({ ...source.subscriptionInfo }, { upload: 1024, download: 2048, total: 4096, expire: 1893456000 });
-  assert.equal(formatSubscriptionTraffic(source.subscriptionInfo), '已用 3 KiB / 共 4 KiB');
+  assert.equal(formatSubscriptionTraffic(source.subscriptionInfo), '3/4 K');
 
   header = 'expire=0';
   source.nodes = await fetchAndParseSource(source);
@@ -43,7 +43,7 @@ test('fetching separates info nodes and prefers headers, with independent traffi
   assert.equal(source.subscriptionInfo?.remaining, 128 * 1024 ** 3);
   assert.equal(source.subscriptionInfo?.expire, 0);
   assert.equal(source.subscriptionInfo?.expiryText, undefined);
-  assert.equal(formatSubscriptionExpiry(source.subscriptionInfo), '长期有效');
+  assert.equal(formatSubscriptionExpiry(source.subscriptionInfo), undefined);
 
   header = undefined;
   source.nodes = await fetchAndParseSource(source);
@@ -86,4 +86,21 @@ test('unrecognized info text is retained and excluded even when numeric extracti
   assert.equal(source.subscriptionInfo?.trafficText, node.name);
   assert.equal(source.subscriptionInfo?.expiryText, node.name);
   assert.equal(source.subscriptionInfo?.expire, undefined);
+});
+
+test('traffic display uses one shared unit and prefers numeric totals over notice text', () => {
+  const GiB = 1024 ** 3;
+  assert.equal(formatSubscriptionTraffic({ upload: 0, download: 0, total: 1000 * GiB }), '0/1000 G');
+  assert.equal(formatSubscriptionTraffic({ upload: 0, download: GiB / 2, total: 1000 * GiB }), '0.5/1000 G');
+  assert.equal(formatSubscriptionTraffic({ used: 3 * GiB, total: 10 * GiB, remaining: 7 * GiB, trafficText: '已用 3 GB / 10 GB' }), '3/10 G');
+  assert.equal(formatSubscriptionTraffic({ remaining: 7 * GiB, total: 10 * GiB }), '3/10 G');
+});
+
+test('expiry display hides indefinite expiry and shows only the local calendar date', () => {
+  assert.equal(formatSubscriptionExpiry({ expire: 0, expiryText: '长期有效' }), undefined);
+  assert.equal(formatSubscriptionExpiry({ expiryText: '长期有效' }), undefined);
+  assert.equal(formatSubscriptionExpiry({ expiryText: '期限请查看官网' }), undefined);
+  const expire = new Date(2030, 0, 2, 23, 59, 59).getTime() / 1000;
+  assert.equal(formatSubscriptionExpiry({ expire, expiryText: '套餐到期：2030-01-02 23:59:59' }), '2030-01-02');
+  assert.equal(formatSubscriptionExpiry({ expire: NaN }), undefined);
 });

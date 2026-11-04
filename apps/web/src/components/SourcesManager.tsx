@@ -3,6 +3,8 @@ import { Textarea } from './ui/Textarea';
 import { Select, SelectItem } from './ui/Select';
 import { Field, Label } from './ui/Field';
 import { Badge } from './ui/Badge';
+import { Popconfirm } from './ui/Popconfirm';
+import { SourcesIcon } from './ui/module-icons';
 import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
 import React, { useState, useMemo } from 'react';
 import {
@@ -14,7 +16,6 @@ import {
   Eraser,
   ExternalLink,
   FileText,
-  Layers,
   Plus,
   RefreshCw,
   Server,
@@ -133,6 +134,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
   // Loading & Action states
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [confirmBulkClear, setConfirmBulkClear] = useState(false);
   const [copiedNodeId, setCopiedNodeId] = useState<string | null>(null);
 
   // Accordion expanded source IDs (默认全部收起)
@@ -190,6 +192,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
 
   // Open bulk edit modal for subscription text
   const handleOpenBulkEditModal = (source: SubscriptionSource) => {
+    setConfirmBulkClear(false);
     setBulkEditingSource(source);
     const nodes = source.nodes || [];
     const text = nodes
@@ -205,18 +208,24 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
     e.preventDefault();
     if (!bulkEditingSource || isSubmitting) return;
     if (!bulkEditText.trim()) {
-      if (!confirm(`文本内容为空，保存后将清空【${bulkEditingSource.name}】中的所有节点，确定继续吗？`)) {
-        return;
-      }
+      setConfirmBulkClear(true);
+      return;
     }
+    try {
+      await saveBulkEdit();
+    } catch (err: any) {
+      console.error('Failed to bulk edit subscription text:', err);
+      alert(err.message || '更新失败，请检查节点文本格式');
+    }
+  };
+
+  const saveBulkEdit = async () => {
+    if (!bulkEditingSource || isSubmitting) return;
     setIsSubmitting(true);
     try {
       await onImportCustomNodes(bulkEditText, true, bulkEditingSource.id);
       setShowBulkEditModal(false);
       setBulkEditingSource(null);
-    } catch (err: any) {
-      console.error('Failed to bulk edit subscription text:', err);
-      alert(err.message || '更新失败，请检查节点文本格式');
     } finally {
       setIsSubmitting(false);
     }
@@ -228,19 +237,6 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
     if (ok) {
       setBulkEditCopied(true);
       setTimeout(() => setBulkEditCopied(false), 2000);
-    }
-  };
-
-  const handleClearNodes = async (source: SubscriptionSource) => {
-    if (!confirm(`确定要清空节点组【${source.name}】中的所有节点吗？`)) return;
-    try {
-      setIsSubmitting(true);
-      await fetch(`/api/sources/${source.id}/clear-nodes`, { method: 'POST' });
-      await onUpdateSource(source.id, { nodes: [], nodeCount: 0 });
-    } catch (err: any) {
-      alert(err.message || '清空节点失败');
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
@@ -408,23 +404,17 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
     <div className="max-w-6xl mx-auto space-y-5 pb-16">
       {/* 1. 顶部操作栏卡片 */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 bg-ui-surface p-4 rounded-2xl border border-ui-border shadow-2xs">
-        <div>
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <Layers className="w-5 h-5 text-ui-accent" />
+            <SourcesIcon className="w-5 h-5 text-ui-accent" aria-hidden="true" />
             <h1 className="text-base font-bold text-ui-text">上游订阅</h1>
             <Badge tone="accent" className="font-mono border">
               共 {totalNodesCount} 节点
             </Badge>
           </div>
-          <div className="flex items-center gap-2 mt-1 text-xs text-ui-secondary flex-wrap">
-            <span className="text-[#D0C9BD]">•</span>
-            <Badge tone="neutral" className="border font-medium">
-              <span>{customSources.length} 独立组</span>
-            </Badge>
-            <Badge tone="success" className="border font-medium">
-              <span>{networkSources.length} 网络订阅</span>
-            </Badge>
-          </div>
+          <p className="mt-1 text-xs leading-relaxed text-ui-secondary">
+            管理网络订阅与独立节点，为订阅配置提供节点来源。
+          </p>
         </div>
 
         {/* 顶部操作按钮组 */}
@@ -443,17 +433,6 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
           >
             <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
             <span>导入节点</span>
-          </button>
-
-          <button
-            onClick={() => {
-              setNewGroupNameInput('');
-              setShowCreateGroupModal(true);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold ui-button-secondary rounded-xl shadow-2xs cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span>新建节点组</span>
           </button>
         </div>
       </div>
@@ -484,7 +463,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                   }`}
                 onClick={() => toggleExpand(source.id)}
               >
-                {/* 左侧：类型徽章、名称、节点数、副标题 */}
+                {/* 左侧：名称、节点数、副标题 */}
                 <div className="flex items-start gap-3 flex-1 min-w-0">
                   {/* 折叠展开箭头指示器 */}
                   <div className="mt-0.5 shrink-0 text-ui-muted hover:text-ui-text transition-transform duration-200">
@@ -496,17 +475,6 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
 
                   <div className="min-w-0 flex-1 space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      {/* 类型徽章 */}
-                      {isCustom ? (
-                        <Badge tone="accent" className="border font-mono">
-                          独立组
-                        </Badge>
-                      ) : (
-                        <Badge tone="success" className="border font-mono">
-                          订阅
-                        </Badge>
-                      )}
-
                       {/* 标题 */}
                       <h3 className={`text-xs font-bold truncate max-w-xs sm:max-w-md ${source.enabled === false ? 'text-ui-muted' : 'text-ui-text'}`}>
                         {source.name}
@@ -566,13 +534,20 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                       </button>
 
                       {nodesList.length > 0 && (
-                        <button
-                          onClick={() => handleClearNodes(source)}
-                          className="p-1.5 text-ui-muted hover:text-[#B85D3F] hover:bg-ui-accent-soft rounded-lg transition-colors cursor-pointer"
-                          title="清空此组所有节点"
+                        <Popconfirm
+                          title="清空全部节点？"
+                          description={`将清空「${source.name}」中的 ${nodesList.length} 个节点，节点组仍会保留。`}
+                          confirmText="清空"
+                          danger
+                          onConfirm={() => onImportCustomNodes('', true, source.id)}
                         >
-                          <Eraser className="w-3.5 h-3.5" />
-                        </button>
+                          <button
+                            className="ui-icon-button-danger p-1.5 rounded-lg"
+                            title="清空此组所有节点"
+                          >
+                            <Eraser className="w-3.5 h-3.5" />
+                          </button>
+                        </Popconfirm>
                       )}
 
                       <button
@@ -587,17 +562,20 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                       </button>
 
 
-                      <button
-                        onClick={() => {
-                          if (confirm(`确定要删除节点组【${source.name}】吗？`)) {
-                            onDeleteSource(source.id);
-                          }
-                        }}
-                        className="p-1.5 text-ui-muted hover:text-[#B85D3F] hover:bg-ui-accent-soft rounded-lg transition-colors cursor-pointer"
-                        title="删除节点组"
+                      <Popconfirm
+                        title="删除节点组？"
+                        description={`将删除「${source.name}」及组内全部节点，此操作无法撤销。`}
+                        confirmText="删除"
+                        danger
+                        onConfirm={() => onDeleteSource(source.id)}
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                        <button
+                          className="ui-icon-button-danger p-1.5 rounded-lg"
+                          title="删除节点组"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </Popconfirm>
                     </>
                   )}
 
@@ -633,17 +611,20 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                         )}
                       </button>
 
-                      <button
-                        onClick={() => {
-                          if (confirm(`确定要删除订阅源【${source.name}】吗？`)) {
-                            onDeleteSource(source.id);
-                          }
-                        }}
-                        className="p-1.5 text-ui-muted hover:text-[#B85D3F] hover:bg-ui-accent-soft rounded-lg transition-colors cursor-pointer"
-                        title="删除订阅源"
+                      <Popconfirm
+                        title="删除上游订阅？"
+                        description={`将删除「${source.name}」及其节点，此操作无法撤销。`}
+                        confirmText="删除"
+                        danger
+                        onConfirm={() => onDeleteSource(source.id)}
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                        <button
+                          className="ui-icon-button-danger p-1.5 rounded-lg"
+                          title="删除订阅源"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </Popconfirm>
                     </>
                   )}
                 </div>
@@ -651,14 +632,14 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
 
               {/* 3. 展开区域：就地查看节点详情 (Accordion) */}
               {isExpanded && (
-                <div className="border-t border-ui-divider bg-ui-surface p-4 animate-in fade-in duration-150">
+                <div className="border-t border-ui-divider bg-ui-surface animate-in fade-in duration-150">
                   {/* 节点列表渲染 */}
                   {nodesList.length > 0 ? (
-                    <div className="rounded-xl border border-[#EBE6DC] divide-y divide-[#F0ECE4] overflow-hidden">
+                    <div className="divide-y divide-ui-divider">
                       {nodesList.map(node => (
                         <div
                           key={node.id}
-                          className="px-3.5 py-2 hover:bg-ui-subtle transition-colors flex items-center justify-between gap-3 text-xs group/item"
+                          className="px-4 py-2 hover:bg-ui-subtle transition-colors flex items-center justify-between gap-3 text-xs group/item"
                         >
                           {/* 左侧：Emoji、节点名、协议类型、服务器端口 */}
                           <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -712,24 +693,27 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                             </button>
 
                             {isCustom && (
-                              <button
-                                onClick={() => {
-                                  if (confirm(`确定要删除节点【${node.name}】吗？`)) {
-                                    onDeleteCustomNode(node.id);
-                                  }
-                                }}
-                                className="p-1 text-ui-muted hover:text-[#B85D3F] hover:bg-ui-accent-soft rounded transition-colors cursor-pointer"
-                                title="删除此节点"
+                              <Popconfirm
+                                title="删除节点？"
+                                description={`将删除「${node.name}」，此操作无法撤销。`}
+                                confirmText="删除"
+                                danger
+                                onConfirm={() => onDeleteCustomNode(node.id)}
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                                <button
+                                  className="ui-icon-button-danger p-1 rounded"
+                                  title="删除此节点"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </Popconfirm>
                             )}
                           </div>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <div className="p-6 rounded-xl border border-dashed border-ui-border text-center space-y-2">
+                    <div className="p-6 text-center space-y-2">
                       <p className="text-xs font-medium text-ui-muted">
                         该组暂无节点
                       </p>
@@ -743,7 +727,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
 
         {unifiedSources.length === 0 && (
           <div className="p-12 rounded-2xl bg-ui-surface border border-dashed border-ui-border text-center space-y-3">
-            <Layers className="w-8 h-8 text-ui-muted mx-auto opacity-50" />
+            <SourcesIcon className="w-8 h-8 text-ui-muted mx-auto opacity-50" aria-hidden="true" />
             <p className="text-xs font-medium text-ui-secondary">暂无任何订阅或独立节点组</p>
             <div className="flex items-center justify-center gap-2">
               <button
@@ -949,13 +933,25 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                 >
                   取消
                 </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-4 py-1.5 text-xs font-semibold ui-button-primary rounded-xl disabled:opacity-50 cursor-pointer"
-                >
-                  {isSubmitting ? '保存更新中...' : '保存修改'}
-                </button>
+                {!bulkEditText.trim() ? (
+                  <Popconfirm
+                    title="清空全部节点？"
+                    description={`文本内容为空，保存后将清空「${bulkEditingSource?.name}」中的所有节点。`}
+                    confirmText="清空并保存"
+                    danger
+                    open={confirmBulkClear}
+                    onOpenChange={setConfirmBulkClear}
+                    onConfirm={saveBulkEdit}
+                  >
+                    <button type="button" disabled={isSubmitting} className="ui-button-primary">
+                      {isSubmitting ? '保存更新中...' : '保存修改'}
+                    </button>
+                  </Popconfirm>
+                ) : (
+                  <button type="submit" disabled={isSubmitting} className="ui-button-primary">
+                    {isSubmitting ? '保存更新中...' : '保存修改'}
+                  </button>
+                )}
               </div>
             </ModalFooter>
           </ModalForm>

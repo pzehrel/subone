@@ -12,7 +12,7 @@ test('profile usage adds upload, download, quota and remaining, with the earlies
   assert.deepEqual(info, {
     upload: 3072, download: 5120, used: 8192, total: 30720, remaining: 22528, expire: 1861920000,
   });
-  assert.equal(formatSubscriptionTraffic(info), '已用 8 KiB / 共 30 KiB / 剩余 22 KiB');
+  assert.equal(formatSubscriptionTraffic(info), '8/30 K');
   assert.equal(formatSubscriptionUserinfo(info), 'upload=3072; download=5120; total=30720; expire=1861920000');
 });
 
@@ -35,7 +35,7 @@ test('node-name usage combines with header usage and does not double count notic
   ]);
   assert.deepEqual(info, { used: 8192, total: 30720, remaining: 22528 });
   assert.equal(formatSubscriptionUserinfo(info), 'upload=0; download=8192; total=30720');
-  assert.equal(formatSubscriptionTraffic(info), '已用 8 KiB / 共 30 KiB / 剩余 22 KiB');
+  assert.equal(formatSubscriptionTraffic(info), '8/30 K');
 
   const remaining = aggregateSubscriptionInfo([{ remaining: 8192, total: 10240 }, { remaining: 4096, total: 10240 }]);
   assert.deepEqual(remaining, { used: 8192, total: 20480, remaining: 12288 });

@@ -184,7 +184,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
           {templates.length > 1 && currentTemplate && (
             <button
               onClick={() => onDeleteTemplate(currentTemplate.id)}
-              className="p-2 text-[#A8483B] hover:bg-[#FDF2F0] rounded-xl border border-transparent hover:border-[#F2D6D3]"
+              className="ui-icon-button-danger p-2 rounded-xl border border-transparent"
               title="删除当前模版"
             >
               <Trash2 className="w-4 h-4" />

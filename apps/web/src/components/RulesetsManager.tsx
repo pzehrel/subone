@@ -4,6 +4,7 @@ import { Textarea } from './ui/Textarea';
 import { Select, SelectItem } from './ui/Select';
 import { Field, Label } from './ui/Field';
 import { Badge } from './ui/Badge';
+import { GroupsIcon } from './ui/module-icons';
 import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
 import React, { useState, useMemo } from 'react';
 import {
@@ -17,7 +18,6 @@ import {
   FileText,
   Filter,
   Globe,
-  Layers,
   Plus,
   Radio,
   Search,
@@ -254,7 +254,7 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
       <div className="ui-panel p-4 rounded-2xl space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-ui-accent" />
+            <GroupsIcon className="w-4 h-4 text-ui-accent" aria-hidden="true" />
             <h3 className="text-xs font-bold text-ui-text">出口策略分组清单 (Proxy Groups)</h3>
             <span className="text-[11px] text-ui-secondary">
               共 {proxyGroups.length} 个策略分组（分流规则的目标出口）
@@ -450,7 +450,7 @@ export const RulesetsManager: React.FC<RulesetsManagerProps> = ({
                 <TableCell fixed="right" className="text-right">
                   <button
                     onClick={() => onDeleteRule(rule.id)}
-                    className="p-1.5 text-[#A8483B] hover:bg-[#FDF2F0] rounded-lg transition-colors"
+                    className="ui-icon-button-danger p-1.5 rounded-lg"
                     title="直接删除规则"
                   >
                     <Trash2 className="w-4 h-4" />

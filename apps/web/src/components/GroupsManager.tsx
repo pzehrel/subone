@@ -3,16 +3,15 @@ import { Textarea } from './ui/Textarea';
 import { Select, SelectItem } from './ui/Select';
 import { Field, Label } from './ui/Field';
 import { Badge } from './ui/Badge';
+import { GroupsIcon } from './ui/module-icons';
 import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
 import React, { useState } from 'react';
 import {
   Check,
   Code,
+  Edit2,
   Globe,
-  Layers,
   Plus,
-  Radio,
-  Sliders,
   Trash2,
   X,
   Zap,
@@ -354,7 +353,7 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-ui-surface p-4 rounded-2xl border border-ui-border shadow-2xs">
         <div>
           <div className="flex items-center gap-2">
-            <Radio className="w-5 h-5 text-ui-accent" />
+            <GroupsIcon className="w-5 h-5 text-ui-accent" aria-hidden="true" />
             <h2 className="text-base font-bold text-ui-text">策略组管理</h2>
             <Badge tone="accent" className="font-mono border">
               {groups.length} 个策略
@@ -603,14 +602,17 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
 
                 <div className="flex items-center gap-1">
                   <button
+                    type="button"
                     onClick={() => handleOpenEdit(group)}
-                    className="px-2.5 py-1 text-[11px] font-medium text-ui-secondary hover:text-ui-text hover:bg-ui-subtle rounded-lg transition-colors cursor-pointer"
+                    className="inline-flex items-center justify-center p-1 text-ui-muted hover:text-ui-text hover:bg-ui-hover rounded-lg transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ui-accent"
+                    title="编辑策略组"
+                    aria-label="编辑策略组"
                   >
-                    编辑
+                    <Edit2 className="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
                   <button
                     onClick={() => onDeleteGroup(group.id)}
-                    className="p-1 text-ui-muted hover:text-[#B85D3F] hover:bg-ui-accent-soft rounded-lg transition-colors cursor-pointer"
+                    className="ui-icon-button-danger p-1 rounded-lg"
                     title="删除策略组"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -624,7 +626,7 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
 
       {groups.length === 0 && (
         <div className="ui-panel p-12 rounded-2xl bg-ui-surface border border-ui-border text-center space-y-3">
-          <Radio className="w-8 h-8 text-ui-muted mx-auto opacity-50" />
+          <GroupsIcon className="w-8 h-8 text-ui-muted mx-auto opacity-50" aria-hidden="true" />
           <p className="text-xs font-semibold text-ui-secondary">暂无策略组</p>
           <div className="flex items-center justify-center gap-2">
             <button
@@ -694,7 +696,7 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
               <div className="space-y-2 bg-ui-subtle p-3.5 rounded-xl border border-ui-border">
                 <div className="flex items-center justify-between">
                   <Label className="flex items-center gap-1.5">
-                    <Layers className="w-3.5 h-3.5 text-ui-accent" />
+                    <GroupsIcon className="w-3.5 h-3.5 text-ui-accent" aria-hidden="true" />
                     <span>包含的出站策略组 / 选项 (Proxies)</span>
                   </Label>
                   <span className="text-[10px] text-ui-secondary">

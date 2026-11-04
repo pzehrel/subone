@@ -2,6 +2,7 @@
 @import "./styles/theme.css";
 @import "./styles/forms.css";
 @import "./styles/tables.css";
+@import "./styles/popconfirm.css";
 
 @layer base {
   body {
@@ -27,7 +28,8 @@
 
 /* Button variants. */
 .ui-button-primary,
-.ui-button-secondary {
+.ui-button-secondary,
+.ui-button-danger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -42,10 +44,35 @@
 }
 
 .ui-button-primary:disabled,
-.ui-button-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+.ui-button-secondary:disabled,
+.ui-button-danger:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .ui-button-primary:focus-visible,
-.ui-button-secondary:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+.ui-button-secondary:focus-visible,
+.ui-button-danger:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+
+.ui-button-danger {
+  background-color: var(--ui-danger);
+  color: #FFFFFF;
+  transition: background-color var(--ui-duration), box-shadow var(--ui-duration);
+}
+.ui-button-danger:hover:not(:disabled) { background-color: var(--ui-danger-hover); }
+
+.ui-icon-button-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ui-danger);
+  background-color: transparent;
+  cursor: pointer;
+  transition: color var(--ui-duration), background-color var(--ui-duration);
+}
+.ui-icon-button-danger:hover:not(:disabled) {
+  color: var(--ui-danger-hover);
+  background-color: var(--ui-danger-soft);
+}
+.ui-icon-button-danger:focus-visible { outline: 2px solid var(--ui-danger); outline-offset: 2px; }
+.ui-icon-button-danger:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .ui-button-primary {
   background-color: var(--ui-accent);
@@ -72,5 +99,7 @@
 @media (prefers-reduced-motion: reduce) {
   .ui-input,
   .ui-button-primary,
-  .ui-button-secondary { transition: none; }
+  .ui-button-secondary,
+  .ui-button-danger,
+  .ui-icon-button-danger { transition: none; }
 }
