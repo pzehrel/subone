@@ -1,0 +1,36 @@
+@layer components {
+  .ui-popconfirm {
+    z-index: 100;
+    width: 300px;
+    max-width: min(calc(100vw - 24px), var(--radix-popover-content-available-width));
+    max-height: var(--radix-popover-content-available-height);
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius-control);
+    outline: none;
+    background: var(--ui-surface);
+    color: var(--ui-text);
+    box-shadow: 0 8px 28px rgb(45 43 40 / 14%);
+    transform-origin: var(--radix-popover-content-transform-origin);
+  }
+  .ui-popconfirm[data-state="open"] { animation: ui-popconfirm-in var(--ui-duration) ease-out; }
+  .ui-popconfirm[data-state="closed"] { pointer-events: none; animation: ui-popconfirm-out var(--ui-duration) ease-in; }
+  .ui-popconfirm-body { max-height: inherit; overflow: auto; overscroll-behavior: contain; padding: 14px; border-radius: inherit; }
+  .ui-popconfirm-message { display: flex; align-items: flex-start; gap: 8px; }
+  .ui-popconfirm-icon { flex: none; margin-top: 1px; color: var(--ui-warning); }
+  .ui-popconfirm[data-danger="true"] .ui-popconfirm-icon { color: var(--ui-danger); }
+  .ui-popconfirm-copy { min-width: 0; overflow-wrap: anywhere; }
+  .ui-popconfirm-title { margin: 0; font-size: 12px; font-weight: 600; line-height: 20px; }
+  .ui-popconfirm-description { margin-top: 4px; color: var(--ui-secondary); font-size: 12px; line-height: 20px; }
+  .ui-popconfirm-error { margin-top: 8px; color: var(--ui-danger); font-size: 11px; line-height: 18px; overflow-wrap: anywhere; }
+  .ui-popconfirm-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  .ui-popconfirm-arrow { fill: var(--ui-surface); }
+  .ui-popconfirm-spinner { flex: none; animation: ui-popconfirm-spin 800ms linear infinite; }
+}
+
+@keyframes ui-popconfirm-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: scale(1); } }
+@keyframes ui-popconfirm-out { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.96); } }
+@keyframes ui-popconfirm-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .ui-popconfirm { animation-duration: 1ms !important; }
+  .ui-popconfirm-spinner { animation: none; }
+}

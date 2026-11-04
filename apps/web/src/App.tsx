@@ -1,3 +1,4 @@
+import { Modal } from './components/Modal';
 import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { Dashboard } from './components/Dashboard';
@@ -223,7 +224,13 @@ export function App() {
   };
 
   const handleDeleteCustomNode = async (id: string) => {
-    // 0ms Optimistic UI update: immediately remove from UI list & badge count
+    const res = await apiFetch(`${API_BASE}/custom-nodes/${id}`, { method: 'DELETE' });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.success === false) {
+      throw new Error(json?.message || '删除节点失败，请重试');
+    }
+
+    // Remove nodes only after the server confirms deletion.
     setConfig(prev => {
       if (!prev) return prev;
       return {
@@ -242,16 +249,6 @@ export function App() {
       };
     });
     setNodes(prev => (prev || []).filter(n => n.id !== id));
-
-    try {
-      const res = await apiFetch(`${API_BASE}/custom-nodes/${id}`, { method: 'DELETE' });
-      if (!res.ok) {
-        await fetchData();
-      }
-    } catch (err) {
-      console.error('handleDeleteCustomNode error:', err);
-      await fetchData();
-    }
   };
 
   const handleUpdateCustomNode = async (id: string, updates: Partial<ProxyNode> & { text?: string }) => {
@@ -416,18 +413,15 @@ export function App() {
   };
 
   const handleDeleteSource = async (id: string) => {
+    const res = await apiFetch(`${API_BASE}/sources/${id}`, { method: 'DELETE' });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.success === false) {
+      throw new Error(json?.message || '删除失败，请重试');
+    }
     setConfig(prev => prev ? {
       ...prev,
       sources: (prev.sources || []).filter(s => s.id !== id),
     } : prev);
-
-    try {
-      const res = await apiFetch(`${API_BASE}/sources/${id}`, { method: 'DELETE' });
-      if (!res.ok) await fetchConfigOnly();
-    } catch (err: any) {
-      console.error('handleDeleteSource error:', err);
-      await fetchConfigOnly();
-    }
   };
 
   const handleRefreshSource = async (id: string) => {
@@ -761,8 +755,8 @@ export function App() {
 
   if (!authChecked) {
     return (
-      <div className="min-h-screen bg-[#FAF8F5] flex items-center justify-center">
-        <div className="text-xs text-[#8C877D] font-mono animate-pulse">正在初始化安全环境...</div>
+      <div className="min-h-screen bg-ui-subtle flex items-center justify-center">
+        <div className="text-xs text-ui-muted font-mono animate-pulse">正在初始化安全环境...</div>
       </div>
     );
   }
@@ -782,7 +776,7 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#FAF8F5] text-[#2D2B28] flex flex-col selection:bg-[#E8D7C7] selection:text-[#1F1E1D]">
+    <div className="min-h-screen bg-ui-subtle text-ui-text flex flex-col selection:bg-[#E8D7C7] selection:text-ui-text">
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -869,14 +863,20 @@ export function App() {
 
       </main>
 
-      {showSettings && config && (
-        <SettingsModal
-          config={config}
-          onClose={() => setShowSettings(false)}
-          onChangePassword={handleChangePassword}
-          onUpdateSettings={handleUpdateSettings}
-        />
-      )}
+      <Modal
+        open={showSettings && !!config}
+        title="全局偏好与设置"
+        size="lg"
+        onClose={() => setShowSettings(false)}
+      >
+        {config && (
+          <SettingsModal
+            config={config}
+            onChangePassword={handleChangePassword}
+            onUpdateSettings={handleUpdateSettings}
+          />
+        )}
+      </Modal>
     </div>
   );
 }

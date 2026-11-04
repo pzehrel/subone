@@ -1,3 +1,4 @@
+import { Input } from './ui/Input';
 import React, { useState } from 'react';
 import { Layers, ArrowRight, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
@@ -39,7 +40,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen bg-[#FAF8F5] relative flex flex-col justify-center items-center px-4 overflow-hidden selection:bg-[#E8D7C7] selection:text-[#1F1E1D]">
+    <div className="min-h-screen bg-ui-subtle relative flex flex-col justify-center items-center px-4 overflow-hidden selection:bg-[#E8D7C7] selection:text-ui-text">
       {/* Ambient background subtle radial glow */}
       <div
         className="absolute inset-0 pointer-events-none"
@@ -49,21 +50,21 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
       />
 
       {/* Unified Self-Contained Card */}
-      <div className="w-full max-w-[360px] relative z-10 bg-white/95 backdrop-blur-md rounded-2xl border border-[#EAE5DC] shadow-[0_12px_40px_-10px_rgba(45,43,40,0.07)] p-7 sm:p-8 transition-all">
+      <div className="w-full max-w-[360px] relative z-10 bg-ui-surface/95 backdrop-blur-md rounded-2xl border border-[#EAE5DC] shadow-[0_12px_40px_-10px_rgba(45,43,40,0.07)] p-7 sm:p-8 transition-all">
         {/* Horizontal Brand Header (Inside the card, perfectly balanced) */}
         <div className="flex items-center justify-center gap-3 mb-7 select-none">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-b from-[#CC785C] to-[#B8684D] flex items-center justify-center text-white shadow-sm shadow-[#CC785C]/20">
             <Layers className="w-4.5 h-4.5 stroke-[2.2]" />
           </div>
-          <span className="text-2xl font-bold tracking-tight text-[#1F1E1D] font-mono leading-none">
-            sub<span className="text-[#CC785C] font-normal">one</span>
+          <span className="text-2xl font-bold tracking-tight text-ui-text font-mono leading-none">
+            sub<span className="text-ui-accent font-normal">one</span>
           </span>
         </div>
 
         {/* Input & Action Form */}
         <form onSubmit={handleSubmit} className="space-y-3.5">
           <div className="relative">
-            <input
+            <Input aria-label="访问密码"
               type={showPassword ? 'text' : 'password'}
               required
               autoFocus
@@ -73,13 +74,13 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                 setPassword(e.target.value);
                 if (error) setError(null);
               }}
-              className="w-full h-11 pl-4 pr-11 bg-[#FAF8F5] border border-[#E3DDD2] rounded-xl text-sm text-[#1F1E1D] focus:outline-none focus:border-[#CC785C] focus:bg-white focus:ring-3 focus:ring-[#CC785C]/10 transition-all placeholder:text-[#A39E93]"
+              className="w-full h-11 pl-4 pr-11"
             />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
               tabIndex={-1}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9E9A91] hover:text-[#1F1E1D] transition-colors p-1 cursor-pointer rounded-md hover:bg-[#F3EFEA]"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-ui-muted hover:text-ui-text transition-colors p-1 cursor-pointer rounded-md hover:bg-[#F3EFEA]"
             >
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
@@ -95,7 +96,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
           <button
             type="submit"
             disabled={isLoading || !password.trim()}
-            className="w-full h-11 flex items-center justify-center gap-2 rounded-xl text-sm font-medium btn-claude-primary shadow-xs transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            className="w-full h-11 flex items-center justify-center gap-2 rounded-xl text-sm font-medium ui-button-primary shadow-xs transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
           >
             {isLoading ? (
               <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />

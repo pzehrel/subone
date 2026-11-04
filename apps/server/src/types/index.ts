@@ -1,3 +1,6 @@
+import type { SubscriptionInfo } from '../../../../shared/subscription-info';
+export type { SubscriptionInfo } from '../../../../shared/subscription-info';
+
 export type ProxyType =
   | 'ss'
   | 'ssr'
@@ -101,6 +104,9 @@ export interface ProxyNode {
 
   congestionControl?: string;
   obfs?: string;
+  protocol?: string;
+  protocolParam?: string;
+  obfsParam?: string;
   obfsPassword?: string;
   plugin?: string;
   pluginOpts?: any;
@@ -113,17 +119,6 @@ export interface ProxyNode {
 }
 
 export type SourceType = 'remote' | 'manual';
-
-export interface SubscriptionInfo {
-  upload?: number;
-  download?: number;
-  total?: number;
-  remaining?: number;
-  used?: number;
-  expire?: number;
-  trafficText?: string;
-  expiryText?: string;
-}
 
 export interface SubscriptionSource {
   id: string;

@@ -1,3 +1,11 @@
+import { Input } from './ui/Input';
+import { Textarea } from './ui/Textarea';
+import { Select, SelectItem } from './ui/Select';
+import { Field, Label } from './ui/Field';
+import { Badge } from './ui/Badge';
+import { Popconfirm } from './ui/Popconfirm';
+import { SourcesIcon } from './ui/module-icons';
+import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
 import React, { useState, useMemo } from 'react';
 import {
   Check,
@@ -8,19 +16,18 @@ import {
   Eraser,
   ExternalLink,
   FileText,
-  Layers,
   Plus,
   RefreshCw,
   Server,
   Sparkles,
   Trash2,
-  X,
   XCircle,
 } from 'lucide-react';
 import { SubscriptionSource, ProxyNode, ConfigTemplate } from '../types';
 import { nodeToUri } from '../utils/nodeUri';
 import { copyToClipboard } from '../utils/clipboard';
 import { formatSubscriptionTraffic, formatSubscriptionExpiry } from '../utils/subscriptionInfo';
+import { HelpTooltip } from './HelpTooltip';
 
 function previewInfoMatches(source: SubscriptionSource | null, pattern: string) {
   if (!pattern.trim()) return { names: [], error: '' };
@@ -86,7 +93,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
               }
             });
           }
-        } catch {}
+        } catch { }
       }
     });
     (nodes || []).forEach(n => {
@@ -127,6 +134,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
   // Loading & Action states
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [confirmBulkClear, setConfirmBulkClear] = useState(false);
   const [copiedNodeId, setCopiedNodeId] = useState<string | null>(null);
 
   // Accordion expanded source IDs (默认全部收起)
@@ -184,6 +192,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
 
   // Open bulk edit modal for subscription text
   const handleOpenBulkEditModal = (source: SubscriptionSource) => {
+    setConfirmBulkClear(false);
     setBulkEditingSource(source);
     const nodes = source.nodes || [];
     const text = nodes
@@ -199,18 +208,24 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
     e.preventDefault();
     if (!bulkEditingSource || isSubmitting) return;
     if (!bulkEditText.trim()) {
-      if (!confirm(`文本内容为空，保存后将清空【${bulkEditingSource.name}】中的所有节点，确定继续吗？`)) {
-        return;
-      }
+      setConfirmBulkClear(true);
+      return;
     }
+    try {
+      await saveBulkEdit();
+    } catch (err: any) {
+      console.error('Failed to bulk edit subscription text:', err);
+      alert(err.message || '更新失败，请检查节点文本格式');
+    }
+  };
+
+  const saveBulkEdit = async () => {
+    if (!bulkEditingSource || isSubmitting) return;
     setIsSubmitting(true);
     try {
       await onImportCustomNodes(bulkEditText, true, bulkEditingSource.id);
       setShowBulkEditModal(false);
       setBulkEditingSource(null);
-    } catch (err: any) {
-      console.error('Failed to bulk edit subscription text:', err);
-      alert(err.message || '更新失败，请检查节点文本格式');
     } finally {
       setIsSubmitting(false);
     }
@@ -225,17 +240,14 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
     }
   };
 
-  const handleClearNodes = async (source: SubscriptionSource) => {
-    if (!confirm(`确定要清空节点组【${source.name}】中的所有节点吗？`)) return;
-    try {
-      setIsSubmitting(true);
-      await fetch(`/api/sources/${source.id}/clear-nodes`, { method: 'POST' });
-      await onUpdateSource(source.id, { nodes: [], nodeCount: 0 });
-    } catch (err: any) {
-      alert(err.message || '清空节点失败');
-    } finally {
-      setIsSubmitting(false);
-    }
+  const handleOpenAddNetworkModal = () => {
+    setEditingNetworkSource(null);
+    setNewNetworkName('');
+    setNewNetworkUrl('');
+    setNewNetworkType('auto');
+    setTrafficNodeRegex('');
+    setExpiryNodeRegex('');
+    setShowAddNetworkModal(true);
   };
 
   // Open edit modal for network source
@@ -273,12 +285,6 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
           expiryNodeRegex: expiryNodeRegex.trim(),
         });
       }
-      setNewNetworkName('');
-      setNewNetworkUrl('');
-      setNewNetworkType('auto');
-      setTrafficNodeRegex('');
-      setExpiryNodeRegex('');
-      setEditingNetworkSource(null);
       setShowAddNetworkModal(false);
     } catch (err: any) {
       console.error('Failed to save network source:', err);
@@ -397,61 +403,36 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
   return (
     <div className="max-w-6xl mx-auto space-y-5 pb-16">
       {/* 1. 顶部操作栏卡片 */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 bg-white p-4 rounded-2xl border border-[#E3DDD2] shadow-2xs">
-        <div>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 bg-ui-surface p-4 rounded-2xl border border-ui-border shadow-2xs">
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <Layers className="w-5 h-5 text-[#CC785C]" />
-            <h1 className="text-base font-bold text-[#1F1E1D]">订阅与节点</h1>
-            <span className="px-2.5 py-0.5 bg-[#FAF0EC] text-[#B85D3F] rounded-md font-mono text-xs font-bold border border-[#F3DDD3]">
+            <SourcesIcon className="w-5 h-5 text-ui-accent" aria-hidden="true" />
+            <h1 className="text-base font-bold text-ui-text">上游订阅</h1>
+            <Badge tone="accent" className="font-mono border">
               共 {totalNodesCount} 节点
-            </span>
+            </Badge>
           </div>
-          <div className="flex items-center gap-2 mt-1 text-xs text-[#78746D] flex-wrap">
-            <span className="text-[#D0C9BD]">•</span>
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FAF8F5] border border-[#E8E4DC] text-[#59554E] text-[11px] font-medium">
-              <span>{customSources.length} 独立组</span>
-            </span>
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#EAF2EE] border border-[#D5E5DE] text-[#2D6A5A] text-[11px] font-medium">
-              <span>{networkSources.length} 网络订阅</span>
-            </span>
-          </div>
+          <p className="mt-1 text-xs leading-relaxed text-ui-secondary">
+            管理网络订阅与独立节点，为订阅配置提供节点来源。
+          </p>
         </div>
 
         {/* 顶部操作按钮组 */}
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
           <button
-            onClick={() => handleOpenImportModal()}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold btn-claude-primary rounded-xl shadow-2xs cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span>导入节点</span>
-          </button>
-
-          <button
-            onClick={() => {
-              setEditingNetworkSource(null);
-              setNewNetworkName('');
-              setNewNetworkUrl('');
-              setNewNetworkType('auto');
-              setTrafficNodeRegex('');
-              setExpiryNodeRegex('');
-              setShowAddNetworkModal(true);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold btn-claude-secondary rounded-xl shadow-2xs cursor-pointer"
+            onClick={handleOpenAddNetworkModal}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold ui-button-primary rounded-xl shadow-2xs cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
             <span>添加订阅</span>
           </button>
 
           <button
-            onClick={() => {
-              setNewGroupNameInput('');
-              setShowCreateGroupModal(true);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold btn-claude-secondary rounded-xl shadow-2xs cursor-pointer"
+            onClick={() => handleOpenImportModal()}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold ui-button-secondary rounded-xl shadow-2xs cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span>新建节点组</span>
+            <span>导入节点</span>
           </button>
         </div>
       </div>
@@ -469,11 +450,11 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
           return (
             <div
               key={source.id}
-              className={`rounded-2xl border transition-all duration-200 bg-white overflow-hidden shadow-2xs ${source.enabled !== false
+              className={`rounded-2xl border transition-all duration-200 bg-ui-surface overflow-hidden shadow-2xs ${source.enabled !== false
                 ? isExpanded
-                  ? 'border-[#CC785C]/60 shadow-sm'
-                  : 'border-[#E3DDD2] hover:border-[#CC785C]/40'
-                : 'border-[#E8E4DC] opacity-65 bg-[#FAF8F5]'
+                  ? 'border-ui-accent/60 shadow-sm'
+                  : 'border-ui-border hover:border-ui-accent/40'
+                : 'border-ui-border opacity-65 bg-ui-subtle'
                 }`}
             >
               {/* 卡片主横条 (Header) */}
@@ -482,57 +463,46 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                   }`}
                 onClick={() => toggleExpand(source.id)}
               >
-                {/* 左侧：类型徽章、名称、节点数、副标题 */}
+                {/* 左侧：名称、节点数、副标题 */}
                 <div className="flex items-start gap-3 flex-1 min-w-0">
                   {/* 折叠展开箭头指示器 */}
-                  <div className="mt-0.5 shrink-0 text-[#8C877D] hover:text-[#1F1E1D] transition-transform duration-200">
+                  <div className="mt-0.5 shrink-0 text-ui-muted hover:text-ui-text transition-transform duration-200">
                     <ChevronDown
-                      className={`w-4 h-4 transition-transform duration-200 ${isExpanded ? 'rotate-180 text-[#CC785C]' : ''
+                      className={`w-4 h-4 transition-transform duration-200 ${isExpanded ? 'rotate-180 text-ui-accent' : ''
                         }`}
                     />
                   </div>
 
                   <div className="min-w-0 flex-1 space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      {/* 类型徽章 */}
-                      {isCustom ? (
-                        <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-[#FBF2EA] text-[#C45E38] border border-[#F2D8C9] shrink-0 font-mono">
-                          独立组
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-[#EAF2EE] text-[#2D6A5A] border border-[#D5E5DE] shrink-0 font-mono">
-                          订阅
-                        </span>
-                      )}
-
                       {/* 标题 */}
-                      <h3 className={`text-xs font-bold truncate max-w-xs sm:max-w-md ${source.enabled === false ? 'text-[#8C877D]' : 'text-[#1F1E1D]'}`}>
+                      <h3 className={`text-xs font-bold truncate max-w-xs sm:max-w-md ${source.enabled === false ? 'text-ui-muted' : 'text-ui-text'}`}>
                         {source.name}
                       </h3>
 
                       {/* 节点数徽章 */}
-                      <span className={`px-2 py-0.5 text-[10px] font-mono font-semibold rounded shrink-0 ${source.enabled === false ? 'bg-[#ECE8E1] text-[#9E9A91]' : 'bg-[#F0ECE4] text-[#59554E]'}`}>
+                      <Badge className="font-mono">
                         {nodesList.length} 节点
-                      </span>
+                      </Badge>
 
                       {/* 停用状态提示徽章 */}
                       {source.enabled === false && (
-                        <span className="px-1.5 py-0.2 text-[10px] font-semibold rounded bg-[#F0EBE1] text-[#8C877D] border border-[#DDD6C9] shrink-0">
+                        <Badge tone="neutral" className="border">
                           已停用 (不导出)
-                        </span>
+                        </Badge>
                       )}
                     </div>
 
                     {/* 卡片副信息 */}
                     {/* 更新时间提示 */}
                     {(traffic || expiry) && (
-                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[#59554E]">
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-ui-secondary">
                         {traffic && <span>{traffic}</span>}
                         {expiry && <span>{expiry}</span>}
                       </div>
                     )}
                     {source.lastUpdated && (
-                      <div className="text-[10px] text-[#9E9A91]">
+                      <div className="text-[10px] text-ui-muted">
                         最后同步: {new Date(source.lastUpdated).toLocaleString()}
                       </div>
                     )}
@@ -549,7 +519,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                     <>
                       <button
                         onClick={() => handleOpenBulkEditModal(source)}
-                        className="p-1.5 text-[#8C877D] hover:text-[#1F1E1D] hover:bg-[#EFEAE2]/60 rounded-lg transition-colors cursor-pointer"
+                        className="p-1.5 text-ui-muted hover:text-ui-text hover:bg-ui-hover/60 rounded-lg transition-colors cursor-pointer"
                         title="批量编辑节点文本"
                       >
                         <FileText className="w-3.5 h-3.5" />
@@ -557,20 +527,27 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
 
                       <button
                         onClick={() => handleOpenImportModal(source.id)}
-                        className="p-1.5 text-[#CC785C] hover:text-[#B85D3F] hover:bg-[#FAF0EC] rounded-lg transition-colors cursor-pointer"
+                        className="p-1.5 text-ui-accent hover:text-[#B85D3F] hover:bg-ui-accent-soft rounded-lg transition-colors cursor-pointer"
                         title="导入节点到此组"
                       >
                         <Plus className="w-3.5 h-3.5" />
                       </button>
 
                       {nodesList.length > 0 && (
-                        <button
-                          onClick={() => handleClearNodes(source)}
-                          className="p-1.5 text-[#8C877D] hover:text-[#B85D3F] hover:bg-[#FAF0EC] rounded-lg transition-colors cursor-pointer"
-                          title="清空此组所有节点"
+                        <Popconfirm
+                          title="清空全部节点？"
+                          description={`将清空「${source.name}」中的 ${nodesList.length} 个节点，节点组仍会保留。`}
+                          confirmText="清空"
+                          danger
+                          onConfirm={() => onImportCustomNodes('', true, source.id)}
                         >
-                          <Eraser className="w-3.5 h-3.5" />
-                        </button>
+                          <button
+                            className="ui-icon-button-danger p-1.5 rounded-lg"
+                            title="清空此组所有节点"
+                          >
+                            <Eraser className="w-3.5 h-3.5" />
+                          </button>
+                        </Popconfirm>
                       )}
 
                       <button
@@ -578,24 +555,27 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                           setRenamingSource(source);
                           setNewGroupNameInput(source.name);
                         }}
-                        className="p-1.5 text-[#8C877D] hover:text-[#1F1E1D] hover:bg-[#EFEAE2]/60 rounded-lg transition-colors cursor-pointer"
+                        className="p-1.5 text-ui-muted hover:text-ui-text hover:bg-ui-hover/60 rounded-lg transition-colors cursor-pointer"
                         title="重命名节点组"
                       >
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
 
 
-                      <button
-                        onClick={() => {
-                          if (confirm(`确定要删除节点组【${source.name}】吗？`)) {
-                            onDeleteSource(source.id);
-                          }
-                        }}
-                        className="p-1.5 text-[#9E9A91] hover:text-[#B85D3F] hover:bg-[#FAF0EC] rounded-lg transition-colors cursor-pointer"
-                        title="删除节点组"
+                      <Popconfirm
+                        title="删除节点组？"
+                        description={`将删除「${source.name}」及组内全部节点，此操作无法撤销。`}
+                        confirmText="删除"
+                        danger
+                        onConfirm={() => onDeleteSource(source.id)}
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                        <button
+                          className="ui-icon-button-danger p-1.5 rounded-lg"
+                          title="删除节点组"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </Popconfirm>
                     </>
                   )}
 
@@ -604,7 +584,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                     <>
                       <button
                         onClick={() => handleOpenEditNetworkModal(source)}
-                        className="p-1.5 text-[#8C877D] hover:text-[#1F1E1D] hover:bg-[#EFEAE2] rounded-lg transition-colors cursor-pointer"
+                        className="p-1.5 text-ui-muted hover:text-ui-text hover:bg-ui-hover rounded-lg transition-colors cursor-pointer"
                         title="编辑订阅源"
                       >
                         <Edit2 className="w-3.5 h-3.5" />
@@ -613,35 +593,38 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                       <button
                         onClick={() => handleSingleRefresh(source.id)}
                         disabled={isThisRefreshing}
-                        className="p-1.5 text-[#8C877D] hover:text-[#1F1E1D] hover:bg-[#EFEAE2] rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                        className="p-1.5 text-ui-muted hover:text-ui-text hover:bg-ui-hover rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                         title="刷新订阅"
                       >
-                        <RefreshCw className={`w-3.5 h-3.5 text-[#CC785C] ${isThisRefreshing ? 'animate-spin' : ''}`} />
+                        <RefreshCw className={`w-3.5 h-3.5 text-ui-accent ${isThisRefreshing ? 'animate-spin' : ''}`} />
                       </button>
 
                       <button
                         onClick={() => onUpdateSource(source.id, { enabled: !source.enabled })}
-                        className="p-1.5 text-[#8C877D] hover:text-[#1F1E1D] hover:bg-[#EFEAE2]/60 rounded-lg transition-colors cursor-pointer"
+                        className="p-1.5 text-ui-muted hover:text-ui-text hover:bg-ui-hover/60 rounded-lg transition-colors cursor-pointer"
                         title={source.enabled !== false ? '点击停用' : '点击启用'}
                       >
                         {source.enabled !== false ? (
                           <CheckCircle2 className="w-4 h-4 text-[#367A68]" />
                         ) : (
-                          <XCircle className="w-4 h-4 text-[#9E9A91]" />
+                          <XCircle className="w-4 h-4 text-ui-muted" />
                         )}
                       </button>
 
-                      <button
-                        onClick={() => {
-                          if (confirm(`确定要删除订阅源【${source.name}】吗？`)) {
-                            onDeleteSource(source.id);
-                          }
-                        }}
-                        className="p-1.5 text-[#9E9A91] hover:text-[#B85D3F] hover:bg-[#FAF0EC] rounded-lg transition-colors cursor-pointer"
-                        title="删除订阅源"
+                      <Popconfirm
+                        title="删除上游订阅？"
+                        description={`将删除「${source.name}」及其节点，此操作无法撤销。`}
+                        confirmText="删除"
+                        danger
+                        onConfirm={() => onDeleteSource(source.id)}
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                        <button
+                          className="ui-icon-button-danger p-1.5 rounded-lg"
+                          title="删除订阅源"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </Popconfirm>
                     </>
                   )}
                 </div>
@@ -649,32 +632,32 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
 
               {/* 3. 展开区域：就地查看节点详情 (Accordion) */}
               {isExpanded && (
-                <div className="border-t border-[#F0ECE4] bg-white p-4 animate-in fade-in duration-150">
+                <div className="border-t border-ui-divider bg-ui-surface animate-in fade-in duration-150">
                   {/* 节点列表渲染 */}
                   {nodesList.length > 0 ? (
-                    <div className="rounded-xl border border-[#EBE6DC] divide-y divide-[#F0ECE4] overflow-hidden">
+                    <div className="divide-y divide-ui-divider">
                       {nodesList.map(node => (
                         <div
                           key={node.id}
-                          className="px-3.5 py-2 hover:bg-[#FAF8F5] transition-colors flex items-center justify-between gap-3 text-xs group/item"
+                          className="px-4 py-2 hover:bg-ui-subtle transition-colors flex items-center justify-between gap-3 text-xs group/item"
                         >
                           {/* 左侧：Emoji、节点名、协议类型、服务器端口 */}
                           <div className="flex items-center gap-2.5 min-w-0 flex-1">
                             <span className="text-sm shrink-0">{node.countryEmoji || '🌐'}</span>
                             <div className="min-w-0 flex-1 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
-                              <span className="font-bold text-[#1F1E1D] truncate max-w-md">
+                              <span className="font-bold text-ui-text truncate max-w-md">
                                 {node.name}
                               </span>
                               <div className="flex items-center gap-1.5 shrink-0">
-                                <span className="px-1.5 py-0.2 bg-[#F0ECE4] text-[#59554E] rounded text-[10px] font-mono font-bold">
+                                <Badge tone="neutral" className="font-mono">
                                   {(node.type || 'vless').toUpperCase()}
-                                </span>
+                                </Badge>
                                 {node.detour && (
-                                  <span className="px-1.5 py-0.2 bg-[#FAF0EC] text-[#CC785C] border border-[#F3D5CA] rounded text-[10px] font-medium">
+                                  <Badge tone="accent" className="border font-medium">
                                     {node.detour}
-                                  </span>
+                                  </Badge>
                                 )}
-                                <span className="text-[11px] font-mono text-[#8C877D] truncate">
+                                <span className="text-[11px] font-mono text-ui-muted truncate">
                                   {node.server}:{node.port}
                                 </span>
                               </div>
@@ -685,7 +668,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                           <div className="flex items-center gap-1.5 shrink-0">
                             <button
                               onClick={() => handleCopyNode(node)}
-                              className="p-1 text-[#9E9A91] hover:text-[#1F1E1D] hover:bg-[#EFEAE2] rounded transition-colors cursor-pointer"
+                              className="p-1 text-ui-muted hover:text-ui-text hover:bg-ui-hover rounded transition-colors cursor-pointer"
                               title="复制节点链接"
                             >
                               {copiedNodeId === node.id ? (
@@ -703,32 +686,35 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                                 setEditNodeTextInput(uriText);
                                 setEditNodeDetourInput(node.detour || '');
                               }}
-                              className="p-1 text-[#9E9A91] hover:text-[#1F1E1D] hover:bg-[#EFEAE2] rounded transition-colors cursor-pointer"
+                              className="p-1 text-ui-muted hover:text-ui-text hover:bg-ui-hover rounded transition-colors cursor-pointer"
                               title="修改节点与配置文本"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
 
                             {isCustom && (
-                              <button
-                                onClick={() => {
-                                  if (confirm(`确定要删除节点【${node.name}】吗？`)) {
-                                    onDeleteCustomNode(node.id);
-                                  }
-                                }}
-                                className="p-1 text-[#9E9A91] hover:text-[#B85D3F] hover:bg-[#FAF0EC] rounded transition-colors cursor-pointer"
-                                title="删除此节点"
+                              <Popconfirm
+                                title="删除节点？"
+                                description={`将删除「${node.name}」，此操作无法撤销。`}
+                                confirmText="删除"
+                                danger
+                                onConfirm={() => onDeleteCustomNode(node.id)}
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                                <button
+                                  className="ui-icon-button-danger p-1 rounded"
+                                  title="删除此节点"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </Popconfirm>
                             )}
                           </div>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <div className="p-6 rounded-xl border border-dashed border-[#DFD9CF] text-center space-y-2">
-                      <p className="text-xs font-medium text-[#8C877D]">
+                    <div className="p-6 text-center space-y-2">
+                      <p className="text-xs font-medium text-ui-muted">
                         该组暂无节点
                       </p>
                     </div>
@@ -740,19 +726,19 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
         })}
 
         {unifiedSources.length === 0 && (
-          <div className="p-12 rounded-2xl bg-white border border-dashed border-[#DFD9CF] text-center space-y-3">
-            <Layers className="w-8 h-8 text-[#9E9A91] mx-auto opacity-50" />
-            <p className="text-xs font-medium text-[#78746D]">暂无任何订阅或独立节点组</p>
+          <div className="p-12 rounded-2xl bg-ui-surface border border-dashed border-ui-border text-center space-y-3">
+            <SourcesIcon className="w-8 h-8 text-ui-muted mx-auto opacity-50" aria-hidden="true" />
+            <p className="text-xs font-medium text-ui-secondary">暂无任何订阅或独立节点组</p>
             <div className="flex items-center justify-center gap-2">
               <button
                 onClick={() => handleOpenImportModal()}
-                className="px-3 py-1.5 text-xs font-semibold btn-claude-primary rounded-xl"
+                className="px-3 py-1.5 text-xs font-semibold ui-button-primary rounded-xl"
               >
                 贴入独立节点
               </button>
               <button
-                onClick={() => setShowAddNetworkModal(true)}
-                className="px-3 py-1.5 text-xs font-semibold btn-claude-secondary rounded-xl"
+                onClick={handleOpenAddNetworkModal}
+                className="px-3 py-1.5 text-xs font-semibold ui-button-secondary rounded-xl"
               >
                 添加网络订阅链接
               </button>
@@ -762,159 +748,129 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
       </div>
 
       {/* 弹窗 1：添加/编辑网络机场订阅弹窗 */}
-      {showAddNetworkModal && (
-        <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-[#E3DDD2] shadow-xl w-full max-w-md max-h-[90dvh] overflow-y-auto p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-[#F0ECE4]">
-              <div>
-                <h3 className="text-sm font-bold text-[#1F1E1D]">
-                  {editingNetworkSource ? '编辑网络订阅源' : '添加网络订阅源'}
-                </h3>
-              </div>
-              <button
-                onClick={() => {
-                  setShowAddNetworkModal(false);
-                  setEditingNetworkSource(null);
+      <Modal
+        open={showAddNetworkModal}
+        title={editingNetworkSource ? '编辑网络订阅源' : '添加网络订阅源'}
+        onClose={() => setShowAddNetworkModal(false)}
+      >
+        <ModalForm onSubmit={handleAddNetworkSubmit}>
+          <ModalBody>
+            <Field>
+              <Label className="block">订阅源名称</Label>
+              <Input
+                type="text"
+                required
+                placeholder=""
+                value={newNetworkName}
+                onChange={e => setNewNetworkName(e.target.value)}
+                className="w-full"
+              />
+            </Field>
+
+            <Field>
+              <Label className="block">订阅 URL</Label>
+              <Textarea variant="default"
+                rows={3}
+                required
+                placeholder="https://airport.com/api/v1/client/subscribe?token=..."
+                value={newNetworkUrl}
+                onChange={e => {
+                  const input = document.createElement('input');
+                  input.type = 'url';
+                  input.value = e.target.value.trim();
+                  e.target.setCustomValidity(input.validity.typeMismatch ? '请输入有效的订阅 URL' : '');
+                  setNewNetworkUrl(e.target.value);
                 }}
-                className="text-xs text-[#9E9A91] hover:text-[#1F1E1D] p-1 cursor-pointer"
+                className="w-full font-mono resize-y"
+              />
+            </Field>
+
+            <Field>
+              <Label className="block">格式解析模式</Label>
+              <Select
+                value={newNetworkType}
+                onValueChange={nextValue => setNewNetworkType(nextValue as NonNullable<SubscriptionSource['type']>)}
+                className="w-full"
               >
-                ✕
-              </button>
+                <SelectItem value="auto">自动识别 (Auto)</SelectItem>
+                <SelectItem value="clash">Clash YAML</SelectItem>
+                <SelectItem value="singbox">Singbox JSON</SelectItem>
+                <SelectItem value="quantumultx">QuanX (Quantumult X)</SelectItem>
+                <SelectItem value="base64">Base64 编码节点串</SelectItem>
+              </Select>
+            </Field>
+
+            <div className="space-y-3">
+              {[
+                { id: 'traffic-node-regex', label: '流量信息匹配', help: '按节点名称匹配流量信息，例如“剩余流量|已用流量”。匹配项显示为订阅信息，不计入可用节点。留空则不匹配。', value: trafficNodeRegex, setValue: setTrafficNodeRegex, placeholder: '剩余流量|已用流量|流量用量', preview: trafficMatches },
+                { id: 'expiry-node-regex', label: '到期信息匹配', help: '按节点名称匹配到期信息，例如“套餐到期|有效期”。匹配项显示为订阅信息，不计入可用节点。留空则不匹配。', value: expiryNodeRegex, setValue: setExpiryNodeRegex, placeholder: '套餐到期|到期时间|有效期', preview: expiryMatches },
+              ].map(field => (
+                <Field id={field.id} key={field.id}>
+                  <div className="mb-1 flex items-center gap-1">
+                    <Label htmlFor={field.id}>{field.label}</Label>
+                    <HelpTooltip label={`${field.label}说明`} content={field.help} />
+                  </div>
+                  <Input
+                    id={field.id}
+                    type="text"
+                    value={field.value}
+                    onChange={e => field.setValue(e.target.value)}
+                    placeholder={field.placeholder}
+                    aria-invalid={!!field.preview.error}
+                    aria-describedby={`${field.id}-preview`}
+                    className="w-full font-mono"
+                  />
+                  <div id={`${field.id}-preview`} className={`mt-1 text-[11px] ${field.preview.error ? 'text-red-600' : 'text-ui-secondary'}`}>
+                    {field.preview.error || (field.value.trim() && (editingNetworkSource ? `匹配 ${field.preview.names.length} 项` : '添加并拉取后匹配'))}
+                    {field.preview.names.length > 0 && (
+                      <ul className="mt-1 max-h-20 overflow-y-auto space-y-1 break-words">
+                        {field.preview.names.map((name, index) => <li key={index}>{name}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                </Field>
+              ))}
             </div>
 
-            <form onSubmit={handleAddNetworkSubmit} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-semibold text-[#1F1E1D] mb-1">订阅源名称</label>
-                <input
-                  type="text"
-                  required
-                  placeholder=""
-                  value={newNetworkName}
-                  onChange={e => setNewNetworkName(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-white border border-[#E3DDD2] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
-                />
-              </div>
+          </ModalBody>
 
-              <div>
-                <label className="block text-xs font-semibold text-[#1F1E1D] mb-1">订阅 URL</label>
-                <input
-                  type="url"
-                  required
-                  placeholder="https://airport.com/api/v1/client/subscribe?token=..."
-                  value={newNetworkUrl}
-                  onChange={e => setNewNetworkUrl(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-white border border-[#E3DDD2] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C] font-mono text-[11px]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-[#1F1E1D] mb-1">格式解析模式</label>
-                <select
-                  value={newNetworkType}
-                  onChange={e => setNewNetworkType(e.target.value as NonNullable<SubscriptionSource['type']>)}
-                  className="w-full px-3 py-2 text-xs bg-white border border-[#E3DDD2] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
-                >
-                  <option value="auto">自动识别 (Auto)</option>
-                  <option value="clash">Clash YAML</option>
-                  <option value="singbox">Singbox JSON</option>
-                  <option value="base64">Base64 编码节点串</option>
-                </select>
-              </div>
-
-              <fieldset className="space-y-3 rounded-xl border border-[#E3DDD2] p-3">
-                <legend className="px-1 text-xs font-semibold text-[#1F1E1D]">流量与到期时间</legend>
-                <p className="text-[11px] leading-relaxed text-[#78746D]">
-                  按节点名称匹配提示项。匹配项将显示为订阅信息，不计入可用节点。留空则不匹配。
-                </p>
-                {[
-                  { id: 'traffic-node-regex', label: '流量提示正则', value: trafficNodeRegex, setValue: setTrafficNodeRegex, placeholder: '剩余流量|已用流量|流量用量', preview: trafficMatches },
-                  { id: 'expiry-node-regex', label: '到期时间提示正则', value: expiryNodeRegex, setValue: setExpiryNodeRegex, placeholder: '套餐到期|到期时间|有效期', preview: expiryMatches },
-                ].map(field => (
-                  <div key={field.id}>
-                    <label htmlFor={field.id} className="block text-xs font-semibold text-[#1F1E1D] mb-1">{field.label}</label>
-                    <input
-                      id={field.id}
-                      type="text"
-                      value={field.value}
-                      onChange={e => field.setValue(e.target.value)}
-                      placeholder={field.placeholder}
-                      aria-invalid={!!field.preview.error}
-                      aria-describedby={`${field.id}-preview`}
-                      className="w-full px-3 py-2 text-xs bg-white border border-[#E3DDD2] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C] font-mono"
-                    />
-                    <div id={`${field.id}-preview`} className={`mt-1 text-[11px] ${field.preview.error ? 'text-red-600' : 'text-[#78746D]'}`}>
-                      {field.preview.error || (field.value.trim() && (editingNetworkSource ? `匹配 ${field.preview.names.length} 项` : '添加并拉取后匹配'))}
-                      {field.preview.names.length > 0 && (
-                        <ul className="mt-1 max-h-20 overflow-y-auto space-y-1 break-words">
-                          {field.preview.names.map((name, index) => <li key={index}>{name}</li>)}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </fieldset>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowAddNetworkModal(false);
-                    setEditingNetworkSource(null);
-                  }}
-                  className="px-3.5 py-1.5 text-xs font-medium btn-claude-secondary rounded-xl cursor-pointer"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting || !!trafficMatches.error || !!expiryMatches.error}
-                  className="px-4 py-1.5 text-xs font-semibold btn-claude-primary rounded-xl disabled:opacity-50 cursor-pointer"
-                >
-                  {isSubmitting ? '保存中...' : (editingNetworkSource ? '保存更改' : '添加并拉取')}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+          <ModalFooter>
+            <button
+              type="button"
+              onClick={() => setShowAddNetworkModal(false)}
+              className="px-3.5 py-1.5 text-xs font-medium ui-button-secondary rounded-xl cursor-pointer"
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmitting || !!trafficMatches.error || !!expiryMatches.error}
+              className="px-4 py-1.5 text-xs font-semibold ui-button-primary rounded-xl disabled:opacity-50 cursor-pointer"
+            >
+              {isSubmitting ? '保存中...' : (editingNetworkSource ? '保存更改' : '添加并拉取')}
+            </button>
+          </ModalFooter>
+        </ModalForm>
+      </Modal>
 
       {/* 弹窗：编辑所有订阅文本 */}
-      {showBulkEditModal && bulkEditingSource && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-[#E3DDD2] shadow-2xl w-full max-w-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-[#F0ECE4]">
-              <div className="flex items-center gap-2.5">
-                <div className="p-1.5 rounded-lg bg-[#FAF0EC] text-[#CC785C]">
-                  <FileText className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-bold text-[#1F1E1D]">批量编辑节点文本</h3>
-                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-[#FBF2EA] text-[#C45E38] border border-[#F2D8C9]">
-                      {bulkEditingSource.name}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#78746D]">
-                    直接查看或批量修改此组包含的所有节点链接，保存将自动重新解析并覆盖更新。
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  setShowBulkEditModal(false);
-                  setBulkEditingSource(null);
-                }}
-                className="text-xs text-[#9E9A91] hover:text-[#1F1E1D] p-1.5 hover:bg-[#FAF8F5] rounded-lg transition-colors cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleBulkEditSubmit} className="space-y-3.5">
+      <Modal
+        open={!!(showBulkEditModal && bulkEditingSource)}
+        title="批量编辑节点文本"
+        description={(showBulkEditModal && bulkEditingSource) ? <>{bulkEditingSource.name} · 直接查看或批量修改此组包含的所有节点链接，保存将自动重新解析并覆盖更新。</> : undefined}
+        size="xl"
+        onClose={() => {
+          setShowBulkEditModal(false);
+          setBulkEditingSource(null);
+        }}
+      >
+        {(showBulkEditModal && bulkEditingSource) && (
+          <ModalForm onSubmit={handleBulkEditSubmit}>
+            <ModalBody>
               {/* 工具栏：统计与快捷操作 */}
               <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2 text-[#78746D]">
-                  <span className="font-medium text-[#1F1E1D]">
+                <div className="flex items-center gap-2 text-ui-secondary">
+                  <span className="font-medium text-ui-text">
                     共 {bulkEditText ? bulkEditText.split('\n').filter(l => l.trim().length > 0).length : 0} 行
                   </span>
                   <span>·</span>
@@ -924,7 +880,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                   <button
                     type="button"
                     onClick={handleCopyBulkEditText}
-                    className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-[#59554E] hover:text-[#1F1E1D] bg-[#FAF8F5] hover:bg-[#F0ECE4] border border-[#E3DDD2] rounded-lg transition-colors cursor-pointer"
+                    className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-ui-secondary hover:text-ui-text bg-ui-subtle hover:bg-ui-divider border border-ui-border rounded-lg transition-colors cursor-pointer"
                     title="复制所有文本到剪贴板"
                   >
                     {bulkEditCopied ? (
@@ -942,7 +898,7 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
                   <button
                     type="button"
                     onClick={() => setBulkEditText('')}
-                    className="px-2.5 py-1 text-[11px] font-medium text-[#9E9A91] hover:text-[#B85D3F] hover:bg-[#FAF0EC] rounded-lg transition-colors cursor-pointer"
+                    className="px-2.5 py-1 text-[11px] font-medium text-ui-muted hover:text-[#B85D3F] hover:bg-ui-accent-soft rounded-lg transition-colors cursor-pointer"
                     title="清空文本框"
                   >
                     清空
@@ -952,329 +908,311 @@ export const SourcesManager: React.FC<SourcesManagerProps> = ({
 
               {/* 文本编辑区域 */}
               <div>
-                <textarea
+                <Textarea variant="code"
                   rows={13}
                   value={bulkEditText}
                   onChange={e => setBulkEditText(e.target.value)}
-                  placeholder={`支持每行一个节点链接：\nvless://...\nhysteria2://...\nss://...\ntrojan://...\n或完整的 Clash YAML / Singbox JSON`}
-                  className="w-full px-3.5 py-2.5 text-xs font-mono bg-[#FAF8F5] border border-[#E3DDD2] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C] focus:bg-white resize-y break-all leading-relaxed"
+                  placeholder={`支持每行一个节点链接：\nvless://...\nhysteria2://...\nss://...\ntrojan://...\n或 Clash YAML / Singbox JSON / QuanX 节点`}
+                  className="w-full font-mono resize-y break-all"
                 />
               </div>
+            </ModalBody>
+            <ModalFooter className="justify-between">
+              <p className="text-[11px] text-ui-muted">
+                💡 提示：保存后将使用此文本完全覆盖更新该组的节点
+              </p>
 
-              <div className="flex items-center justify-between pt-1">
-                <p className="text-[11px] text-[#8C877D]">
-                  💡 提示：保存后将使用此文本完全覆盖更新该组的节点
-                </p>
-
-                <div className="flex gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowBulkEditModal(false);
-                      setBulkEditingSource(null);
-                    }}
-                    className="px-3.5 py-1.5 text-xs font-medium btn-claude-secondary rounded-xl cursor-pointer"
+              <div className="flex gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowBulkEditModal(false);
+                    setBulkEditingSource(null);
+                  }}
+                  className="px-3.5 py-1.5 text-xs font-medium ui-button-secondary rounded-xl cursor-pointer"
+                >
+                  取消
+                </button>
+                {!bulkEditText.trim() ? (
+                  <Popconfirm
+                    title="清空全部节点？"
+                    description={`文本内容为空，保存后将清空「${bulkEditingSource?.name}」中的所有节点。`}
+                    confirmText="清空并保存"
+                    danger
+                    open={confirmBulkClear}
+                    onOpenChange={setConfirmBulkClear}
+                    onConfirm={saveBulkEdit}
                   >
-                    取消
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isSubmitting}
-                    className="px-4 py-1.5 text-xs font-semibold btn-claude-primary rounded-xl disabled:opacity-50 cursor-pointer"
-                  >
+                    <button type="button" disabled={isSubmitting} className="ui-button-primary">
+                      {isSubmitting ? '保存更新中...' : '保存修改'}
+                    </button>
+                  </Popconfirm>
+                ) : (
+                  <button type="submit" disabled={isSubmitting} className="ui-button-primary">
                     {isSubmitting ? '保存更新中...' : '保存修改'}
                   </button>
-                </div>
+                )}
               </div>
-            </form>
-          </div>
-        </div>
-      )}
+            </ModalFooter>
+          </ModalForm>
+        )}
+      </Modal>
 
       {/* 弹窗 2：批量贴入 / 添加自建独立节点弹窗 */}
-      {showImportNodesModal && (
-        <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-[#E3DDD2] shadow-xl w-full max-w-xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-[#F0ECE4]">
-              <div>
-                <h3 className="text-sm font-bold text-[#1F1E1D]">批量贴入独立节点</h3>
-              </div>
-              <button
-                onClick={() => setShowImportNodesModal(false)}
-                className="text-xs text-[#9E9A91] hover:text-[#1F1E1D] p-1"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleImportSubmit} className="space-y-3.5">
+      <Modal
+        open={!!(showImportNodesModal)}
+        title="批量贴入独立节点"
+        size="lg"
+        onClose={() => setShowImportNodesModal(false)}
+      >
+        {(showImportNodesModal) && (
+          <ModalForm onSubmit={handleImportSubmit}>
+            <ModalBody>
               {/* 目标节点组选择 */}
-              <div>
+              <Field>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-semibold text-[#1F1E1D]">存入独立节点组</label>
+                  <Label>存入独立节点组</Label>
                   <button
                     type="button"
                     onClick={() => {
                       setNewGroupNameInput('');
                       setShowCreateGroupModal(true);
                     }}
-                    className="text-[11px] text-[#CC785C] hover:underline font-medium"
+                    className="text-[11px] text-ui-accent hover:underline font-medium"
                   >
                     + 新建独立节点组
                   </button>
                 </div>
-                <select
+                <Select
                   value={targetGroupId}
-                  onChange={e => setTargetGroupId(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-white border border-[#E3DDD2] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                  onValueChange={nextValue => setTargetGroupId(nextValue)}
+                  className="w-full"
                 >
                   {customSources.map(cs => (
-                    <option key={cs.id} value={cs.id}>
+                    <SelectItem key={cs.id} value={cs.id}>
                       {cs.name} ({cs.nodes?.length || 0} 个节点)
-                    </option>
+                    </SelectItem>
                   ))}
-                </select>
-              </div>
+                </Select>
+              </Field>
 
               {/* 链接文本输入域 */}
-              <div>
-                <label className="block text-xs font-semibold text-[#1F1E1D] mb-1">节点链接 / 片段</label>
-                <textarea
+              <Field>
+                <Label className="block">节点链接 / 片段</Label>
+                <Textarea variant="code"
                   required
                   rows={9}
                   value={customText}
                   onChange={e => setCustomText(e.target.value)}
-                  className="w-full px-3 py-2 text-[11px] font-mono bg-[#FAF8F5] border border-[#E3DDD2] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                  className="w-full font-mono"
                 />
+              </Field>
+            </ModalBody>
+            <ModalFooter>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowImportNodesModal(false)}
+                  className="px-3.5 py-1.5 text-xs font-medium ui-button-secondary rounded-xl"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-4 py-1.5 text-xs font-semibold ui-button-primary rounded-xl disabled:opacity-50"
+                >
+                  {isSubmitting ? '解析导入中...' : '解析并存入'}
+                </button>
               </div>
-
-              <div className="flex items-center justify-between pt-1">
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowImportNodesModal(false)}
-                    className="px-3.5 py-1.5 text-xs font-medium btn-claude-secondary rounded-xl"
-                  >
-                    取消
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isSubmitting}
-                    className="px-4 py-1.5 text-xs font-semibold btn-claude-primary rounded-xl disabled:opacity-50"
-                  >
-                    {isSubmitting ? '解析导入中...' : '解析并存入'}
-                  </button>
-                </div>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            </ModalFooter>
+          </ModalForm>
+        )}
+      </Modal>
 
       {/* 弹窗 3：新建自建组弹窗 */}
-      {showCreateGroupModal && (
-        <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-[#E3DDD2] shadow-xl w-full max-w-sm p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-[#F0ECE4]">
-              <h3 className="text-sm font-bold text-[#1F1E1D]">新建独立节点组</h3>
-              <button
-                onClick={() => setShowCreateGroupModal(false)}
-                className="text-xs text-[#9E9A91] hover:text-[#1F1E1D]"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateGroupSubmit} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-semibold text-[#1F1E1D] mb-1">节点组名称</label>
-                <input
+      <Modal
+        open={!!(showCreateGroupModal)}
+        title="新建独立节点组"
+        size="sm"
+        onClose={() => setShowCreateGroupModal(false)}
+      >
+        {(showCreateGroupModal) && (
+          <ModalForm onSubmit={handleCreateGroupSubmit}>
+            <ModalBody>
+              <Field>
+                <Label className="block">节点组名称</Label>
+                <Input
                   type="text"
                   required
                   autoFocus
                   placeholder=""
                   value={newGroupNameInput}
                   onChange={e => setNewGroupNameInput(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-white border border-[#E3DDD2] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                  className="w-full"
                 />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowCreateGroupModal(false)}
-                  className="px-3.5 py-1.5 text-xs font-medium btn-claude-secondary rounded-xl"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-4 py-1.5 text-xs font-semibold btn-claude-primary rounded-xl disabled:opacity-50"
-                >
-                  {isSubmitting ? '创建中...' : '立即创建'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+              </Field>
+            </ModalBody>
+            <ModalFooter>
+              <button
+                type="button"
+                onClick={() => setShowCreateGroupModal(false)}
+                className="px-3.5 py-1.5 text-xs font-medium ui-button-secondary rounded-xl"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-4 py-1.5 text-xs font-semibold ui-button-primary rounded-xl disabled:opacity-50"
+              >
+                {isSubmitting ? '创建中...' : '立即创建'}
+              </button>
+            </ModalFooter>
+          </ModalForm>
+        )}
+      </Modal>
 
       {/* 弹窗 4：重命名节点组弹窗 */}
-      {renamingSource && (
-        <div className="fixed inset-0 z-50 bg-black/30 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-[#E3DDD2] shadow-xl w-full max-w-sm p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-[#F0ECE4]">
-              <h3 className="text-sm font-bold text-[#1F1E1D]">重命名节点组</h3>
-              <button
-                onClick={() => setRenamingSource(null)}
-                className="text-xs text-[#9E9A91] hover:text-[#1F1E1D]"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleRenameSubmit} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-semibold text-[#1F1E1D] mb-1">新组名</label>
-                <input
+      <Modal
+        open={!!(renamingSource)}
+        title="重命名节点组"
+        size="sm"
+        onClose={() => setRenamingSource(null)}
+      >
+        {(renamingSource) && (
+          <ModalForm onSubmit={handleRenameSubmit}>
+            <ModalBody>
+              <Field>
+                <Label className="block">新组名</Label>
+                <Input
                   type="text"
                   required
                   autoFocus
                   value={newGroupNameInput}
                   onChange={e => setNewGroupNameInput(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-white border border-[#E3DDD2] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                  className="w-full"
                 />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setRenamingSource(null)}
-                  className="px-3.5 py-1.5 text-xs font-medium btn-claude-secondary rounded-xl"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-4 py-1.5 text-xs font-semibold btn-claude-primary rounded-xl disabled:opacity-50"
-                >
-                  {isSubmitting ? '保存中...' : '保存'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-      {/* 编辑节点与配置文本弹窗 */}
-      {editingNode && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#FAF8F5] border border-[#E3DDD2] rounded-2xl p-5 max-w-lg w-full shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[#E8E2D8]">
-              <div className="flex items-center gap-2">
-                <Edit2 className="w-4 h-4 text-[#CC785C]" />
-                <h3 className="text-sm font-bold text-[#1F1E1D]">编辑节点配置</h3>
-              </div>
+              </Field>
+            </ModalBody>
+            <ModalFooter>
               <button
-                onClick={() => {
-                  setEditingNode(null);
-                  setEditNodeDetourInput('');
-                }}
-                className="text-xs text-[#9E9A91] hover:text-[#1F1E1D] p-1 cursor-pointer"
+                type="button"
+                onClick={() => setRenamingSource(null)}
+                className="px-3.5 py-1.5 text-xs font-medium ui-button-secondary rounded-xl"
               >
-                ✕
+                取消
               </button>
-            </div>
-
-            <form onSubmit={handleEditNodeSubmit} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-semibold text-[#1F1E1D] mb-1">
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-4 py-1.5 text-xs font-semibold ui-button-primary rounded-xl disabled:opacity-50"
+              >
+                {isSubmitting ? '保存中...' : '保存'}
+              </button>
+            </ModalFooter>
+          </ModalForm>
+        )}
+      </Modal>
+      {/* 编辑节点与配置文本弹窗 */}
+      <Modal
+        open={!!(editingNode)}
+        title="编辑节点配置"
+        size="lg"
+        onClose={() => {
+          setEditingNode(null);
+          setEditNodeDetourInput('');
+        }}
+      >
+        {(editingNode) && (
+          <ModalForm onSubmit={handleEditNodeSubmit}>
+            <ModalBody>
+              <Field>
+                <Label className="block">
                   节点名称
-                </label>
-                <input
+                </Label>
+                <Input
                   type="text"
                   required
                   value={editNodeNameInput}
                   onChange={e => setEditNodeNameInput(e.target.value)}
                   placeholder="节点备注名称"
-                  className="w-full px-3 py-2 text-xs bg-white border border-[#E3DDD2] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                  className="w-full"
                 />
-              </div>
+              </Field>
 
-              <div>
+              <Field>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-semibold text-[#1F1E1D]">
+                  <Label className="block">
                     配置内容文本
-                  </label>
-                  <span className="text-[10px] text-[#8C877D]">支持修改 URI 链接 / 参数</span>
+                  </Label>
+                  <span className="text-[10px] text-ui-muted">支持修改 URI 链接 / 参数</span>
                 </div>
-                <textarea
+                <Textarea variant="code"
                   rows={5}
                   value={editNodeTextInput}
                   onChange={e => setEditNodeTextInput(e.target.value)}
                   placeholder="vless://... 或 hysteria2://... 或 ss://... 等节点链接"
-                  className="w-full px-3 py-2 text-xs font-mono bg-white border border-[#E3DDD2] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C] resize-y break-all"
+                  className="w-full font-mono resize-y break-all"
                 />
-              </div>
+              </Field>
 
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-semibold text-[#1F1E1D]">
+                  <Label className="block">
                     底层出口 (Detour)
-                  </label>
-                  <span className="text-[10px] text-[#8C877D]">指定握手建立隧道的物理宽带出口</span>
+                  </Label>
+                  <span className="text-[10px] text-ui-muted">指定握手建立隧道的物理宽带出口</span>
                 </div>
                 {availableDetourOutbounds.length > 0 ? (
-                  <select
+                  <Select
                     value={editNodeDetourInput}
-                    onChange={e => setEditNodeDetourInput(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-white border border-[#E3DDD2] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                    onValueChange={nextValue => setEditNodeDetourInput(nextValue)}
+                    className="w-full"
                   >
-                    <option value="">默认 (系统默认出口)</option>
+                    <SelectItem value="">默认 (系统默认出口)</SelectItem>
                     {availableDetourOutbounds.map(tag => (
-                      <option key={tag} value={tag}>
+                      <SelectItem key={tag} value={tag}>
                         {tag}
-                      </option>
+                      </SelectItem>
                     ))}
                     {editNodeDetourInput && !availableDetourOutbounds.includes(editNodeDetourInput) && (
-                      <option value={editNodeDetourInput}>{editNodeDetourInput}</option>
+                      <SelectItem value={editNodeDetourInput}>{editNodeDetourInput}</SelectItem>
                     )}
-                  </select>
+                  </Select>
                 ) : (
-                  <input
+                  <Input aria-label="默认 (系统默认出口) - 留空即默认，或输入指定出口标签"
                     type="text"
                     value={editNodeDetourInput}
                     onChange={e => setEditNodeDetourInput(e.target.value)}
                     placeholder="默认 (系统默认出口) - 留空即默认，或输入指定出口标签"
-                    className="w-full px-3 py-2 text-xs bg-white border border-[#E3DDD2] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                    className="w-full"
                   />
                 )}
               </div>
-
-              <div className="flex justify-end gap-2 pt-2 border-t border-[#E8E2D8]">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingNode(null);
-                    setEditNodeDetourInput('');
-                  }}
-                  className="px-3.5 py-1.5 text-xs font-medium btn-claude-secondary rounded-xl cursor-pointer"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-4 py-1.5 text-xs font-semibold btn-claude-primary rounded-xl disabled:opacity-50 cursor-pointer"
-                >
-                  {isSubmitting ? '保存中...' : '保存更改'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            </ModalBody>
+            <ModalFooter>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingNode(null);
+                  setEditNodeDetourInput('');
+                }}
+                className="px-3.5 py-1.5 text-xs font-medium ui-button-secondary rounded-xl cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-4 py-1.5 text-xs font-semibold ui-button-primary rounded-xl disabled:opacity-50 cursor-pointer"
+              >
+                {isSubmitting ? '保存中...' : '保存更改'}
+              </button>
+            </ModalFooter>
+          </ModalForm>
+        )}
+      </Modal>
 
 
     </div>

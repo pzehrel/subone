@@ -13,6 +13,7 @@ RUN --mount=type=cache,id=subone-pnpm,target=/pnpm/store \
 FROM dependencies AS builder
 COPY tsconfig.base.json ./
 COPY apps/ ./apps/
+COPY shared/ ./shared/
 RUN pnpm build
 
 FROM base AS production-dependencies

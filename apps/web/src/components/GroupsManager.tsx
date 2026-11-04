@@ -1,12 +1,17 @@
+import { Input } from './ui/Input';
+import { Textarea } from './ui/Textarea';
+import { Select, SelectItem } from './ui/Select';
+import { Field, Label } from './ui/Field';
+import { Badge } from './ui/Badge';
+import { GroupsIcon } from './ui/module-icons';
+import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
 import React, { useState } from 'react';
 import {
   Check,
   Code,
+  Edit2,
   Globe,
-  Layers,
   Plus,
-  Radio,
-  Sliders,
   Trash2,
   X,
   Zap,
@@ -345,16 +350,16 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-16">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-[#E3DDD2] shadow-2xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-ui-surface p-4 rounded-2xl border border-ui-border shadow-2xs">
         <div>
           <div className="flex items-center gap-2">
-            <Radio className="w-5 h-5 text-[#CC785C]" />
-            <h2 className="text-base font-bold text-[#1F1E1D]">策略组管理</h2>
-            <span className="px-2.5 py-0.5 bg-[#FAF0EC] text-[#B85D3F] rounded-md font-mono text-xs font-bold border border-[#F3DDD3]">
+            <GroupsIcon className="w-5 h-5 text-ui-accent" aria-hidden="true" />
+            <h2 className="text-base font-bold text-ui-text">策略组管理</h2>
+            <Badge tone="accent" className="font-mono border">
               {groups.length} 个策略
-            </span>
+            </Badge>
           </div>
-          <p className="text-xs text-[#78746D] mt-0.5">
+          <p className="text-xs text-ui-secondary mt-0.5">
             可视化配置出站代理分组、子策略引用、订阅源
           </p>
         </div>
@@ -373,7 +378,7 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
 
           <button
             onClick={handleOpenYaml}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium btn-claude-secondary rounded-xl cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium ui-button-secondary rounded-xl cursor-pointer"
             title="查看或批量编辑所有策略组 YAML"
           >
             <Code className="w-3.5 h-3.5 text-[#7A6757]" />
@@ -382,7 +387,7 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
 
           <button
             onClick={handleOpenAdd}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold btn-claude-primary rounded-xl shadow-2xs cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold ui-button-primary rounded-xl shadow-2xs cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>新建策略组</span>
@@ -402,40 +407,33 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
           return (
             <div
               key={group.id}
-              className={`p-4 rounded-2xl bg-white border transition-all flex flex-col justify-between space-y-3 shadow-2xs group ${isExpanded ? 'border-[#CC785C] ring-1 ring-[#CC785C]/20' : 'border-[#E3DDD2] hover:border-[#CC785C]/40'
+              className={`p-4 rounded-2xl bg-ui-surface border transition-all flex flex-col justify-between space-y-3 shadow-2xs group ${isExpanded ? 'border-ui-accent ring-1 ring-ui-accent/20' : 'border-ui-border hover:border-ui-accent/40'
                 }`}
             >
               <div className="space-y-2.5">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-sm font-bold text-[#1F1E1D] truncate" title={group.name}>
+                    <span className="text-sm font-bold text-ui-text truncate" title={group.name}>
                       {group.name}
                     </span>
                     {directNodes.length > 0 && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#EAF2EE] text-[#2D6A5A] border border-[#D5E5DE]">
+                      <Badge tone="success" className="border">
                         {directNodes.length} 节点
-                      </span>
+                      </Badge>
                     )}
                   </div>
 
-                  <span
-                    className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold shrink-0 ${group.type === 'select'
-                      ? 'bg-[#F0ECE4] text-[#59554E]'
-                      : group.type === 'urltest'
-                        ? 'bg-[#EAF2EE] text-[#2D6A5A]'
-                        : group.type === 'relay'
-                          ? 'bg-[#F4F1FA] text-[#6A4C9C] border border-[#E8E1F5]'
-                          : 'bg-[#FAF0EC] text-[#B85D3F]'
-                      }`}
+                  <Badge
+                    tone={group.type === "urltest" ? "success" : group.type === "relay" ? "info" : group.type === "select" ? "neutral" : "accent"} className="font-mono"
                   >
                     {group.type === 'relay' ? '🔗 relay' : group.type === 'urltest' ? 'url-test' : group.type}
-                  </span>
+                  </Badge>
                 </div>
 
                 <div className="space-y-1.5">
                   {hasProxies && (
                     <div className="space-y-1">
-                      <span className="text-[10px] font-medium text-[#9E9A91]">
+                      <span className="text-[10px] font-medium text-ui-muted">
                         {group.type === 'relay' ? '🔗 链式中继流程:' : '包含子项:'}
                       </span>
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -445,11 +443,8 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
                           const isRelay = group.type === 'relay';
                           return (
                             <React.Fragment key={idx}>
-                              <span
-                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border ${isRelay
-                                  ? 'bg-[#FAF8FE] border-[#E8E1F5] text-[#553C9A]'
-                                  : 'bg-[#FAF8F5] border-[#E8E4DC] text-[#4A4742]'
-                                  }`}
+                              <Badge
+                                tone={isRelay ? "info" : "accent"}
                               >
                                 {isRelay && (
                                   <span className="text-[10px] font-bold text-[#6A4C9C]">
@@ -458,13 +453,13 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
                                 )}
                                 <span>{p}</span>
                                 {count !== null && count > 0 && (
-                                  <span className="text-[9px] font-bold text-[#2D6A5A] bg-[#EAF2EE] px-1 rounded">
+                                  <Badge tone="success">
                                     {count}
-                                  </span>
+                                  </Badge>
                                 )}
-                              </span>
+                              </Badge>
                               {isRelay && idx < total - 1 && (
-                                <span className="text-xs text-[#9E9A91] font-bold">➔</span>
+                                <span className="text-xs text-ui-muted font-bold">➔</span>
                               )}
                             </React.Fragment>
                           );
@@ -475,7 +470,7 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
 
                   {hasUse && (
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[10px] font-medium text-[#9E9A91]">挂载订阅:</span>
+                      <span className="text-[10px] font-medium text-ui-muted">挂载订阅:</span>
                       {validMountedSources.map((u, idx) => {
                         const cleanLabel = cleanName(u, sourceIcons);
                         const count = getNodeCountForOutbound(u);
@@ -486,37 +481,32 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
                         const isCustomSrc = matchedSrc?.type === 'custom' || matchedSrc?.id === 'custom';
                         const icon = isFilterSrc ? (sourceIcons?.filter || '✨') : isCustomSrc ? (sourceIcons?.custom || '🖥️') : (sourceIcons?.remote || '⚡️');
                         return (
-                          <span
+                          <Badge
                             key={idx}
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border ${isFilterSrc
-                              ? 'bg-[#F4F1FA] border-[#E8E1F5] text-[#6A4C9C]'
-                              : isCustomSrc
-                                ? 'bg-[#F0ECE4] border-[#E2DDD5] text-[#59554E]'
-                                : 'bg-[#FAF0EC] border-[#F3DDD3] text-[#B85D3F]'
-                              }`}
+                            tone={isFilterSrc ? "info" : isCustomSrc ? "neutral" : "accent"}
                           >
                             <span className="text-xs">{icon}</span>
                             <span>{cleanLabel}</span>
                             {count !== null && (
                               <span className="text-[9px] font-bold opacity-80">({count}节点)</span>
                             )}
-                          </span>
+                          </Badge>
                         );
                       })}
                     </div>
                   )}
 
                   {isFilter && (
-                    <div className="flex items-center gap-1.5 text-xs text-[#78746D]">
-                      <span className="text-[10px] text-[#9E9A91] shrink-0 font-medium">节点正则:</span>
-                      <code className="px-1.5 py-0.5 bg-[#FAF8F5] border border-[#E8E4DC] rounded text-[11px] font-mono text-[#CC785C] truncate">
+                    <div className="flex items-center gap-1.5 text-xs text-ui-secondary">
+                      <span className="text-[10px] text-ui-muted shrink-0 font-medium">节点正则:</span>
+                      <code className="px-1.5 py-0.5 bg-ui-subtle border border-ui-border rounded text-[11px] font-mono text-ui-accent truncate">
                         {group.filter}
                       </code>
                     </div>
                   )}
 
                   {!hasProxies && !hasUse && !isFilter && (
-                    <div className="text-[11px] text-[#8C877D] italic">
+                    <div className="text-[11px] text-ui-muted italic">
                       {group.name === '👉 手动选择' || group.name === '♻️ 自动选择'
                         ? '自动汇总所有订阅与独立节点'
                         : '根据策略组名称自动归集同名订阅源'}
@@ -527,37 +517,37 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
 
               {/* 展开节点抽屉 */}
               {isExpanded && (
-                <div className="pt-2 border-t border-[#F0ECE4] space-y-2 animate-in fade-in duration-150">
+                <div className="pt-2 border-t border-ui-divider space-y-2 animate-in fade-in duration-150">
                   <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-bold text-[#1F1E1D]">
+                    <span className="font-bold text-ui-text">
                       {directNodes.length > 0
                         ? `组内节点清单 (共 ${directNodes.length} 项)`
                         : `包含的子策略项 (${group.proxies?.length || 0} 个)`}
                     </span>
                     <button
                       onClick={() => setExpandedGroupId(null)}
-                      className="text-[10px] text-[#9E9A91] hover:text-[#1F1E1D] cursor-pointer"
+                      className="text-[10px] text-ui-muted hover:text-ui-text cursor-pointer"
                     >
                       收起 ▲
                     </button>
                   </div>
 
                   {directNodes.length > 0 ? (
-                    <div className="max-h-48 overflow-y-auto space-y-1 p-2 bg-[#FAF8F5] rounded-xl border border-[#E8E4DC]">
+                    <div className="max-h-48 overflow-y-auto space-y-1 p-2 bg-ui-subtle rounded-xl border border-ui-border">
                       {directNodes.map(n => (
                         <div
                           key={n.id}
-                          className="flex items-center justify-between gap-2 px-2 py-1 bg-white rounded-md border border-[#EBE7DF] text-[11px]"
+                          className="flex items-center justify-between gap-2 px-2 py-1 bg-ui-surface rounded-md border border-[#EBE7DF] text-[11px]"
                         >
                           <div className="flex items-center gap-1.5 min-w-0">
                             <span className="text-xs shrink-0">{n.countryEmoji || '🌐'}</span>
-                            <span className="font-medium text-[#1F1E1D] truncate">{n.name}</span>
+                            <span className="font-medium text-ui-text truncate">{n.name}</span>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
-                            <span className="px-1.5 py-0.2 bg-[#F0ECE4] text-[#59554E] rounded text-[9px] font-mono font-bold">
+                            <Badge tone="neutral" className="font-mono">
                               {(n.type || 'vless').toUpperCase()}
-                            </span>
-                            <span className="text-[10px] text-[#9E9A91] font-mono">
+                            </Badge>
+                            <span className="text-[10px] text-ui-muted font-mono">
                               {n.server}:{n.port}
                             </span>
                           </div>
@@ -565,39 +555,39 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
                       ))}
                     </div>
                   ) : hasProxies ? (
-                    <div className="p-2.5 bg-[#FAF8F5] rounded-xl border border-[#E8E4DC] text-xs text-[#59554E]">
+                    <div className="p-2.5 bg-ui-subtle rounded-xl border border-ui-border text-xs text-ui-secondary">
                       <div className="flex flex-wrap gap-1.5">
                         {group.proxies!.map((p, idx) => {
                           const count = getNodeCountForOutbound(p);
                           return (
-                            <span
+                            <Badge
                               key={idx}
-                              className="px-2 py-1 bg-white rounded-lg border border-[#E3DDD2] text-xs font-medium text-[#1F1E1D] flex items-center gap-1.5 shadow-2xs"
+                              tone="neutral" className="border font-medium shadow-2xs"
                             >
                               <span>{p}</span>
                               {count !== null && (
-                                <span className="text-[10px] px-1.5 py-0.2 rounded-full font-bold bg-[#EAF2EE] text-[#2D6A5A]">
+                                <Badge tone="success">
                                   {count} 节点
-                                </span>
+                                </Badge>
                               )}
-                            </span>
+                            </Badge>
                           );
                         })}
                       </div>
                     </div>
                   ) : (
-                    <div className="p-3 bg-[#FAF8F5] rounded-xl text-center text-xs text-[#9E9A91]">
+                    <div className="p-3 bg-ui-subtle rounded-xl text-center text-xs text-ui-muted">
                       暂无直接匹配的节点
                     </div>
                   )}
                 </div>
               )}
 
-              <div className="pt-2 border-t border-[#F0ECE4] flex items-center justify-between text-xs">
+              <div className="pt-2 border-t border-ui-divider flex items-center justify-between text-xs">
                 <button
                   type="button"
                   onClick={() => setExpandedGroupId(isExpanded ? null : group.id)}
-                  className="flex items-center gap-1 text-[11px] font-medium text-[#CC785C] hover:text-[#B85D3F] transition-colors cursor-pointer"
+                  className="flex items-center gap-1 text-[11px] font-medium text-ui-accent hover:text-[#B85D3F] transition-colors cursor-pointer"
                 >
                   <Eye className="w-3.5 h-3.5" />
                   <span>
@@ -612,14 +602,17 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
 
                 <div className="flex items-center gap-1">
                   <button
+                    type="button"
                     onClick={() => handleOpenEdit(group)}
-                    className="px-2.5 py-1 text-[11px] font-medium text-[#59554E] hover:text-[#1F1E1D] hover:bg-[#FAF8F5] rounded-lg transition-colors cursor-pointer"
+                    className="inline-flex items-center justify-center p-1 text-ui-muted hover:text-ui-text hover:bg-ui-hover rounded-lg transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ui-accent"
+                    title="编辑策略组"
+                    aria-label="编辑策略组"
                   >
-                    编辑
+                    <Edit2 className="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
                   <button
                     onClick={() => onDeleteGroup(group.id)}
-                    className="p-1 text-[#9E9A91] hover:text-[#B85D3F] hover:bg-[#FAF0EC] rounded-lg transition-colors cursor-pointer"
+                    className="ui-icon-button-danger p-1 rounded-lg"
                     title="删除策略组"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -632,13 +625,13 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
       </div>
 
       {groups.length === 0 && (
-        <div className="claude-panel p-12 rounded-2xl bg-white border border-[#E3DDD2] text-center space-y-3">
-          <Radio className="w-8 h-8 text-[#9E9A91] mx-auto opacity-50" />
-          <p className="text-xs font-semibold text-[#59554E]">暂无策略组</p>
+        <div className="ui-panel p-12 rounded-2xl bg-ui-surface border border-ui-border text-center space-y-3">
+          <GroupsIcon className="w-8 h-8 text-ui-muted mx-auto opacity-50" aria-hidden="true" />
+          <p className="text-xs font-semibold text-ui-secondary">暂无策略组</p>
           <div className="flex items-center justify-center gap-2">
             <button
               onClick={handleOpenAdd}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold btn-claude-primary rounded-xl shadow-2xs cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold ui-button-primary rounded-xl shadow-2xs cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>新建策略组</span>
@@ -647,54 +640,45 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
         </div>
       )}
 
-      {(isAdding || editingGroup) && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl border border-[#E3DDD2] shadow-2xl w-full max-w-2xl p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150 my-8">
-            <div className="flex items-center justify-between pb-3 border-b border-[#F0ECE4]">
-              <div>
-                <h3 className="text-base font-bold text-[#1F1E1D]">
-                  {editingGroup ? `编辑策略组: ${formData.name || ''}` : '新建策略组'}
-                </h3>
-              </div>
-              <button
-                onClick={() => {
-                  setIsAdding(false);
-                  setEditingGroup(null);
-                }}
-                className="text-sm text-[#9E9A91] hover:text-[#1F1E1D] p-1 cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleSave} className="space-y-4 text-xs">
+      <Modal
+        open={!!((isAdding || editingGroup))}
+        title={((isAdding || editingGroup)) ? <>{editingGroup ? `编辑策略组: ${formData.name || ''}` : '新建策略组'}</> : ''}
+        size="xl"
+        onClose={() => {
+          setIsAdding(false);
+          setEditingGroup(null);
+        }}
+      >
+        {((isAdding || editingGroup)) && (
+          <ModalForm onSubmit={handleSave} className="text-xs">
+            <ModalBody>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div className="space-y-1">
-                  <label className="font-semibold text-[#1F1E1D]">策略组名称</label>
-                  <input
+                <Field className="space-y-1">
+                  <Label>策略组名称</Label>
+                  <Input
                     type="text"
                     required
                     value={formData.name || ''}
                     onChange={e => setFormData({ ...formData, name: e.target.value })}
-                    className="w-full px-3 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                    className="w-full"
                   />
-                </div>
+                </Field>
 
-                <div className="space-y-1">
-                  <label className="font-semibold text-[#1F1E1D]">策略类型</label>
-                  <select
+                <Field className="space-y-1">
+                  <Label>策略类型</Label>
+                  <Select
                     value={formData.type || 'select'}
-                    onChange={e => setFormData({ ...formData, type: e.target.value as any })}
-                    className="w-full px-3 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                    onValueChange={nextValue => setFormData({ ...formData, type: nextValue as any })}
+                    className="w-full"
                   >
-                    <option value="select">select (手动选择 / 选项列表)</option>
-                    <option value="urltest">url-test (自动测速优选)</option>
-                    <option value="fallback">fallback (故障自动切换)</option>
-                    <option value="load-balance">load-balance (负载均衡)</option>
-                    <option value="relay">relay (🔗 链式中继 / 链式代理)</option>
-                    <option value="direct">direct (直接直连)</option>
-                  </select>
-                </div>
+                    <SelectItem value="select">select (手动选择 / 选项列表)</SelectItem>
+                    <SelectItem value="urltest">url-test (自动测速优选)</SelectItem>
+                    <SelectItem value="fallback">fallback (故障自动切换)</SelectItem>
+                    <SelectItem value="load-balance">load-balance (负载均衡)</SelectItem>
+                    <SelectItem value="relay">relay (🔗 链式中继 / 链式代理)</SelectItem>
+                    <SelectItem value="direct">direct (直接直连)</SelectItem>
+                  </Select>
+                </Field>
               </div>
 
               {formData.type === 'relay' && (
@@ -709,33 +693,30 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
                 </div>
               )}
 
-              <div className="space-y-2 bg-[#FAF8F5] p-3.5 rounded-xl border border-[#E8E4DC]">
+              <div className="space-y-2 bg-ui-subtle p-3.5 rounded-xl border border-ui-border">
                 <div className="flex items-center justify-between">
-                  <label className="font-bold text-[#1F1E1D] flex items-center gap-1.5">
-                    <Layers className="w-3.5 h-3.5 text-[#CC785C]" />
+                  <Label className="flex items-center gap-1.5">
+                    <GroupsIcon className="w-3.5 h-3.5 text-ui-accent" aria-hidden="true" />
                     <span>包含的出站策略组 / 选项 (Proxies)</span>
-                  </label>
-                  <span className="text-[10px] text-[#78746D]">
+                  </Label>
+                  <span className="text-[10px] text-ui-secondary">
                     已选 {(formData.proxies || []).length} 项
                   </span>
                 </div>
 
-                <div className="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-white rounded-lg border border-[#E3DDD2]">
+                <div className="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-ui-surface rounded-lg border border-ui-border">
                   {(formData.proxies || []).map((p, idx) => {
                     const isRelay = formData.type === 'relay';
                     const total = (formData.proxies || []).length;
                     return (
-                      <span
+                      <Badge
                         key={idx}
-                        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md font-medium text-xs border ${isRelay
-                          ? 'bg-[#F4F1FA] text-[#6A4C9C] border-[#E8E1F5]'
-                          : 'bg-[#FAF0EC] text-[#B85D3F] border-[#F3DDD3]'
-                          }`}
+                        tone={isRelay ? "info" : "accent"}
                       >
                         {isRelay && (
-                          <span className="text-[10px] px-1 py-0.2 rounded font-bold bg-[#E8E1F5] text-[#553C9A]">
+                          <Badge tone="neutral">
                             {idx === 0 ? '1️⃣ 入口' : (idx === total - 1 ? '🏁 落地' : `${idx + 1}️⃣ 中继`)}
-                          </span>
+                          </Badge>
                         )}
                         <span>{p}</span>
                         {isRelay && total > 1 && (
@@ -767,16 +748,16 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
                         >
                           <X className="w-3 h-3" />
                         </button>
-                      </span>
+                      </Badge>
                     );
                   })}
                   {(!formData.proxies || formData.proxies.length === 0) && (
-                    <span className="text-xs text-[#9E9A91] italic py-0.5">暂无单独配置出站项，可点击下方候选快速添加</span>
+                    <span className="text-xs text-ui-muted italic py-0.5">暂无单独配置出站项，可点击下方候选快速添加</span>
                   )}
                 </div>
 
                 <div className="space-y-1.5 pt-1">
-                  <div className="text-[11px] text-[#78746D] font-medium">快捷点击添加 / 移除候选策略：</div>
+                  <div className="text-[11px] text-ui-secondary font-medium">快捷点击添加 / 移除候选策略：</div>
                   <div className="flex flex-wrap gap-1.5">
                     {allCandidateOutbounds
                       .filter(cand => cand !== formData.name)
@@ -789,16 +770,15 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
                             type="button"
                             onClick={() => handleToggleProxy(cand)}
                             className={`px-2 py-1 rounded-md text-[11px] font-medium transition-all cursor-pointer border flex items-center gap-1 ${isSelected
-                              ? 'bg-[#CC785C] text-white border-[#CC785C]'
-                              : 'bg-white text-[#59554E] border-[#E3DDD2] hover:border-[#CC785C]/60'
+                              ? 'bg-ui-accent text-white border-ui-accent'
+                              : 'bg-ui-surface text-ui-secondary border-ui-border hover:border-ui-accent/60'
                               }`}
                           >
                             <span>{isSelected ? `✓ ${cand}` : `+ ${cand}`}</span>
                             {count !== null && count > 0 && (
-                              <span className={`text-[9px] px-1 rounded font-bold ${isSelected ? 'bg-white/20 text-white' : 'bg-[#EAF2EE] text-[#2D6A5A]'
-                                }`}>
+                              <Badge tone={isSelected ? "inverse" : "success"}>
                                 {count}
-                              </span>
+                              </Badge>
                             )}
                           </button>
                         );
@@ -814,11 +794,11 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
                 const currentSources: string[] = formData.sources || formData.use || [];
 
                 return (
-                  <div className="space-y-2 bg-[#FAF8F5] p-3.5 rounded-xl border border-[#E8E4DC]">
+                  <div className="space-y-2 bg-ui-subtle p-3.5 rounded-xl border border-ui-border">
                     <div className="flex items-center justify-between">
-                      <label className="font-semibold text-[#1F1E1D] text-xs">
+                      <Label>
                         <span>包含节点源</span>
-                      </label>
+                      </Label>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {availableSources.map(src => {
@@ -836,13 +816,13 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
                             type="button"
                             onClick={() => handleToggleUse(src.name)}
                             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all cursor-pointer ${isSelected
-                              ? 'bg-[#CC785C] text-white border-[#CC785C]'
-                              : 'bg-white text-[#59554E] border-[#E3DDD2] hover:border-[#CC785C]/60'
+                              ? 'bg-ui-accent text-white border-ui-accent'
+                              : 'bg-ui-surface text-ui-secondary border-ui-border hover:border-ui-accent/60'
                               }`}
                           >
-                            <span className="text-[10px] px-1 py-0.2 rounded bg-black/5 font-mono">
+                            <Badge tone="neutral" className="font-mono">
                               {isManual ? '独立组' : '订阅'}
-                            </span>
+                            </Badge>
                             <span>{src.name}</span>
                             <span className="opacity-80 text-[10px]">({count}节点)</span>
                           </button>
@@ -853,129 +833,121 @@ export const GroupsManager: React.FC<GroupsManagerProps> = ({
                 );
               })()}
 
-              <div className="space-y-1">
+              <Field className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <label className="font-semibold text-[#1F1E1D]">节点过滤正则 (可选)</label>
+                  <Label>节点过滤正则 (可选)</Label>
                 </div>
-                <input
+                <Input
                   type="text"
                   value={formData.filter || ''}
                   onChange={e => setFormData({ ...formData, filter: e.target.value })}
-                  className="w-full px-3 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl font-mono text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                  className="w-full font-mono"
                 />
-              </div>
+              </Field>
 
               {(formData.type === 'urltest' || formData.type === 'fallback') && (
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="font-semibold text-[#1F1E1D]">测速容差 (ms)</label>
-                    <input
+                  <Field className="space-y-1">
+                    <Label>测速容差 (ms)</Label>
+                    <Input
                       type="number"
                       value={formData.tolerance || 50}
                       onChange={e => setFormData({ ...formData, tolerance: Number(e.target.value) })}
-                      className="w-full px-3 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl font-mono text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                      className="w-full font-mono"
                     />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-semibold text-[#1F1E1D]">测速间隔 (秒)</label>
-                    <input
+                  </Field>
+                  <Field className="space-y-1">
+                    <Label>测速间隔 (秒)</Label>
+                    <Input
                       type="number"
                       value={formData.interval || 300}
                       onChange={e => setFormData({ ...formData, interval: Number(e.target.value) })}
-                      className="w-full px-3 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl font-mono text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                      className="w-full font-mono"
                     />
-                  </div>
+                  </Field>
                 </div>
               )}
 
               {/* 生效结构预览 */}
-              <div className="p-3 bg-[#FAF8F5] rounded-xl border border-[#E8E4DC] space-y-1.5">
-                <div className="text-[11px] font-bold text-[#1F1E1D] flex items-center gap-1">
-                  <ArrowRight className="w-3 h-3 text-[#CC785C]" />
+              <div className="p-3 bg-ui-subtle rounded-xl border border-ui-border space-y-1.5">
+                <div className="text-[11px] font-bold text-ui-text flex items-center gap-1">
+                  <ArrowRight className="w-3 h-3 text-ui-accent" />
                   <span>生效结构预览：</span>
                 </div>
-                <div className="text-[11px] text-[#59554E] leading-relaxed">
+                <div className="text-[11px] text-ui-secondary leading-relaxed">
                   策略组 <strong>{formData.name || '未命名'}</strong> ({formData.type}) 包含：
                   {formData.proxies && formData.proxies.length > 0 ? (
                     <span className="text-[#B85D3F] font-semibold"> [{formData.proxies.join(', ')}]</span>
                   ) : (
-                    <span className="text-[#8C877D]"> [按来源与正则匹配节点]</span>
+                    <span className="text-ui-muted"> [按来源与正则匹配节点]</span>
                   )}
                   {(formData.sources || formData.use) && (formData.sources || formData.use)!.length > 0 && (
-                    <span>，节点源: <strong className="text-[#CC785C]">{(formData.sources || formData.use)!.join(', ')}</strong></span>
+                    <span>，节点源: <strong className="text-ui-accent">{(formData.sources || formData.use)!.join(', ')}</strong></span>
                   )}
                   {formData.filter && (
-                    <span>，名称正则: <code className="text-[#CC785C]">{formData.filter}</code></span>
+                    <span>，名称正则: <code className="text-ui-accent">{formData.filter}</code></span>
                   )}
                 </div>
               </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#F0ECE4]">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAdding(false);
-                    setEditingGroup(null);
-                  }}
-                  className="px-4 py-2 text-xs font-medium btn-claude-secondary rounded-xl cursor-pointer"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 text-xs font-semibold btn-claude-primary rounded-xl cursor-pointer shadow-2xs"
-                >
-                  保存策略组
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {showYamlModal && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-[#E3DDD2] shadow-2xl w-full max-w-5xl h-[85vh] p-6 flex flex-col space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[#F0ECE4] shrink-0">
-              <div>
-                <h3 className="text-base font-bold text-[#1F1E1D]">批量编辑策略组 (YAML / 手工定制)</h3>
-                <p className="text-xs text-[#78746D]">以 Clash / Mihomo 格式描述 proxy-groups，按需自由配置</p>
-              </div>
+            </ModalBody>
+            <ModalFooter>
               <button
-                onClick={() => setShowYamlModal(false)}
-                className="text-sm text-[#9E9A91] hover:text-[#1F1E1D] p-1.5 cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="flex-1 min-h-0">
-              <textarea
-                value={yamlText}
-                onChange={e => setYamlText(e.target.value)}
-                placeholder="proxy-groups:&#10;  - name: 🚀 节点选择&#10;    type: select&#10;    proxies:&#10;      - 🎯 本地直连"
-                className="w-full h-full p-4 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl font-mono text-xs text-[#1F1E1D] focus:outline-none focus:border-[#CC785C] resize-none leading-relaxed"
-                spellCheck={false}
-              />
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#F0ECE4] shrink-0">
-              <button
-                onClick={() => setShowYamlModal(false)}
-                className="px-4 py-2 text-xs font-medium btn-claude-secondary rounded-xl cursor-pointer"
+                type="button"
+                onClick={() => {
+                  setIsAdding(false);
+                  setEditingGroup(null);
+                }}
+                className="px-4 py-2 text-xs font-medium ui-button-secondary rounded-xl cursor-pointer"
               >
                 取消
               </button>
               <button
-                onClick={handleSaveYaml}
-                className="px-6 py-2 text-xs font-semibold btn-claude-primary rounded-xl"
+                type="submit"
+                className="px-5 py-2 text-xs font-semibold ui-button-primary rounded-xl cursor-pointer shadow-2xs"
               >
-                应用并替换全部策略组
+                保存策略组
               </button>
+            </ModalFooter>
+          </ModalForm>
+        )}
+      </Modal>
+
+      <Modal
+        open={!!(showYamlModal)}
+        title="批量编辑策略组 (YAML / 手工定制)"
+        description={(showYamlModal) ? <>以 Clash / Mihomo 格式描述 proxy-groups，按需自由配置</> : undefined}
+        size="wide"
+        layout="editor"
+        onClose={() => setShowYamlModal(false)}
+      >
+        {(showYamlModal) && (<>
+          <ModalBody editor>
+            <div className="flex-1 min-h-0">
+              <Textarea variant="code"
+                value={yamlText}
+                onChange={e => setYamlText(e.target.value)}
+                placeholder="proxy-groups:&#10;  - name: 🚀 节点选择&#10;    type: select&#10;    proxies:&#10;      - 🎯 本地直连"
+                className="w-full h-full font-mono resize-none"
+                spellCheck={false}
+              />
             </div>
-          </div>
-        </div>
-      )}
+          </ModalBody>
+          <ModalFooter>
+            <button
+              onClick={() => setShowYamlModal(false)}
+              className="px-4 py-2 text-xs font-medium ui-button-secondary rounded-xl cursor-pointer"
+            >
+              取消
+            </button>
+            <button
+              onClick={handleSaveYaml}
+              className="px-6 py-2 text-xs font-semibold ui-button-primary rounded-xl"
+            >
+              应用并替换全部策略组
+            </button>
+          </ModalFooter>
+        </>)}
+      </Modal>
     </div>
   );
 };

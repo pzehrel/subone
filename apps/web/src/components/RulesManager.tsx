@@ -1,16 +1,22 @@
+import { Table, TableHead, TableCell } from './ui/Table';
+import { Input } from './ui/Input';
+import { Textarea } from './ui/Textarea';
+import { Select, SelectItem } from './ui/Select';
+import { Field, Label } from './ui/Field';
+import { Badge } from './ui/Badge';
+import { RulesIcon } from './ui/module-icons';
+import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
 import React, { useState, useMemo } from 'react';
 import {
   Check,
   Edit2,
   FileCode,
   FileText,
-  Filter,
   Plus,
   RotateCcw,
   Search,
   Trash2,
   Upload,
-  Zap,
 } from 'lucide-react';
 import { ProxyGroupItem, UnifiedRuleItem, ConfigTemplate } from '../types';
 
@@ -71,7 +77,7 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
               }
             });
           }
-        } catch {}
+        } catch { }
       }
     });
 
@@ -228,16 +234,16 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
   return (
     <div className="max-w-6xl mx-auto space-y-5 pb-16">
       {/* Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-[#E3DDD2] shadow-2xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-ui-surface p-4 rounded-2xl border border-ui-border shadow-2xs">
         <div>
           <div className="flex items-center gap-2">
-            <Zap className="w-5 h-5 text-[#CC785C]" />
-            <h2 className="text-base font-bold text-[#1F1E1D]">分流规则</h2>
-            <span className="px-2.5 py-0.5 bg-[#FAF0EC] text-[#B85D3F] rounded-md font-mono text-xs font-bold border border-[#F3DDD3]">
+            <RulesIcon className="w-5 h-5 text-ui-accent" aria-hidden="true" />
+            <h2 className="text-base font-bold text-ui-text">分流规则</h2>
+            <Badge tone="accent" className="font-mono border">
               共 {rulesList.length} 组规则
-            </span>
+            </Badge>
           </div>
-          <p className="text-xs text-[#78746D] mt-0.5">
+          <p className="text-xs text-ui-secondary mt-0.5">
             配置本地域名/IP 规则与远程规则集，指定去向
           </p>
         </div>
@@ -250,7 +256,7 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
                   await onResetDefaultRules();
                 }
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium btn-claude-secondary rounded-xl text-[#78746D] hover:text-[#B85D3F]"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium ui-button-secondary rounded-xl text-ui-secondary hover:text-[#B85D3F]"
               title="从 templates 模版目录重新载入默认分流规则"
             >
               <RotateCcw className="w-3.5 h-3.5" />
@@ -260,16 +266,16 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
 
           <button
             onClick={openFullTextEditor}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium btn-claude-secondary rounded-xl"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium ui-button-secondary rounded-xl"
             title="以文本格式编辑/粘贴规则"
           >
-            <FileCode className="w-3.5 h-3.5 text-[#CC785C]" />
+            <FileCode className="w-3.5 h-3.5 text-ui-accent" />
             <span>YAML 编辑</span>
           </button>
 
           <button
             onClick={() => setShowAddSingleModal(true)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold btn-claude-primary rounded-xl shadow-2xs"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold ui-button-primary rounded-xl shadow-2xs"
           >
             <Plus className="w-4 h-4" />
             <span>添加规则</span>
@@ -278,216 +284,192 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
       </div>
 
       {/* Filter & Search Bar */}
-      <div className="claude-panel p-3.5 rounded-2xl bg-white border border-[#E3DDD2] flex flex-col sm:flex-row items-center justify-between gap-3 shadow-2xs">
+      <div className="ui-panel p-3.5 rounded-2xl bg-ui-surface border border-ui-border flex flex-col sm:flex-row items-center justify-between gap-3 shadow-2xs">
         <div className="relative flex-1 w-full">
-          <Search className="w-4 h-4 text-[#8C877D] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
+          <Search className="w-4 h-4 text-ui-muted absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <Input aria-label="搜索规则名称、域名、IP 或策略去向..."
             type="text"
             placeholder="搜索规则名称、域名、IP 或策略去向..."
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-3.5 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl text-xs text-[#1F1E1D] placeholder-[#9E9A91] focus:outline-none focus:border-[#CC785C]"
+            className="w-full pl-9 pr-3.5"
           />
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
           {/* Kind Filter */}
-          <select
+          <Select aria-label="规则类型筛选"
             value={kindFilter}
-            onChange={e => setKindFilter(e.target.value as any)}
-            className="px-3 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl text-xs font-medium text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+            onValueChange={nextValue => setKindFilter(nextValue as any)}
           >
-            <option value="all">全部类型 ({rulesList.length})</option>
-            <option value="local">本地规则 ({rulesList.filter(r => r.kind === 'local').length})</option>
-            <option value="remote">远程规则集 ({rulesList.filter(r => r.kind === 'remote').length})</option>
-          </select>
+            <SelectItem value="all">全部类型 ({rulesList.length})</SelectItem>
+            <SelectItem value="local">本地规则 ({rulesList.filter(r => r.kind === 'local').length})</SelectItem>
+            <SelectItem value="remote">远程规则集 ({rulesList.filter(r => r.kind === 'remote').length})</SelectItem>
+          </Select>
 
           {/* Group Filter */}
-          <select
+          <Select aria-label="目标策略筛选"
             value={groupFilter}
-            onChange={e => setGroupFilter(e.target.value)}
-            className="px-3 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl text-xs font-medium text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+            onValueChange={nextValue => setGroupFilter(nextValue)}
           >
-            <option value="all">全部目标策略</option>
+            <SelectItem value="all">全部目标策略</SelectItem>
             {availableOutbounds.map(g => (
-              <option key={g} value={g}>
+              <SelectItem key={g} value={g}>
                 {g === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : g}
-              </option>
+              </SelectItem>
             ))}
-          </select>
+          </Select>
         </div>
       </div>
 
       {/* Rules Table */}
-      <div className="claude-panel rounded-2xl bg-white border border-[#E3DDD2] overflow-hidden shadow-2xs">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-[#FAF8F5] border-b border-[#E8E4DC] text-[#78746D] font-semibold text-[11px]">
-              <tr>
-                <th className="py-2.5 px-4 min-w-[160px] max-w-[240px]">规则名称 / 备注</th>
-                <th className="py-2.5 px-4 w-28">类型</th>
-                <th className="py-2.5 px-4">匹配内容 / 链接</th>
-                <th className="py-2.5 px-4 w-52">去向策略组</th>
-                <th className="py-2.5 px-4 w-20 text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#F0ECE4]">
-              {filteredRules.map(rule => {
-                const payloadItems = rule.payload.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
-                return (
-                  <tr key={rule.id} className="hover:bg-[#FAF8F5] transition-colors">
-                    <td className="py-2.5 px-4 font-semibold text-[#1F1E1D] max-w-[240px] truncate" title={rule.name}>
-                      {rule.name}
-                    </td>
+      <div className="ui-panel rounded-2xl bg-ui-surface border border-ui-border overflow-hidden shadow-2xs">
 
-                    <td className="py-2.5 px-4">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${rule.kind === 'remote'
-                          ? 'bg-[#EAF2EE] text-[#2D6A5A]'
-                          : rule.type === 'SRC-IP-CIDR'
-                            ? 'bg-[#F0EBF8] text-[#6E42A8]'
-                            : 'bg-[#F0ECE4] text-[#59554E]'
-                          }`}
-                      >
-                        {rule.type}
+        <Table label="分流规则">
+          <thead>
+            <tr>
+              <TableHead>规则名称 / 备注</TableHead>
+              <TableHead>类型</TableHead>
+              <TableHead>匹配内容 / 链接</TableHead>
+              <TableHead>去向策略组</TableHead>
+              <TableHead fixed="right" className="text-right">操作</TableHead>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredRules.map(rule => {
+              const payloadItems = rule.payload.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
+              return (
+                <tr key={rule.id}>
+                  <TableCell minWidth={160} maxWidth={260} truncate className="font-semibold text-ui-text" title={rule.name}>
+                    {rule.name}
+                  </TableCell>
+
+                  <TableCell>
+                    <Badge
+                      tone={rule.kind === 'remote' ? 'success' : rule.type === 'SRC-IP-CIDR' ? 'info' : 'neutral'}
+                      className="font-mono"
+                    >
+                      {rule.type}
+                    </Badge>
+                  </TableCell>
+
+                  <TableCell minWidth={200} maxWidth={560} title={rule.payload}>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {payloadItems.length > 1 && (
+                        <Badge tone="accent" className="font-mono border">
+                          {payloadItems.length} 项
+                        </Badge>
+                      )}
+                      <span className="font-mono text-ui-secondary text-[11px] truncate select-all">
+                        {rule.payload}
                       </span>
-                    </td>
+                    </div>
+                  </TableCell>
 
-                    <td className="py-2.5 px-4 max-w-[360px]" title={rule.payload}>
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        {payloadItems.length > 1 && (
-                          <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-mono font-semibold bg-[#FAF0EC] text-[#B85D3F] rounded border border-[#F3DDD3]">
-                            {payloadItems.length} 项
-                          </span>
-                        )}
-                        <span className="font-mono text-[#59554E] text-[11px] truncate select-all">
-                          {rule.payload}
-                        </span>
-                      </div>
-                    </td>
+                  <TableCell minWidth={180} maxWidth={280}>
+                    <Select controlSize="sm" aria-label={`${rule.name}的去向策略组`}
+                      value={rule.outbound}
+                      onValueChange={nextValue => onUpdateRule(rule.id, { outbound: nextValue })}
+                    >
+                      {availableOutbounds.map(g => (
+                        <SelectItem key={g} value={g}>
+                          {g === 'REJECT' ? '🛑 REJECT' : g}
+                        </SelectItem>
+                      ))}
+                    </Select>
+                  </TableCell>
 
-                    <td className="py-2.5 px-4">
-                      <select
-                        value={rule.outbound}
-                        onChange={e => onUpdateRule(rule.id, { outbound: e.target.value })}
-                        className={`w-full px-2.5 py-1 bg-white border rounded-lg text-xs font-semibold focus:outline-none focus:border-[#CC785C] transition-colors ${rule.outbound === 'REJECT'
-                          ? 'border-red-200 text-red-600 bg-red-50/50'
-                          : 'border-[#E8E4DC] text-[#1F1E1D] hover:border-[#CC785C]'
-                          }`}
+                  <TableCell fixed="right" className="text-right">
+                    <div className="ui-table-actions">
+                      <button
+                        onClick={() => openEditModal(rule)}
+                        className="p-1 text-ui-muted hover:text-ui-accent hover:bg-ui-accent-soft rounded-lg transition-colors"
+                        title="编辑规则"
                       >
-                        {availableOutbounds.map(g => (
-                          <option key={g} value={g}>
-                            {g === 'REJECT' ? '🛑 REJECT' : g}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => onDeleteRule(rule.id)}
+                        className="ui-icon-button-danger p-1 rounded-lg"
+                        title="删除规则"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </TableCell>
+                </tr>
+              );
+            })}
+          </tbody>
+        </Table>
 
-                    <td className="py-2.5 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => openEditModal(rule)}
-                          className="p-1 text-[#9E9A91] hover:text-[#CC785C] hover:bg-[#FAF0EC] rounded-lg transition-colors"
-                          title="编辑规则"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => onDeleteRule(rule.id)}
-                          className="p-1 text-[#9E9A91] hover:text-[#B85D3F] hover:bg-[#FAF0EC] rounded-lg transition-colors"
-                          title="删除规则"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
 
         {filteredRules.length === 0 && (
-          <div className="p-12 text-center text-xs text-[#78746D]">
+          <div className="p-12 text-center text-xs text-ui-secondary">
             <p>未找到符合条件的规则</p>
           </div>
         )}
       </div>
 
       {/* Full Text Editor Modal */}
-      {showFullTextModal && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-[#E3DDD2] shadow-2xl w-full max-w-5xl h-[85vh] p-6 flex flex-col space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-[#F0ECE4] shrink-0">
-              <div>
-                <h3 className="text-base font-bold text-[#1F1E1D]">分流规则文本编辑</h3>
-                <p className="text-xs text-[#78746D]">
-                  以 Clash / YAML 格式编辑规则，支持 DOMAIN-SUFFIX、IP-CIDR、SRC-IP-CIDR 等，用注释 # 备注与目标去向
-                </p>
-              </div>
-              <button
-                onClick={() => setShowFullTextModal(false)}
-                className="text-sm text-[#9E9A91] hover:text-[#1F1E1D] p-1.5"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleFullTextSave} className="flex-1 flex flex-col min-h-0 space-y-3">
+      <Modal
+        open={!!(showFullTextModal)}
+        title="分流规则文本编辑"
+        description={(showFullTextModal) ? <>以 Clash / YAML 格式编辑规则，支持 DOMAIN-SUFFIX、IP-CIDR、SRC-IP-CIDR 等，用注释 # 备注与目标去向</> : undefined}
+        size="wide"
+        layout="editor"
+        onClose={() => setShowFullTextModal(false)}
+      >
+        {(showFullTextModal) && (
+          <ModalForm onSubmit={handleFullTextSave}>
+            <ModalBody editor>
               <div className="flex-1 min-h-0 w-full relative">
-                <textarea
+                <Textarea variant="code"
                   value={fullRulesText}
                   onChange={e => setFullRulesText(e.target.value)}
                   spellCheck={false}
-                  className="absolute inset-0 w-full h-full p-4 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl font-mono text-xs text-[#1F1E1D] focus:outline-none focus:border-[#CC785C] resize-none leading-relaxed"
+                  className="absolute inset-0 w-full h-full font-mono resize-none"
                 />
               </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#F0ECE4] shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setShowFullTextModal(false)}
-                  className="px-4 py-2 text-xs font-medium btn-claude-secondary rounded-xl"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2 text-xs font-semibold btn-claude-primary rounded-xl"
-                >
-                  保存并同步
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            </ModalBody>
+            <ModalFooter>
+              <button
+                type="button"
+                onClick={() => setShowFullTextModal(false)}
+                className="px-4 py-2 text-xs font-medium ui-button-secondary rounded-xl"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                className="px-6 py-2 text-xs font-semibold ui-button-primary rounded-xl"
+              >
+                保存并同步
+              </button>
+            </ModalFooter>
+          </ModalForm>
+        )}
+      </Modal>
 
       {/* Add Single Rule Modal */}
-      {showAddSingleModal && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-[#E3DDD2] shadow-2xl w-full max-w-xl p-6 space-y-4.5">
-            <div className="flex items-center justify-between pb-3 border-b border-[#F0ECE4]">
-              <h3 className="text-base font-bold text-[#1F1E1D]">添加单条规则</h3>
-              <button
-                onClick={() => setShowAddSingleModal(false)}
-                className="text-sm text-[#9E9A91] hover:text-[#1F1E1D]"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleSingleAdd} className="space-y-3.5 text-xs">
+      <Modal
+        open={!!(showAddSingleModal)}
+        title="添加单条规则"
+        size="lg"
+        onClose={() => setShowAddSingleModal(false)}
+      >
+        {(showAddSingleModal) && (
+          <ModalForm onSubmit={handleSingleAdd} className="text-xs">
+            <ModalBody>
               <div className="space-y-1">
-                <label className="font-semibold text-[#1F1E1D]">规则类型</label>
+                <Label>规则类型</Label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setSingleKind('local')}
                     className={`py-1.5 text-xs font-medium rounded-xl border transition-all ${singleKind === 'local'
-                      ? 'bg-[#1F1E1D] text-white border-[#1F1E1D]'
-                      : 'bg-[#FAF8F5] text-[#59554E] border-[#E8E4DC]'
+                      ? 'bg-ui-text text-white border-ui-text'
+                      : 'bg-ui-subtle text-ui-secondary border-ui-border'
                       }`}
                   >
                     本地规则
@@ -496,8 +478,8 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
                     type="button"
                     onClick={() => setSingleKind('remote')}
                     className={`py-1.5 text-xs font-medium rounded-xl border transition-all ${singleKind === 'remote'
-                      ? 'bg-[#1F1E1D] text-white border-[#1F1E1D]'
-                      : 'bg-[#FAF8F5] text-[#59554E] border-[#E8E4DC]'
+                      ? 'bg-ui-text text-white border-ui-text'
+                      : 'bg-ui-subtle text-ui-secondary border-ui-border'
                       }`}
                   >
                     远程规则集
@@ -506,33 +488,33 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
               </div>
 
               {singleKind === 'local' && (
-                <div className="space-y-1">
-                  <label className="font-semibold text-[#1F1E1D]">匹配类型</label>
-                  <select
+                <Field className="space-y-1">
+                  <Label>匹配类型</Label>
+                  <Select
                     value={singleType}
-                    onChange={e => setSingleType(e.target.value)}
-                    className="w-full px-3 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                    onValueChange={nextValue => setSingleType(nextValue)}
+                    className="w-full"
                   >
-                    <option value="DOMAIN-SUFFIX">DOMAIN-SUFFIX (域名后缀)</option>
-                    <option value="DOMAIN-KEYWORD">DOMAIN-KEYWORD (域名关键字)</option>
-                    <option value="DOMAIN">DOMAIN (完整域名)</option>
-                    <option value="IP-CIDR">IP-CIDR (IP网段 / 单IP)</option>
-                    <option value="SRC-IP-CIDR">SRC-IP-CIDR (源IP网段)</option>
-                    <option value="GEOIP">GEOIP (地理位置IP)</option>
-                  </select>
-                </div>
+                    <SelectItem value="DOMAIN-SUFFIX">DOMAIN-SUFFIX (域名后缀)</SelectItem>
+                    <SelectItem value="DOMAIN-KEYWORD">DOMAIN-KEYWORD (域名关键字)</SelectItem>
+                    <SelectItem value="DOMAIN">DOMAIN (完整域名)</SelectItem>
+                    <SelectItem value="IP-CIDR">IP-CIDR (IP网段 / 单IP)</SelectItem>
+                    <SelectItem value="SRC-IP-CIDR">SRC-IP-CIDR (源IP网段)</SelectItem>
+                    <SelectItem value="GEOIP">GEOIP (地理位置IP)</SelectItem>
+                  </Select>
+                </Field>
               )}
 
-              <div className="space-y-1.5">
+              <Field className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <label className="font-semibold text-[#1F1E1D]">
+                  <Label>
                     {singleKind === 'remote' ? '规则集 URL 或名称' : '匹配目标 (域名/IP，支持多个)'}
-                  </label>
+                  </Label>
                   {singleKind === 'local' && (
-                    <span className="text-[10px] text-[#9E9A91]">支持逗号或换行输入多个 IP/域名</span>
+                    <span className="text-[10px] text-ui-muted">支持逗号或换行输入多个 IP/域名</span>
                   )}
                 </div>
-                <textarea
+                <Textarea variant="code"
                   required
                   rows={singleKind === 'remote' ? 2 : 3}
                   placeholder={
@@ -544,79 +526,73 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
                   }
                   value={singlePayload}
                   onChange={e => setSinglePayload(e.target.value)}
-                  className="w-full px-3 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl font-mono text-xs text-[#1F1E1D] focus:outline-none focus:border-[#CC785C] resize-y leading-relaxed"
+                  className="w-full font-mono resize-y"
                 />
-              </div>
+              </Field>
 
-              <div className="space-y-1">
-                <label className="font-semibold text-[#1F1E1D]">目标策略组 / 出口</label>
-                <select
+              <Field className="space-y-1">
+                <Label>目标策略组 / 出口</Label>
+                <Select
                   value={singleOutbound}
-                  onChange={e => setSingleOutbound(e.target.value)}
-                  className="w-full px-3 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                  onValueChange={nextValue => setSingleOutbound(nextValue)}
+                  className="w-full"
                 >
                   {availableOutbounds.map(g => (
-                    <option key={g} value={g}>
+                    <SelectItem key={g} value={g}>
                       {g === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : g}
-                    </option>
+                    </SelectItem>
                   ))}
-                </select>
-              </div>
+                </Select>
+              </Field>
 
-              <div className="space-y-1">
-                <label className="font-semibold text-[#1F1E1D]">备注名称 (可选)</label>
-                <input
+              <Field className="space-y-1">
+                <Label>备注名称 (可选)</Label>
+                <Input
                   type="text"
                   value={singleName}
                   onChange={e => setSingleName(e.target.value)}
-                  className="w-full px-3 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                  className="w-full"
                 />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#F0ECE4]">
-                <button
-                  type="button"
-                  onClick={() => setShowAddSingleModal(false)}
-                  className="px-4 py-2 text-xs font-medium btn-claude-secondary rounded-xl"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 text-xs font-semibold btn-claude-primary rounded-xl"
-                >
-                  添加
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+              </Field>
+            </ModalBody>
+            <ModalFooter>
+              <button
+                type="button"
+                onClick={() => setShowAddSingleModal(false)}
+                className="px-4 py-2 text-xs font-medium ui-button-secondary rounded-xl"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 text-xs font-semibold ui-button-primary rounded-xl"
+              >
+                添加
+              </button>
+            </ModalFooter>
+          </ModalForm>
+        )}
+      </Modal>
 
       {/* Edit Single Rule Modal */}
-      {editingRule && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-[#E3DDD2] shadow-2xl w-full max-w-xl p-6 space-y-4.5 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-[#F0ECE4]">
-              <h3 className="text-base font-bold text-[#1F1E1D]">编辑分流规则</h3>
-              <button
-                onClick={() => setEditingRule(null)}
-                className="text-sm text-[#9E9A91] hover:text-[#1F1E1D]"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleEditSave} className="space-y-3.5 text-xs">
+      <Modal
+        open={!!(editingRule)}
+        title="编辑分流规则"
+        size="lg"
+        onClose={() => setEditingRule(null)}
+      >
+        {(editingRule) && (
+          <ModalForm onSubmit={handleEditSave} className="text-xs">
+            <ModalBody>
               <div className="space-y-1">
-                <label className="font-semibold text-[#1F1E1D]">规则类型</label>
+                <Label>规则类型</Label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setEditKind('local')}
                     className={`py-1.5 text-xs font-medium rounded-xl border transition-all ${editKind === 'local'
-                      ? 'bg-[#1F1E1D] text-white border-[#1F1E1D]'
-                      : 'bg-[#FAF8F5] text-[#59554E] border-[#E8E4DC]'
+                      ? 'bg-ui-text text-white border-ui-text'
+                      : 'bg-ui-subtle text-ui-secondary border-ui-border'
                       }`}
                   >
                     本地规则
@@ -625,8 +601,8 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
                     type="button"
                     onClick={() => setEditKind('remote')}
                     className={`py-1.5 text-xs font-medium rounded-xl border transition-all ${editKind === 'remote'
-                      ? 'bg-[#1F1E1D] text-white border-[#1F1E1D]'
-                      : 'bg-[#FAF8F5] text-[#59554E] border-[#E8E4DC]'
+                      ? 'bg-ui-text text-white border-ui-text'
+                      : 'bg-ui-subtle text-ui-secondary border-ui-border'
                       }`}
                   >
                     远程规则集
@@ -635,34 +611,34 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
               </div>
 
               {editKind === 'local' && (
-                <div className="space-y-1">
-                  <label className="font-semibold text-[#1F1E1D]">匹配类型</label>
-                  <select
+                <Field className="space-y-1">
+                  <Label>匹配类型</Label>
+                  <Select
                     value={editType}
-                    onChange={e => setEditType(e.target.value)}
-                    className="w-full px-3 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                    onValueChange={nextValue => setEditType(nextValue)}
+                    className="w-full"
                   >
-                    <option value="DOMAIN-SUFFIX">DOMAIN-SUFFIX (域名后缀)</option>
-                    <option value="DOMAIN-KEYWORD">DOMAIN-KEYWORD (域名关键字)</option>
-                    <option value="DOMAIN">DOMAIN (完整域名)</option>
-                    <option value="IP-CIDR">IP-CIDR (IP网段 / 单IP)</option>
-                    <option value="SRC-IP-CIDR">SRC-IP-CIDR (源IP网段)</option>
-                    <option value="GEOIP">GEOIP (地理位置IP)</option>
-                    <option value="FINAL">FINAL (漏网之鱼)</option>
-                  </select>
-                </div>
+                    <SelectItem value="DOMAIN-SUFFIX">DOMAIN-SUFFIX (域名后缀)</SelectItem>
+                    <SelectItem value="DOMAIN-KEYWORD">DOMAIN-KEYWORD (域名关键字)</SelectItem>
+                    <SelectItem value="DOMAIN">DOMAIN (完整域名)</SelectItem>
+                    <SelectItem value="IP-CIDR">IP-CIDR (IP网段 / 单IP)</SelectItem>
+                    <SelectItem value="SRC-IP-CIDR">SRC-IP-CIDR (源IP网段)</SelectItem>
+                    <SelectItem value="GEOIP">GEOIP (地理位置IP)</SelectItem>
+                    <SelectItem value="FINAL">FINAL (漏网之鱼)</SelectItem>
+                  </Select>
+                </Field>
               )}
 
-              <div className="space-y-1.5">
+              <Field className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <label className="font-semibold text-[#1F1E1D]">
+                  <Label>
                     {editKind === 'remote' ? '规则集 URL 或名称' : '匹配目标 (域名/IP，聚合在一行管理)'}
-                  </label>
+                  </Label>
                   {editKind === 'local' && (
-                    <span className="text-[10px] text-[#9E9A91]">支持逗号或换行输入多个 IP/域名</span>
+                    <span className="text-[10px] text-ui-muted">支持逗号或换行输入多个 IP/域名</span>
                   )}
                 </div>
-                <textarea
+                <Textarea variant="code"
                   required
                   rows={editKind === 'remote' ? 2 : 4}
                   placeholder={
@@ -674,54 +650,53 @@ export const RulesManager: React.FC<RulesManagerProps> = ({
                   }
                   value={editPayload}
                   onChange={e => setEditPayload(e.target.value)}
-                  className="w-full px-3 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl font-mono text-xs text-[#1F1E1D] focus:outline-none focus:border-[#CC785C] resize-y leading-relaxed"
+                  className="w-full font-mono resize-y"
                 />
-              </div>
+              </Field>
 
-              <div className="space-y-1">
-                <label className="font-semibold text-[#1F1E1D]">目标策略组 / 出口</label>
-                <select
+              <Field className="space-y-1">
+                <Label>目标策略组 / 出口</Label>
+                <Select
                   value={editOutbound}
-                  onChange={e => setEditOutbound(e.target.value)}
-                  className="w-full px-3 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                  onValueChange={nextValue => setEditOutbound(nextValue)}
+                  className="w-full"
                 >
                   {availableOutbounds.map(g => (
-                    <option key={g} value={g}>
+                    <SelectItem key={g} value={g}>
                       {g === 'REJECT' ? '🛑 REJECT (拦截丢弃)' : g}
-                    </option>
+                    </SelectItem>
                   ))}
-                </select>
-              </div>
+                </Select>
+              </Field>
 
-              <div className="space-y-1">
-                <label className="font-semibold text-[#1F1E1D]">备注名称</label>
-                <input
+              <Field className="space-y-1">
+                <Label>备注名称</Label>
+                <Input
                   type="text"
                   value={editName}
                   onChange={e => setEditName(e.target.value)}
-                  className="w-full px-3 py-2 bg-[#FAF8F5] border border-[#E8E4DC] rounded-xl text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                  className="w-full"
                 />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#F0ECE4]">
-                <button
-                  type="button"
-                  onClick={() => setEditingRule(null)}
-                  className="px-4 py-2 text-xs font-medium btn-claude-secondary rounded-xl"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 text-xs font-semibold btn-claude-primary rounded-xl"
-                >
-                  保存修改
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+              </Field>
+            </ModalBody>
+            <ModalFooter>
+              <button
+                type="button"
+                onClick={() => setEditingRule(null)}
+                className="px-4 py-2 text-xs font-medium ui-button-secondary rounded-xl"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 text-xs font-semibold ui-button-primary rounded-xl"
+              >
+                保存修改
+              </button>
+            </ModalFooter>
+          </ModalForm>
+        )}
+      </Modal>
     </div>
   );
 };

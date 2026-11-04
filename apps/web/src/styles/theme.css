@@ -1,0 +1,210 @@
+:root {
+  --ui-page: #FAF8F5;
+  --ui-surface: #FFFFFF;
+  --ui-subtle: #FAF8F5;
+  --ui-hover: #EFEAE2;
+  --ui-border: #E3DDD2;
+  --ui-divider: #F0ECE4;
+  --ui-text: #1F1E1D;
+  --ui-secondary: #59554E;
+  --ui-muted: #8C877D;
+  --ui-accent: #CC785C;
+  --ui-accent-hover: #BD6A4F;
+  --ui-accent-soft: #FAF0EC;
+  --ui-overlay: rgb(0 0 0 / 40%);
+  --ui-radius-control: 12px;
+  --ui-radius-panel: 16px;
+  --ui-space-1: 4px;
+  --ui-space-2: 8px;
+  --ui-space-3: 12px;
+  --ui-space-4: 16px;
+  --ui-space-5: 20px;
+  --ui-space-6: 24px;
+  --ui-duration: 150ms;
+  --ui-dialog-enter-duration: 180ms;
+  --ui-dialog-shadow: 0 20px 60px rgb(45 43 40 / 16%);
+}
+
+@theme inline {
+  --color-ui-page: var(--ui-page);
+  --color-ui-surface: var(--ui-surface);
+  --color-ui-subtle: var(--ui-subtle);
+  --color-ui-hover: var(--ui-hover);
+  --color-ui-border: var(--ui-border);
+  --color-ui-divider: var(--ui-divider);
+  --color-ui-text: var(--ui-text);
+  --color-ui-secondary: var(--ui-secondary);
+  --color-ui-muted: var(--ui-muted);
+  --color-ui-accent: var(--ui-accent);
+  --color-ui-accent-hover: var(--ui-accent-hover);
+  --color-ui-accent-soft: var(--ui-accent-soft);
+  --color-ui-danger: var(--ui-danger);
+  --color-ui-danger-soft: var(--ui-danger-soft);
+  --color-ui-success: var(--ui-success);
+  --color-ui-success-soft: var(--ui-success-soft);
+  --color-ui-warning: var(--ui-warning);
+  --color-ui-warning-soft: var(--ui-warning-soft);
+  --color-ui-info: var(--ui-info);
+  --color-ui-info-soft: var(--ui-info-soft);
+}
+
+@layer components {
+  .ui-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--ui-space-4);
+    background: var(--ui-overlay);
+    backdrop-filter: blur(4px);
+  }
+
+  .ui-modal-panel {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-height: calc(100dvh - 32px);
+    overflow: hidden;
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius-panel);
+    outline: none;
+    background: var(--ui-surface);
+    color: var(--ui-text);
+    box-shadow: var(--ui-dialog-shadow);
+  }
+
+  .ui-modal-panel[data-size="sm"] { max-width: 384px; }
+  .ui-modal-panel[data-size="md"] { max-width: 448px; }
+  .ui-modal-panel[data-size="lg"] { max-width: 576px; }
+  .ui-modal-panel[data-size="xl"] { max-width: 768px; }
+  .ui-modal-panel[data-size="wide"] { max-width: 1024px; }
+  .ui-modal-panel[data-layout="editor"] { height: min(85dvh, calc(100dvh - 32px)); }
+
+  .ui-modal-header {
+    display: flex;
+    flex: none;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--ui-space-3);
+    padding: var(--ui-space-4) var(--ui-space-5);
+    border-bottom: 1px solid var(--ui-divider);
+    background: var(--ui-surface);
+  }
+
+  .ui-modal-title {
+    margin: 0;
+    font-size: 14px;
+    line-height: 24px;
+    font-weight: 600;
+    color: var(--ui-text);
+    overflow-wrap: anywhere;
+  }
+
+  .ui-modal-description {
+    margin-top: var(--ui-space-1);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--ui-muted);
+  }
+
+  .ui-modal-toolbar {
+    display: flex;
+    flex: none;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--ui-space-2);
+    padding: var(--ui-space-3) var(--ui-space-5);
+    border-bottom: 1px solid var(--ui-divider);
+    background: var(--ui-surface);
+  }
+
+  .ui-modal-content,
+  .ui-modal-form {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .ui-modal-body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--ui-space-4);
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: var(--ui-space-5);
+    background: var(--ui-surface);
+  }
+
+  .ui-modal-body > * { flex-shrink: 0; }
+  .ui-modal-body[data-editor="true"] > :last-child { flex: 1; min-height: 160px; }
+
+  .ui-modal-footer {
+    display: flex;
+    flex: none;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--ui-space-3);
+    padding: var(--ui-space-3) var(--ui-space-5);
+    border-top: 1px solid var(--ui-divider);
+    background: var(--ui-surface);
+  }
+
+  .ui-modal-footer > :is(p, span) {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .ui-modal-footer > div { display: flex; flex-wrap: wrap; gap: var(--ui-space-2); }
+
+  .ui-modal-close {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--ui-muted);
+    cursor: pointer;
+    transition: background-color var(--ui-duration), color var(--ui-duration);
+  }
+
+  .ui-modal-close:hover { background: var(--ui-hover); color: var(--ui-text); }
+  .ui-modal-close:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+  .ui-modal-close:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .ui-modal-footer :is(.ui-button-primary, .ui-button-secondary) {
+    min-height: 32px;
+    padding: 6px 14px;
+    border-radius: var(--ui-radius-control);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 20px;
+  }
+
+
+}
+
+.ui-modal-backdrop[data-state="open"] { animation: modal-fade-in var(--ui-dialog-enter-duration) ease-out both; }
+.ui-modal-backdrop[data-state="closing"] { animation: modal-fade-out var(--ui-duration) ease-in both; }
+.ui-modal-backdrop[data-state="open"] .ui-modal-panel { animation: modal-panel-in var(--ui-dialog-enter-duration) ease-out both; }
+.ui-modal-backdrop[data-state="closing"] .ui-modal-panel { animation: modal-panel-out var(--ui-duration) ease-in both; }
+
+@keyframes modal-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modal-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes modal-panel-in { from { transform: translateY(8px) scale(0.98); } to { transform: translateY(0) scale(1); } }
+@keyframes modal-panel-out { from { transform: translateY(0) scale(1); } to { transform: translateY(8px) scale(0.98); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-modal-backdrop,
+  .ui-modal-panel { animation-duration: 1ms !important; }
+  .ui-modal-close { transition: none; }
+}

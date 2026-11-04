@@ -23,6 +23,20 @@ export function parseSubscriptionUserinfo(value?: string | null): SubscriptionIn
   return info;
 }
 
+export function formatSubscriptionUserinfo(info?: SubscriptionInfo): string {
+  if (!info) return '';
+  let { upload, download } = info;
+  // Node-name notices may provide combined usage without an upload/download split.
+  if (info.used !== undefined && Number.isFinite(info.used) && info.used >= 0 && info.used <= Number.MAX_SAFE_INTEGER) {
+    upload ??= download !== undefined ? Math.max(0, info.used - download) : 0;
+    download ??= Math.max(0, info.used - upload);
+  }
+  return Object.entries({ upload, download, total: info.total, expire: info.expire })
+    .filter((entry): entry is [string, number] =>
+      entry[1] !== undefined && Number.isFinite(entry[1]) && entry[1] >= 0 && entry[1] <= Number.MAX_SAFE_INTEGER)
+    .map(([key, value]) => `${key}=${Math.floor(value)}`).join('; ');
+}
+
 const amountPattern = String.raw`(\d+(?:\.\d+)?)\s*((?:[KMGTPE]i?B)|B)(?![a-z])`;
 
 function bytes(amount: string, unit: string): number {

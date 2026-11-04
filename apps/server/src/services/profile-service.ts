@@ -12,6 +12,7 @@ import { formatSourceGroupTag, cleanSourceOrGroupName } from '../core/generators
 import { applyExtractionRules } from '../core/filter/extractor';
 import { fetchAndParseSource } from '../core/parser/fetcher';
 import { saveConfig } from '../storage/db';
+import { selectSubscriptionSources } from '../../../../shared/subscription-info';
 import {
   getAppConfig,
   saveAppConfig,
@@ -222,12 +223,7 @@ export function getEffectiveGroupsForProfile(profile: SubscriptionProfile, _effe
 
 export function getEffectiveSourcesForProfile(profile?: SubscriptionProfile, _effectiveNodes?: ProxyNode[]): SubscriptionSource[] {
   const appConfig = getAppConfig();
-  if (!profile) return appConfig.sources || [];
-  if (Array.isArray(profile.nodeFilter?.sourceIds) && profile.nodeFilter.sourceIds.length > 0) {
-    const selectedSourceIds = new Set(profile.nodeFilter.sourceIds);
-    return (appConfig.sources || []).filter(s => selectedSourceIds.has(s.id));
-  }
-  return appConfig.sources || [];
+  return selectSubscriptionSources(appConfig.sources || [], profile?.nodeFilter?.sourceIds);
 }
 
 export function getEffectiveRulesForProfile(profile: SubscriptionProfile): UnifiedRuleItem[] {

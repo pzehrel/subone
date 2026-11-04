@@ -56,10 +56,15 @@ export function nodeToQuantumultXProxy(node: ProxyNode): string {
     return line;
   }
 
-  if (node.type === 'ss') {
+  if (node.type === 'ss' || node.type === 'ssr') {
     const method = node.method || 'aes-128-gcm';
     let line = `shadowsocks=${serverWithPort}, method=${method}, password=${node.password || ''}`;
-    if (node.reality?.enabled && node.reality.publicKey) {
+    if (node.type === 'ssr') {
+      if (node.protocol) line += `, ssr-protocol=${node.protocol}`;
+      if (node.protocolParam) line += `, ssr-protocol-param=${node.protocolParam}`;
+      if (node.obfs) line += `, obfs=${node.obfs}`;
+      if (node.obfsParam) line += `, obfs-host=${node.obfsParam}`;
+    } else if (node.reality?.enabled && node.reality.publicKey) {
       line += `, obfs=over-tls, obfs-host=${node.sni || cleanServer}, reality-base64-pubkey=${node.reality.publicKey}`;
       if (node.reality.shortId) {
         line += `, reality-hex-shortid=${node.reality.shortId}`;
@@ -67,7 +72,7 @@ export function nodeToQuantumultXProxy(node: ProxyNode): string {
     } else if (node.plugin === 'obfs') {
       line += `, obfs=${node.pluginOpts?.mode || 'http'}, obfs-host=${node.pluginOpts?.host || ''}`;
     } else if (node.plugin === 'v2ray-plugin') {
-      line += `, obfs=ws, obfs-uri=${node.pluginOpts?.path || '/'}, obfs-host=${node.pluginOpts?.host || ''}`;
+      line += `, obfs=${node.pluginOpts?.tls ? 'wss' : 'ws'}, obfs-uri=${node.pluginOpts?.path || '/'}, obfs-host=${node.pluginOpts?.host || ''}`;
     }
     line += `, fast-open=false, udp-relay=true, tag=${tag}`;
     return line;

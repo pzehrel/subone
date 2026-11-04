@@ -1,10 +1,16 @@
+import { Input } from './ui/Input';
+import { Select, SelectItem } from './ui/Select';
+import { Field, Label } from './ui/Field';
+import { Badge } from './ui/Badge';
+import { SourcesIcon, GroupsIcon, RulesIcon } from './ui/module-icons';
+import { HelpTooltip } from './HelpTooltip';
 import React, { useState, useEffect, useMemo } from 'react';
+import { Modal, ModalBody, ModalFooter } from './Modal';
 import {
   Check,
   ChevronDown,
   Copy,
   ExternalLink,
-  Layers,
   Server,
   Zap,
   Plus,
@@ -12,11 +18,8 @@ import {
   Trash2,
   Eye,
   RefreshCw,
-  SlidersHorizontal,
-  Filter,
   CheckSquare,
   Square,
-  X,
   Radio,
   FileCode,
   Tag,
@@ -26,11 +29,14 @@ import {
   AppConfig,
   ProxyNode,
   SubscriptionProfile,
+  SubscriptionSource,
   ConfigTemplate,
   ClientType,
 } from '../types';
 import { apiFetch, API_BASE } from '../api';
 import { copyToClipboard } from '../utils/clipboard';
+import { formatSubscriptionExpiry, formatSubscriptionTraffic } from '../utils/subscriptionInfo';
+import { aggregateSubscriptionInfo, selectSubscriptionSources } from '../../../../shared/subscription-info';
 
 export const CLIENT_CONFIG_OPTIONS: { type: ClientType; label: string }[] = [
   { type: 'singbox', label: 'Sing-box' },
@@ -48,6 +54,23 @@ function generateRandomSubToken(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function ProfileUsage({ sources, sourceIds }: { sources: SubscriptionSource[]; sourceIds?: string[] }) {
+  const info = aggregateSubscriptionInfo(selectSubscriptionSources(sources, sourceIds).map(source => source.subscriptionInfo));
+  const traffic = formatSubscriptionTraffic(info);
+  const expiry = formatSubscriptionExpiry(info);
+  if (!traffic && !expiry) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-ui-secondary">
+      <span className="inline-flex items-center gap-1.5 font-medium">
+        用量信息
+        <HelpTooltip label="用量信息说明" content="用量按所选且已启用的上游汇总，仅统计上游提供的信息。到期时间取最早值。" />
+      </span>
+      {traffic && <span>{traffic}</span>}
+      {expiry && <span>{expiry}</span>}
+    </div>
+  );
 }
 
 interface DashboardProps {
@@ -98,17 +121,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
   }, []);
-
-  // Esc key to close preview modal
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && previewData) {
-        setPreviewData(null);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [previewData]);
 
   // Copy helper
   const handleCopy = async (text: string, key: string) => {
@@ -367,59 +379,59 @@ export const Dashboard: React.FC<DashboardProps> = ({
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div
           onClick={() => onNavigateTab('sources')}
-          className="p-3.5 rounded-xl bg-white border border-[#E3DDD2] hover:border-[#CC785C]/50 transition-all cursor-pointer shadow-2xs group"
+          className="p-3.5 rounded-xl bg-ui-surface border border-ui-border hover:border-ui-accent/50 transition-all cursor-pointer shadow-2xs group"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs text-[#8C877D] font-medium">订阅与节点</span>
-            <Layers className="w-3.5 h-3.5 text-[#8C877D] group-hover:text-[#CC785C]" />
+            <span className="text-xs text-ui-muted font-medium">上游订阅</span>
+            <SourcesIcon className="w-3.5 h-3.5 text-ui-muted group-hover:text-ui-accent" aria-hidden="true" />
           </div>
           <div className="mt-1 flex items-baseline gap-1">
-            <span className="text-lg font-bold font-mono text-[#1F1E1D]">
+            <span className="text-lg font-bold font-mono text-ui-text">
               {sourcesCount}
             </span>
-            <span className="text-[11px] text-[#8C877D]">个源 · {nodes.length} 节点</span>
+            <span className="text-[11px] text-ui-muted">个源 · {nodes.length} 节点</span>
           </div>
         </div>
 
         <div
           onClick={() => onNavigateTab('groups')}
-          className="p-3.5 rounded-xl bg-white border border-[#E3DDD2] hover:border-[#CC785C]/50 transition-all cursor-pointer shadow-2xs group"
+          className="p-3.5 rounded-xl bg-ui-surface border border-ui-border hover:border-ui-accent/50 transition-all cursor-pointer shadow-2xs group"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs text-[#8C877D] font-medium">策略组</span>
-            <SlidersHorizontal className="w-3.5 h-3.5 text-[#8C877D] group-hover:text-[#CC785C]" />
+            <span className="text-xs text-ui-muted font-medium">策略组</span>
+            <GroupsIcon className="w-3.5 h-3.5 text-ui-muted group-hover:text-ui-accent" aria-hidden="true" />
           </div>
           <div className="mt-1 flex items-baseline gap-1">
-            <span className="text-lg font-bold font-mono text-[#1F1E1D]">{proxyGroupsCount}</span>
-            <span className="text-[11px] text-[#8C877D]">个策略组</span>
+            <span className="text-lg font-bold font-mono text-ui-text">{proxyGroupsCount}</span>
+            <span className="text-[11px] text-ui-muted">个策略组</span>
           </div>
         </div>
 
         <div
           onClick={() => onNavigateTab('rules')}
-          className="p-3.5 rounded-xl bg-white border border-[#E3DDD2] hover:border-[#CC785C]/50 transition-all cursor-pointer shadow-2xs group"
+          className="p-3.5 rounded-xl bg-ui-surface border border-ui-border hover:border-ui-accent/50 transition-all cursor-pointer shadow-2xs group"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs text-[#8C877D] font-medium">分流规则</span>
-            <Filter className="w-3.5 h-3.5 text-[#8C877D] group-hover:text-[#CC785C]" />
+            <span className="text-xs text-ui-muted font-medium">分流规则</span>
+            <RulesIcon className="w-3.5 h-3.5 text-ui-muted group-hover:text-ui-accent" aria-hidden="true" />
           </div>
           <div className="mt-1 flex items-baseline gap-1">
-            <span className="text-lg font-bold font-mono text-[#1F1E1D]">{rulesCount}</span>
-            <span className="text-[11px] text-[#8C877D]">条规则</span>
+            <span className="text-lg font-bold font-mono text-ui-text">{rulesCount}</span>
+            <span className="text-[11px] text-ui-muted">条规则</span>
           </div>
         </div>
 
         <div
           onClick={() => onNavigateTab('templates')}
-          className="p-3.5 rounded-xl bg-white border border-[#E3DDD2] hover:border-[#CC785C]/50 transition-all cursor-pointer shadow-2xs group"
+          className="p-3.5 rounded-xl bg-ui-surface border border-ui-border hover:border-ui-accent/50 transition-all cursor-pointer shadow-2xs group"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs text-[#8C877D] font-medium">配置模版</span>
-            <FileCode className="w-3.5 h-3.5 text-[#8C877D] group-hover:text-[#CC785C]" />
+            <span className="text-xs text-ui-muted font-medium">配置模版</span>
+            <FileCode className="w-3.5 h-3.5 text-ui-muted group-hover:text-ui-accent" />
           </div>
           <div className="mt-1 flex items-baseline gap-1">
-            <span className="text-lg font-bold font-mono text-[#1F1E1D]">{templatesCount}</span>
-            <span className="text-[11px] text-[#8C877D]">个模版</span>
+            <span className="text-lg font-bold font-mono text-ui-text">{templatesCount}</span>
+            <span className="text-[11px] text-ui-muted">个模版</span>
           </div>
         </div>
       </div>
@@ -429,15 +441,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
         {/* 标题栏与新增按钮 */}
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-bold text-[#1F1E1D]">订阅配置 (Profiles)</h2>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-[#EFEAE2] text-[#69655E] font-medium">
+            <h2 className="text-sm font-bold text-ui-text">订阅</h2>
+            <Badge tone="neutral" className="font-medium">
               共 {profiles.length} 个订阅
-            </span>
+            </Badge>
           </div>
 
           <button
             onClick={handleOpenCreate}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#CC785C] hover:bg-[#B8684E] text-white text-xs font-semibold rounded-xl transition-all shadow-sm cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-ui-accent hover:bg-ui-accent-hover text-white text-xs font-semibold rounded-xl transition-all shadow-sm cursor-pointer"
           >
             <Plus className="w-4 h-4 stroke-[2.5]" />
             <span>新增订阅</span>
@@ -465,22 +477,22 @@ export const Dashboard: React.FC<DashboardProps> = ({
             return (
               <div
                 key={prof.id}
-                className={`rounded-2xl border transition-all duration-200 bg-white p-4 sm:p-5 shadow-xs flex flex-col gap-3.5 ${prof.enabled
-                  ? 'border-[#E3DDD2] hover:border-[#CC785C]/60 hover:shadow-sm'
-                  : 'border-[#ECE7DE] opacity-75 bg-[#FAF8F5]'
+                className={`rounded-2xl border transition-all duration-200 bg-ui-surface p-4 sm:p-5 shadow-xs flex flex-col gap-3.5 ${prof.enabled
+                  ? 'border-ui-border hover:border-ui-accent/60 hover:shadow-sm'
+                  : 'border-ui-border opacity-75 bg-ui-subtle'
                   }`}
               >
                 {/* 顶部行：名称、标签、统计徽章、操作按钮 */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-2.5">
-                    <span className="text-sm font-bold text-[#1F1E1D]">{prof.name}</span>
+                    <span className="text-sm font-bold text-ui-text">{prof.name}</span>
                     {!prof.enabled && (
-                      <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-[#EFEAE2] text-[#8C877D]">
+                      <Badge tone="neutral" className="font-medium">
                         已停用
-                      </span>
+                      </Badge>
                     )}
                     {prof.description && (
-                      <span className="text-xs text-[#8C877D] hidden md:inline border-l border-[#E8E4DC] pl-2.5">
+                      <span className="text-xs text-ui-muted hidden md:inline border-l border-ui-border pl-2.5">
                         {prof.description}
                       </span>
                     )}
@@ -490,21 +502,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <div className="flex items-center gap-1.5 self-end sm:self-auto">
                     <button
                       onClick={() => handlePreviewProfile(prof)}
-                      className="p-1.5 text-[#69655E] hover:text-[#1F1E1D] hover:bg-[#FAF8F5] rounded-lg transition-colors cursor-pointer"
+                      className="p-1.5 text-ui-secondary hover:text-ui-text hover:bg-ui-subtle rounded-lg transition-colors cursor-pointer"
                       title="查看订阅文件"
                     >
                       <Eye className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => handleOpenEdit(prof)}
-                      className="p-1.5 text-[#69655E] hover:text-[#1F1E1D] hover:bg-[#FAF8F5] rounded-lg transition-colors cursor-pointer"
+                      className="p-1.5 text-ui-secondary hover:text-ui-text hover:bg-ui-subtle rounded-lg transition-colors cursor-pointer"
                       title="编辑订阅"
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => handleDeleteProfile(prof.id, prof.name)}
-                      className="p-1.5 text-[#8C877D] hover:text-[#A8483B] hover:bg-[#FDF2F0] rounded-lg transition-colors cursor-pointer"
+                      className="ui-icon-button-danger p-1.5 rounded-lg"
                       title="删除订阅"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -514,65 +526,67 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                 {/* 中间行：指标特性 */}
                 <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.8 rounded-lg bg-[#FAF8F5] border border-[#ECE7DE] text-[#3D3A37] font-medium">
-                    <Radio className="w-3 h-3 text-[#CC785C]" />
+                  <Badge tone="neutral" className="border font-medium">
+                    <Radio className="w-3 h-3 text-ui-accent" />
                     <span>{count} 节点</span>
                     {prof.nodeFilter?.selectedNodeIds && prof.nodeFilter.selectedNodeIds.length > 0}
-                  </span>
+                  </Badge>
 
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.8 rounded-lg bg-[#FAF8F5] border border-[#ECE7DE] text-[#3D3A37] font-medium">
-                    <SlidersHorizontal className="w-3 h-3 text-[#5A7A6F]" />
+                  <Badge tone="neutral" className="border font-medium">
+                    <GroupsIcon className="w-3 h-3 text-[#5A7A6F]" aria-hidden="true" />
                     <span>{groupCount} 策略组</span>
-                  </span>
+                  </Badge>
 
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.8 rounded-lg bg-[#FAF8F5] border border-[#ECE7DE] text-[#3D3A37] font-medium">
-                    <Filter className="w-3 h-3 text-[#8A7558]" />
+                  <Badge tone="neutral" className="border font-medium">
+                    <RulesIcon className="w-3 h-3 text-[#8A7558]" aria-hidden="true" />
                     <span>{ruleCount} 条分流</span>
-                  </span>
+                  </Badge>
 
                   {CLIENT_CONFIG_OPTIONS.map(c => {
                     const tplId = prof.templates?.[c.type];
                     if (!tplId) return null;
                     const tpl = config?.templates?.find(t => t.id === tplId);
                     return (
-                      <span
+                      <Badge
                         key={c.type}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#FAF8F5] border border-[#ECE7DE] text-[11px] text-[#69655E]"
+                        tone="neutral" className="border"
                         title={`${c.label} 独立绑定: ${tpl?.name || tplId}`}
                       >
-                        <span className="text-[#8C877D]">{c.label}:</span>
-                        <span className="text-[#2D2B28] font-medium">{tpl?.name || '指定模版'}</span>
-                      </span>
+                        <span className="text-ui-muted">{c.label}:</span>
+                        <span className="text-ui-text font-medium">{tpl?.name || '指定模版'}</span>
+                      </Badge>
                     );
                   })}
                 </div>
 
+                <ProfileUsage sources={config?.sources || []} sourceIds={prof.nodeFilter?.sourceIds} />
+
                 {/* 底部行：订阅链接与下拉组合复制 */}
-                <div className="pt-2 border-t border-[#ECE7DE]/80 flex items-center justify-between gap-3">
+                <div className="pt-2 border-t border-ui-border/80 flex items-center justify-between gap-3">
                   <div className="flex-1 flex items-center gap-2 min-w-0">
-                    <input
+                    <Input
                       type="text"
                       readOnly
                       value={autoUrl}
-                      className="flex-1 min-w-0 bg-[#FAF8F5] px-3.5 py-1.5 rounded-xl border border-[#E3DDD2] text-xs font-mono text-[#2D2B28] select-all focus:outline-none"
+                      className="flex-1 min-w-0 font-mono select-all"
                     />
 
                     {/* 组合下拉复制按钮 */}
-                    <div className="relative inline-flex items-center rounded-xl bg-[#FAF0EC] border border-[#CC785C]/30 text-[#CC785C] shrink-0 format-dropdown-container">
+                    <div className="relative inline-flex items-center rounded-xl bg-ui-accent-soft border border-ui-accent/30 text-ui-accent shrink-0 format-dropdown-container">
                       <button
                         onClick={() => handleCopy(autoUrl, `auto-${prof.id}`)}
-                        className="px-3 py-1.5 hover:bg-[#CC785C] hover:text-white rounded-l-xl text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer"
+                        className="px-3 py-1.5 hover:bg-ui-accent hover:text-white rounded-l-xl text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer"
                         title="复制通用订阅链接（客户端自动识别，无UA时默认Sing-box）"
                       >
                         {copiedId === `auto-${prof.id}` ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                         <span>{copiedId === `auto-${prof.id}` ? '已复制' : '复制通用链接'}</span>
                       </button>
 
-                      <div className="w-[1px] h-4 bg-[#CC785C]/30" />
+                      <div className="w-[1px] h-4 bg-ui-accent/30" />
 
                       <button
                         onClick={() => setOpenDropdownId(openDropdownId === prof.id ? null : prof.id)}
-                        className="px-1.5 py-1.5 hover:bg-[#CC785C] hover:text-white rounded-r-xl transition-colors cursor-pointer"
+                        className="px-1.5 py-1.5 hover:bg-ui-accent hover:text-white rounded-r-xl transition-colors cursor-pointer"
                         title="指定客户端链接"
                       >
                         <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-150 ${openDropdownId === prof.id ? 'rotate-180' : ''}`} />
@@ -580,8 +594,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                       {/* 气泡下拉菜单 */}
                       {openDropdownId === prof.id && (
-                        <div className="absolute right-0 bottom-full mb-1.5 w-44 bg-white rounded-xl shadow-lg border border-[#E3DDD2] py-1 z-30 text-xs">
-                          <div className="px-3 py-1 text-[10px] font-bold text-[#8C877D] border-b border-[#ECE7DE]">
+                        <div className="absolute right-0 bottom-full mb-1.5 w-44 bg-ui-surface rounded-xl shadow-lg border border-ui-border py-1 z-30 text-xs">
+                          <div className="px-3 py-1 text-[10px] font-bold text-ui-muted border-b border-ui-border">
                             指定客户端专用链接
                           </div>
                           <button
@@ -589,7 +603,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               handleCopy(singboxUrl, `singbox-${prof.id}`);
                               setOpenDropdownId(null);
                             }}
-                            className="w-full text-left px-3 py-1.5 hover:bg-[#FAF8F5] text-[#1F1E1D] flex items-center justify-between cursor-pointer"
+                            className="w-full text-left px-3 py-1.5 hover:bg-ui-subtle text-ui-text flex items-center justify-between cursor-pointer"
                           >
                             <span>Sing-box (JSON)</span>
                             {copiedId === `singbox-${prof.id}` && <Check className="w-3 h-3 text-[#5A7A6F]" />}
@@ -599,7 +613,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               handleCopy(mihomoUrl, `mihomo-${prof.id}`);
                               setOpenDropdownId(null);
                             }}
-                            className="w-full text-left px-3 py-1.5 hover:bg-[#FAF8F5] text-[#1F1E1D] flex items-center justify-between cursor-pointer"
+                            className="w-full text-left px-3 py-1.5 hover:bg-ui-subtle text-ui-text flex items-center justify-between cursor-pointer"
                           >
                             <span>Mihomo (YAML)</span>
                             {copiedId === `mihomo-${prof.id}` && <Check className="w-3 h-3 text-[#5A7A6F]" />}
@@ -609,7 +623,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               handleCopy(loonUrl, `loon-${prof.id}`);
                               setOpenDropdownId(null);
                             }}
-                            className="w-full text-left px-3 py-1.5 hover:bg-[#FAF8F5] text-[#1F1E1D] flex items-center justify-between cursor-pointer"
+                            className="w-full text-left px-3 py-1.5 hover:bg-ui-subtle text-ui-text flex items-center justify-between cursor-pointer"
                           >
                             <span>Loon (Conf)</span>
                             {copiedId === `loon-${prof.id}` && <Check className="w-3 h-3 text-[#5A7A6F]" />}
@@ -619,7 +633,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               handleCopy(qxUrl, `qx-${prof.id}`);
                               setOpenDropdownId(null);
                             }}
-                            className="w-full text-left px-3 py-1.5 hover:bg-[#FAF8F5] text-[#1F1E1D] flex items-center justify-between cursor-pointer"
+                            className="w-full text-left px-3 py-1.5 hover:bg-ui-subtle text-ui-text flex items-center justify-between cursor-pointer"
                           >
                             <span>Quantumult X (Conf)</span>
                             {copiedId === `qx-${prof.id}` && <Check className="w-3 h-3 text-[#5A7A6F]" />}
@@ -629,7 +643,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               handleCopy(egernUrl, `egern-${prof.id}`);
                               setOpenDropdownId(null);
                             }}
-                            className="w-full text-left px-3 py-1.5 hover:bg-[#FAF8F5] text-[#1F1E1D] flex items-center justify-between cursor-pointer"
+                            className="w-full text-left px-3 py-1.5 hover:bg-ui-subtle text-ui-text flex items-center justify-between cursor-pointer"
                           >
                             <span>Egern (YAML)</span>
                             {copiedId === `egern-${prof.id}` && <Check className="w-3 h-3 text-[#5A7A6F]" />}
@@ -639,9 +653,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               handleCopy(shadowrocketUrl, `shadowrocket-${prof.id}`);
                               setOpenDropdownId(null);
                             }}
-                            className="w-full text-left px-3 py-1.5 hover:bg-[#FAF8F5] text-[#1F1E1D] flex items-center justify-between cursor-pointer"
+                            className="w-full text-left px-3 py-1.5 hover:bg-ui-subtle text-ui-text flex items-center justify-between cursor-pointer"
                           >
-                            <span>小火箭 (Shadowrocket)</span>
+                            <span>Shadowrocket (Conf)</span>
                             {copiedId === `shadowrocket-${prof.id}` && <Check className="w-3 h-3 text-[#5A7A6F]" />}
                           </button>
                         </div>
@@ -656,166 +670,136 @@ export const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       {/* ================= EDIT / CREATE MODAL ================= */}
-      {editingProfile && (
-        <ProfileEditModal
-          profile={editingProfile}
-          isCreating={isCreating}
-          config={config}
-          nodes={nodes}
-          availableCountries={availableCountries}
-          activeTab={activeDrawerTab}
-          setActiveTab={setActiveDrawerTab}
-          onClose={() => setEditingProfile(null)}
-          onSave={handleSaveProfile}
-          onChangeProfile={setEditingProfile}
-          onRefreshToken={handleRefreshToken}
-          loading={loading}
-        />
-      )}
+      <Modal
+        open={!!editingProfile}
+        title={isCreating ? '新建订阅 (Profile)' : `编辑订阅：${editingProfile?.name || ''}`}
+        description="设定订阅名称与模版，选择节点、策略组和分流规则"
+        size="wide"
+        layout="editor"
+        onClose={() => setEditingProfile(null)}
+      >
+        {editingProfile && (
+          <ProfileEditModal
+            profile={editingProfile}
+            isCreating={isCreating}
+            config={config}
+            nodes={nodes}
+            availableCountries={availableCountries}
+            activeTab={activeDrawerTab}
+            setActiveTab={setActiveDrawerTab}
+            onClose={() => setEditingProfile(null)}
+            onSave={handleSaveProfile}
+            onChangeProfile={setEditingProfile}
+            onRefreshToken={handleRefreshToken}
+            loading={loading}
+          />
+        )}
+      </Modal>
 
       {/* ================= PREVIEW MODAL ================= */}
-      {previewData && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs p-3 sm:p-6"
-          onClick={() => setPreviewData(null)}
-        >
-          <div
-            className="bg-white rounded-2xl border border-[#E3DDD2] shadow-2xl w-full max-w-5xl h-[88vh] flex flex-col overflow-hidden"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="relative px-5 py-3.5 border-b border-[#E3DDD2] bg-[#FAF8F5] flex flex-wrap items-center justify-between gap-3 pr-14">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-8 h-8 rounded-lg bg-[#FAF0EC] flex items-center justify-center text-[#CC785C] shrink-0">
-                  <FileCode className="w-4 h-4" />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-sm font-bold text-[#1F1E1D] shrink-0">订阅文件预览</h3>
-                    <span className="px-2 py-0.5 rounded-md bg-[#ECE7DE] text-[11px] font-medium text-[#4A4742] truncate max-w-[200px]">
-                      {previewData.profileName}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#8C877D] mt-0.5">
-                    经过滤、策略组装配与模版渲染后的完整配置
-                  </p>
-                </div>
-              </div>
-
-              {/* 格式切换 */}
-              <div className="inline-flex rounded-xl border border-[#E3DDD2] p-1 bg-white text-xs shadow-2xs overflow-x-auto max-w-full">
-                {([
-                  { type: 'singbox', label: 'Sing-box' },
-                  { type: 'mihomo', label: 'Mihomo' },
-                  { type: 'loon', label: 'Loon' },
-                  { type: 'quantumultx', label: 'Quantumult X' },
-                  { type: 'egern', label: 'Egern' },
-                  { type: 'shadowrocket', label: '小火箭' },
-                ] as const).map(({ type, label }) => (
-                  <button
-                    key={type}
-                    onClick={() => handlePreviewProfile(previewData.profile, type)}
-                    className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${previewData.clientType === type
-                      ? 'bg-[#CC785C] text-white shadow-xs font-semibold'
-                      : 'text-[#69655E] hover:text-[#1F1E1D] hover:bg-[#FAF8F5]'
-                      }`}
-                  >
-                    <span>{label}</span>
-                  </button>
-                ))}
-              </div>
-
-              {/* 右上角关闭按钮 */}
+      <Modal
+        open={!!previewData}
+        title="订阅文件预览"
+        description={previewData?.profileName}
+        size="wide"
+        layout="editor"
+        onClose={() => setPreviewData(null)}
+      >
+        {previewData && (<>
+          <div className="ui-modal-toolbar"><div className="inline-flex rounded-xl border border-ui-border p-1 bg-ui-surface text-xs shadow-2xs overflow-x-auto max-w-full">
+            {([
+              { type: 'singbox', label: 'Sing-box' },
+              { type: 'mihomo', label: 'Mihomo' },
+              { type: 'loon', label: 'Loon' },
+              { type: 'quantumultx', label: 'Quantumult X' },
+              { type: 'egern', label: 'Egern' },
+              { type: 'shadowrocket', label: '小火箭' },
+            ] as const).map(({ type, label }) => (
               <button
-                onClick={() => setPreviewData(null)}
-                className="absolute top-3.5 right-5 p-1.5 text-[#8C877D] hover:text-[#1F1E1D] hover:bg-[#EFEAE2] rounded-lg transition-colors cursor-pointer"
-                title="关闭 (Esc)"
+                key={type}
+                onClick={() => handlePreviewProfile(previewData.profile, type)}
+                className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${previewData.clientType === type
+                  ? 'bg-ui-accent text-white shadow-xs font-semibold'
+                  : 'text-ui-secondary hover:text-ui-text hover:bg-ui-subtle'
+                  }`}
               >
-                <X className="w-5 h-5" />
+                <span>{label}</span>
               </button>
-            </div>
-
-            {/* Meta bar */}
-            <div className="px-5 py-2.5 bg-[#F6F3EE] border-b border-[#ECE7DE] flex flex-wrap items-center justify-between gap-3 text-xs text-[#69655E]">
-              <div className="flex flex-wrap items-center gap-2.5">
-                <span className="inline-flex items-center gap-1.5 font-medium text-[#1F1E1D]">
-                  <span className="w-2 h-2 rounded-full bg-[#5A7A6F]"></span>
-                  {previewData.clientType === 'singbox'
-                    ? 'Sing-box JSON'
-                    : previewData.clientType === 'mihomo'
-                      ? 'Clash / Mihomo YAML'
-                      : previewData.clientType === 'loon'
-                        ? 'Loon CONF'
-                        : previewData.clientType === 'quantumultx'
-                          ? 'Quantumult X CONF'
-                          : previewData.clientType === 'egern'
-                            ? 'Egern YAML'
-                            : previewData.clientType === 'shadowrocket'
-                              ? 'Shadowrocket CONF'
-                              : previewData.clientType}
-                </span>
-                <span>•</span>
-                <span>包含节点：<strong className="text-[#1F1E1D]">{previewData.nodeCount}</strong> 个</span>
-                <span>•</span>
-                <span>
-                  共 <strong className="text-[#1F1E1D]">{previewData.content.split('\n').length}</strong> 行 · {(new Blob([previewData.content]).size / 1024).toFixed(1)} KB
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setWrapPreviewCode(w => !w)}
-                  className="px-2.5 py-1 bg-white border border-[#E3DDD2] hover:bg-[#FAF8F5] text-[11px] text-[#4A4742] rounded-md transition-colors cursor-pointer"
-                >
-                  {wrapPreviewCode ? '取消换行' : '自动换行'}
-                </button>
-                <button
-                  onClick={() => window.open(getSubUrl(previewData.profile.token, previewData.clientType), '_blank')}
-                  className="px-2.5 py-1 bg-white border border-[#E3DDD2] hover:border-[#CC785C]/50 text-[11px] font-medium text-[#4A4742] hover:text-[#1F1E1D] rounded-md transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
-                  title="在浏览器打开此订阅链接"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  <span>浏览器打开</span>
-                </button>
-                <button
-                  onClick={() => {
-                    const ext = previewData.clientType === 'singbox'
-                      ? 'json'
-                      : (previewData.clientType === 'mihomo' || previewData.clientType === 'egern' ? 'yaml' : 'conf');
-                    handleDownloadConfig(previewData.content, `${previewData.profileName}_${previewData.clientType}.${ext}`);
-                  }}
-                  className="px-2.5 py-1 bg-white border border-[#E3DDD2] hover:border-[#CC785C]/50 text-[11px] font-medium text-[#4A4742] hover:text-[#1F1E1D] rounded-md transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
-                  title="下载配置文件"
-                >
-                  <Download className="w-3 h-3" />
-                  <span>下载文件</span>
-                </button>
-                <button
-                  onClick={() => handleCopy(previewData.content, 'preview-content')}
-                  className="px-2.5 py-1 bg-[#CC785C] hover:bg-[#BD6A4F] text-white text-[11px] font-semibold rounded-md transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
-                >
-                  {copiedId === 'preview-content' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                  <span>{copiedId === 'preview-content' ? '已复制' : '复制全文'}</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Code Body */}
-            <div className="flex-1 overflow-auto bg-[#181716] text-[#D8D2C7] font-mono text-xs leading-relaxed p-4">
-              {previewLoading ? (
-                <div className="h-full min-h-[300px] flex flex-col items-center justify-center text-[#8C877D] gap-2">
-                  <RefreshCw className="w-6 h-6 animate-spin text-[#CC785C]" />
-                  <span className="text-xs font-sans">正在生成订阅配置...</span>
-                </div>
-              ) : (
-                <pre className={`overflow-x-auto selection:bg-[#CC785C]/30 ${wrapPreviewCode ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>
-                  {previewData.content}
-                </pre>
-              )}
-            </div>
+            ))}
+          </div></div>
+          <div className="ui-modal-toolbar flex flex-wrap items-center justify-between gap-3 text-xs text-ui-secondary"><div className="flex flex-wrap items-center gap-2.5">
+            <span className="inline-flex items-center gap-1.5 font-medium text-ui-text">
+              <span className="w-2 h-2 rounded-full bg-[#5A7A6F]"></span>
+              {previewData.clientType === 'singbox'
+                ? 'Sing-box JSON'
+                : previewData.clientType === 'mihomo'
+                  ? 'Clash / Mihomo YAML'
+                  : previewData.clientType === 'loon'
+                    ? 'Loon CONF'
+                    : previewData.clientType === 'quantumultx'
+                      ? 'Quantumult X CONF'
+                      : previewData.clientType === 'egern'
+                        ? 'Egern YAML'
+                        : previewData.clientType === 'shadowrocket'
+                          ? 'Shadowrocket CONF'
+                          : previewData.clientType}
+            </span>
+            <span>•</span>
+            <span>包含节点：<strong className="text-ui-text">{previewData.nodeCount}</strong> 个</span>
+            <span>•</span>
+            <span>
+              共 <strong className="text-ui-text">{previewData.content.split('\n').length}</strong> 行 · {(new Blob([previewData.content]).size / 1024).toFixed(1)} KB
+            </span>
           </div>
-        </div>
-      )}
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setWrapPreviewCode(w => !w)}
+                className="px-2.5 py-1 bg-ui-surface border border-ui-border hover:bg-ui-subtle text-[11px] text-ui-secondary rounded-md transition-colors cursor-pointer"
+              >
+                {wrapPreviewCode ? '取消换行' : '自动换行'}
+              </button>
+              <button
+                onClick={() => window.open(getSubUrl(previewData.profile.token, previewData.clientType), '_blank')}
+                className="px-2.5 py-1 bg-ui-surface border border-ui-border hover:border-ui-accent/50 text-[11px] font-medium text-ui-secondary hover:text-ui-text rounded-md transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                title="在浏览器打开此订阅链接"
+              >
+                <ExternalLink className="w-3 h-3" />
+                <span>浏览器打开</span>
+              </button>
+              <button
+                onClick={() => {
+                  const ext = previewData.clientType === 'singbox'
+                    ? 'json'
+                    : (previewData.clientType === 'mihomo' || previewData.clientType === 'egern' ? 'yaml' : 'conf');
+                  handleDownloadConfig(previewData.content, `${previewData.profileName}_${previewData.clientType}.${ext}`);
+                }}
+                className="px-2.5 py-1 bg-ui-surface border border-ui-border hover:border-ui-accent/50 text-[11px] font-medium text-ui-secondary hover:text-ui-text rounded-md transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                title="下载配置文件"
+              >
+                <Download className="w-3 h-3" />
+                <span>下载文件</span>
+              </button>
+              <button
+                onClick={() => handleCopy(previewData.content, 'preview-content')}
+                className="px-2.5 py-1 bg-ui-accent hover:bg-ui-accent-hover text-white text-[11px] font-semibold rounded-md transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+              >
+                {copiedId === 'preview-content' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                <span>{copiedId === 'preview-content' ? '已复制' : '复制全文'}</span>
+              </button>
+            </div></div>
+          <ModalBody className="bg-[#181716] text-[#D8D2C7] font-mono text-xs leading-relaxed">{previewLoading ? (
+            <div className="h-full min-h-[300px] flex flex-col items-center justify-center text-ui-muted gap-2">
+              <RefreshCw className="w-6 h-6 animate-spin text-ui-accent" />
+              <span className="text-xs font-sans">正在生成订阅配置...</span>
+            </div>
+          ) : (
+            <pre className={`overflow-x-auto selection:bg-ui-accent/30 ${wrapPreviewCode ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>
+              {previewData.content}
+            </pre>
+          )}</ModalBody>
+        </>)}
+      </Modal>
     </div>
   );
 };
@@ -972,569 +956,540 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-3 sm:p-6 overflow-hidden">
-      <div className="bg-white w-full max-w-4xl h-[90vh] rounded-2xl border border-[#E3DDD2] shadow-2xl flex flex-col overflow-hidden">
-        {/* Modal Header */}
-        <div className="px-6 py-4 border-b border-[#E8E4DC] flex items-center justify-between bg-[#FAF8F5] shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-[#FAF0EC] flex items-center justify-center text-[#CC785C]">
-              <Layers className="w-4 h-4" />
-            </div>
-            <div>
-              <h2 className="text-sm font-bold text-[#1F1E1D]">
-                {isCreating ? '新建订阅 (Profile)' : `编辑订阅：${profile.name}`}
-              </h2>
-              <p className="text-xs text-[#8C877D]">
-                设定订阅名称与模版，选择节点、策略组和分流规则
-              </p>
-            </div>
-          </div>
+    <>
+      <div className="ui-modal-toolbar flex flex-nowrap items-center gap-2 overflow-x-auto [&>button]:shrink-0">
+        <button
+          onClick={() => setActiveTab('basic')}
+          className={`px-3.5 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${activeTab === 'basic'
+            ? 'border-ui-accent text-ui-accent'
+            : 'border-transparent text-ui-secondary hover:text-ui-text'
+            }`}
+        >
+          <Tag className="w-3.5 h-3.5" />
+          1. 基本信息与模版
+        </button>
+        <button
+          onClick={() => setActiveTab('nodes')}
+          className={`px-3.5 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${activeTab === 'nodes'
+            ? 'border-ui-accent text-ui-accent'
+            : 'border-transparent text-ui-secondary hover:text-ui-text'
+            }`}
+        >
+          <SourcesIcon className="w-3.5 h-3.5" aria-hidden="true" />
+          2. 选择节点分组 ({selectedSourceSet.size}/{allAvailableSources.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('groups')}
+          className={`px-3.5 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${activeTab === 'groups'
+            ? 'border-ui-accent text-ui-accent'
+            : 'border-transparent text-ui-secondary hover:text-ui-text'
+            }`}
+        >
+          <GroupsIcon className="w-3.5 h-3.5" aria-hidden="true" />
+          3. 策略组 ({profile.selectedGroupIds?.length || 0})
+        </button>
+        <button
+          onClick={() => setActiveTab('rules')}
+          className={`px-3.5 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${activeTab === 'rules'
+            ? 'border-ui-accent text-ui-accent'
+            : 'border-transparent text-ui-secondary hover:text-ui-text'
+            }`}
+        >
+          <RulesIcon className="w-3.5 h-3.5" aria-hidden="true" />
+          4. 分流规则 ({profile.selectedRuleIds?.length || 0})
+        </button>
+      </div>
+      <ModalBody className="gap-6">
+        {/* ================= TAB 1: BASIC & TEMPLATES (FIRST!) ================= */}
+        {activeTab === 'basic' && (
+          <div className="space-y-5 max-w-xl">
+            <Field className="space-y-1.5">
+              <Label>订阅名称 *</Label>
+              <Input
+                type="text"
+                value={profile.name}
+                onChange={e => onChangeProfile(prev => prev ? { ...prev, name: e.target.value } : prev)}
+                className="w-full"
+              />
+            </Field>
 
-          <button
-            onClick={onClose}
-            className="p-1.5 text-[#8C877D] hover:text-[#1F1E1D] hover:bg-[#EFEAE2] rounded-lg transition-colors cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+            <Field className="space-y-1.5">
+              <Label>描述说明</Label>
+              <Input
+                type="text"
+                placeholder="说明此订阅的适用设备或使用场景"
+                value={profile.description || ''}
+                onChange={e => onChangeProfile(prev => prev ? { ...prev, description: e.target.value } : prev)}
+                className="w-full"
+              />
+            </Field>
 
-        {/* Tab Navigation: Basic first! */}
-        <div className="px-6 border-b border-[#E8E4DC] flex items-center gap-2 bg-[#FAF8F5]/50 shrink-0">
-          <button
-            onClick={() => setActiveTab('basic')}
-            className={`px-3.5 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${activeTab === 'basic'
-              ? 'border-[#CC785C] text-[#CC785C]'
-              : 'border-transparent text-[#69655E] hover:text-[#1F1E1D]'
-              }`}
-          >
-            <Tag className="w-3.5 h-3.5" />
-            1. 基本信息与模版
-          </button>
-          <button
-            onClick={() => setActiveTab('nodes')}
-            className={`px-3.5 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${activeTab === 'nodes'
-              ? 'border-[#CC785C] text-[#CC785C]'
-              : 'border-transparent text-[#69655E] hover:text-[#1F1E1D]'
-              }`}
-          >
-            <Radio className="w-3.5 h-3.5" />
-            2. 选择节点分组 ({selectedSourceSet.size}/{allAvailableSources.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('groups')}
-            className={`px-3.5 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${activeTab === 'groups'
-              ? 'border-[#CC785C] text-[#CC785C]'
-              : 'border-transparent text-[#69655E] hover:text-[#1F1E1D]'
-              }`}
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            3. 策略组 ({profile.selectedGroupIds?.length || 0})
-          </button>
-          <button
-            onClick={() => setActiveTab('rules')}
-            className={`px-3.5 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${activeTab === 'rules'
-              ? 'border-[#CC785C] text-[#CC785C]'
-              : 'border-transparent text-[#69655E] hover:text-[#1F1E1D]'
-              }`}
-          >
-            <Filter className="w-3.5 h-3.5" />
-            4. 分流规则 ({profile.selectedRuleIds?.length || 0})
-          </button>
-        </div>
-
-        {/* Modal Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* ================= TAB 1: BASIC & TEMPLATES (FIRST!) ================= */}
-          {activeTab === 'basic' && (
-            <div className="space-y-5 max-w-xl">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-[#1F1E1D]">订阅名称 *</label>
-                <input
-                  type="text"
-                  value={profile.name}
-                  onChange={e => onChangeProfile(prev => prev ? { ...prev, name: e.target.value } : prev)}
-                  className="w-full px-3.5 py-2.5 bg-[#FAF8F5] border border-[#E3DDD2] rounded-xl text-xs text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
-                />
+            {/* 订阅凭据 (Token) */}
+            <Field className="pt-3 border-t border-ui-border space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>订阅凭据 (Token)</Label>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-[#1F1E1D]">描述说明</label>
-                <input
+              <div className="flex items-center gap-2">
+                <Input
                   type="text"
-                  placeholder="说明此订阅的适用设备或使用场景"
-                  value={profile.description || ''}
-                  onChange={e => onChangeProfile(prev => prev ? { ...prev, description: e.target.value } : prev)}
-                  className="w-full px-3.5 py-2.5 bg-[#FAF8F5] border border-[#E3DDD2] rounded-xl text-xs text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
+                  value={profile.token || ''}
+                  onChange={e => onChangeProfile(prev => prev ? { ...prev, token: e.target.value } : prev)}
+                  placeholder="输入或生成订阅 Token"
+                  className="flex-1 font-mono"
                 />
-              </div>
-
-              {/* 订阅凭据 (Token) */}
-              <div className="pt-3 border-t border-[#ECE7DE] space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-[#1F1E1D]">订阅凭据 (Token)</label>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={profile.token || ''}
-                    onChange={e => onChangeProfile(prev => prev ? { ...prev, token: e.target.value } : prev)}
-                    placeholder="输入或生成订阅 Token"
-                    className="flex-1 px-3.5 py-2.5 bg-[#FAF8F5] border border-[#E3DDD2] rounded-xl text-xs font-mono text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
-                  />
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (profile.token) {
-                        const ok = await copyToClipboard(profile.token);
-                        if (ok) {
-                          setTokenCopied(true);
-                          setTimeout(() => setTokenCopied(false), 2000);
-                        } else {
-                          window.prompt('请手动复制 Token：', profile.token);
-                        }
-                      }
-                    }}
-                    className="px-3 py-2.5 bg-white border border-[#E3DDD2] hover:bg-[#FAF8F5] text-xs font-medium text-[#1F1E1D] rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
-                    title="复制 Token"
-                  >
-                    {tokenCopied ? <Check className="w-3.5 h-3.5 text-[#5A7A6F]" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{tokenCopied ? '已复制' : '复制'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={tokenRefreshing}
-                    onClick={async () => {
-                      if (isCreating) {
-                        const rand = generateRandomSubToken();
-                        onChangeProfile(prev => prev ? { ...prev, token: rand } : prev);
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (profile.token) {
+                      const ok = await copyToClipboard(profile.token);
+                      if (ok) {
+                        setTokenCopied(true);
+                        setTimeout(() => setTokenCopied(false), 2000);
                       } else {
-                        if (!onRefreshToken) return;
-                        setTokenRefreshing(true);
-                        try {
-                          const newToken = await onRefreshToken(profile.id, profile.name);
-                          if (newToken) {
-                            onChangeProfile(prev => prev ? { ...prev, token: newToken } : prev);
-                          }
-                        } finally {
-                          setTokenRefreshing(false);
-                        }
+                        window.prompt('请手动复制 Token：', profile.token);
                       }
-                    }}
-                    className="px-3 py-2.5 bg-white border border-[#E3DDD2] hover:border-[#CC785C]/50 text-xs font-medium text-[#CC785C] rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-50"
-                    title="重新生成 Token"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${tokenRefreshing ? 'animate-spin' : ''}`} />
-                    <span>重新生成</span>
-                  </button>
-                </div>
+                    }
+                  }}
+                  className="px-3 py-2.5 bg-ui-surface border border-ui-border hover:bg-ui-subtle text-xs font-medium text-ui-text rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
+                  title="复制 Token"
+                >
+                  {tokenCopied ? <Check className="w-3.5 h-3.5 text-[#5A7A6F]" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{tokenCopied ? '已复制' : '复制'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={tokenRefreshing}
+                  onClick={async () => {
+                    if (isCreating) {
+                      const rand = generateRandomSubToken();
+                      onChangeProfile(prev => prev ? { ...prev, token: rand } : prev);
+                    } else {
+                      if (!onRefreshToken) return;
+                      setTokenRefreshing(true);
+                      try {
+                        const newToken = await onRefreshToken(profile.id, profile.name);
+                        if (newToken) {
+                          onChangeProfile(prev => prev ? { ...prev, token: newToken } : prev);
+                        }
+                      } finally {
+                        setTokenRefreshing(false);
+                      }
+                    }
+                  }}
+                  className="px-3 py-2.5 bg-ui-surface border border-ui-border hover:border-ui-accent/50 text-xs font-medium text-ui-accent rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-50"
+                  title="重新生成 Token"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${tokenRefreshing ? 'animate-spin' : ''}`} />
+                  <span>重新生成</span>
+                </button>
               </div>
+            </Field>
 
-              {/* 模版绑定：按需覆盖模式 */}
-              <div className="pt-3 border-t border-[#ECE7DE] space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <h4 className="text-xs font-bold text-[#1F1E1D]">客户端模版绑定</h4>
-                    <p className="text-[11px] text-[#8C877D] mt-0.5">
-                      选择客户端模版。未绑定的客户端自动跟随系统默认模版。
-                    </p>
-                  </div>
-
-                  {availableClients.length > 0 && (
-                    <div className="shrink-0">
-                      <select
-                        value=""
-                        onChange={e => {
-                          const cType = e.target.value as ClientType;
-                          if (!cType) return;
-                          const defaultTpl = config?.templates?.find(t => t.type === cType && t.isDefault)
-                            || config?.templates?.find(t => t.type === cType);
-                          onChangeProfile(prev => prev ? {
-                            ...prev,
-                            templates: {
-                              ...(prev.templates || {}),
-                              [cType]: defaultTpl?.id || ''
-                            }
-                          } : prev);
-                        }}
-                        className="px-2.5 py-1.5 bg-white hover:bg-[#FAF8F5] border border-[#CC785C]/40 text-[#CC785C] rounded-lg text-xs font-medium cursor-pointer transition-colors shadow-2xs focus:outline-none"
-                      >
-                        <option value="" disabled>+ 绑定指定客户端</option>
-                        {availableClients.map(c => (
-                          <option key={c.type} value={c.type}>
-                            {c.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+            {/* 模版绑定：按需覆盖模式 */}
+            <div className="pt-3 border-t border-ui-border space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-xs font-bold text-ui-text">客户端模版绑定</h4>
+                  <p className="text-[11px] text-ui-muted mt-0.5">
+                    选择客户端模版。未绑定的客户端自动跟随系统默认模版。
+                  </p>
                 </div>
 
-                {customizedClients.length === 0 ? (
-                  <div className="p-3 bg-[#FAF8F5] border border-[#ECE7DE] rounded-xl text-xs text-[#69655E] flex items-center justify-between">
-                    <span>当前所有客户端均跟随系统全局默认模版</span>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {customizedClients.map(c => {
-                      const clientTemplates = (config?.templates || []).filter(t => t.type === c.type);
-                      const currentTplId = profile.templates?.[c.type] || '';
-
-                      return (
-                        <div
-                          key={c.type}
-                          className="p-3 bg-white border border-[#E3DDD2] rounded-xl flex items-center gap-3 transition-colors shadow-2xs"
-                        >
-                          <div className="w-32 shrink-0">
-                            <span className="text-xs font-semibold text-[#1F1E1D] block">{c.label}</span>
-                            <span className="text-[10px] text-[#8C877D]">独立指定模版</span>
-                          </div>
-
-                          <div className="flex-1 min-w-0">
-                            <select
-                              value={currentTplId}
-                              onChange={e => {
-                                const val = e.target.value;
-                                onChangeProfile(prev => prev ? {
-                                  ...prev,
-                                  templates: {
-                                    ...(prev.templates || {}),
-                                    [c.type]: val || undefined
-                                  }
-                                } : prev);
-                              }}
-                              className="w-full px-3 py-1.5 bg-[#FAF8F5] border border-[#E3DDD2] rounded-lg text-xs text-[#1F1E1D] focus:outline-none focus:border-[#CC785C]"
-                            >
-                              {clientTemplates.map(t => (
-                                <option key={t.id} value={t.id}>
-                                  {t.name} {t.isDefault ? '(系统默认)' : ''}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onChangeProfile(prev => {
-                                if (!prev) return prev;
-                                const nextTemplates = { ...(prev.templates || {}) };
-                                delete nextTemplates[c.type];
-                                return { ...prev, templates: nextTemplates };
-                              });
-                            }}
-                            className="px-2.5 py-1.5 text-xs text-[#8C877D] hover:text-[#C5534A] hover:bg-[#FDF2F0] rounded-lg transition-colors shrink-0 cursor-pointer"
-                            title="恢复跟随系统默认模版"
-                          >
-                            恢复默认
-                          </button>
-                        </div>
-                      );
-                    })}
-
+                {availableClients.length > 0 && (
+                  <div className="shrink-0">
+                    <Select aria-label="绑定客户端"
+                      value=""
+                      onValueChange={nextValue => {
+                        const cType = nextValue as ClientType;
+                        if (!cType) return;
+                        const defaultTpl = config?.templates?.find(t => t.type === cType && t.isDefault)
+                          || config?.templates?.find(t => t.type === cType);
+                        onChangeProfile(prev => prev ? {
+                          ...prev,
+                          templates: {
+                            ...(prev.templates || {}),
+                            [cType]: defaultTpl?.id || ''
+                          }
+                        } : prev);
+                      }}
+                      className="cursor-pointer"
+                    >
+                      <SelectItem value="" disabled>+ 绑定指定客户端</SelectItem>
+                      {availableClients.map(c => (
+                        <SelectItem key={c.type} value={c.type}>
+                          {c.label}
+                        </SelectItem>
+                      ))}
+                    </Select>
                   </div>
                 )}
               </div>
-            </div>
-          )}
 
-          {/* ================= TAB 2: NODE GROUPS SELECTION ================= */}
-          {activeTab === 'nodes' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-[#FAF8F5] border border-[#E8E4DC]">
-                <div className="text-xs text-[#3D3A37]">
-                  <span className="font-bold">节点分组：</span>
-                  勾选此订阅包含的节点分组。若留空则包含所有分组。
+              {customizedClients.length === 0 ? (
+                <div className="p-3 bg-ui-subtle border border-ui-border rounded-xl text-xs text-ui-secondary flex items-center justify-between">
+                  <span>当前所有客户端均跟随系统全局默认模版</span>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={handleSelectAllSources}
-                    className="px-2.5 py-1 text-xs font-medium rounded-lg bg-white hover:bg-[#EFEAE2] border border-[#E3DDD2] text-[#1F1E1D] cursor-pointer"
-                  >
-                    全选
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleClearAllSources}
-                    className="px-2.5 py-1 text-xs font-medium rounded-lg bg-white hover:bg-[#EFEAE2] border border-[#E3DDD2] text-[#1F1E1D] cursor-pointer"
-                  >
-                    清空
-                  </button>
-                </div>
-              </div>
+              ) : (
+                <div className="space-y-2">
+                  {customizedClients.map(c => {
+                    const clientTemplates = (config?.templates || []).filter(t => t.type === c.type);
+                    const currentTplId = profile.templates?.[c.type] || '';
 
-              {/* 分组卡片网格展示区 */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pr-1">
-                {allAvailableSources.map(source => {
-                  const isChecked = selectedSourceSet.has(source.id);
-                  const isCustom = source.type === 'manual' || source.type === 'custom' || source.id === 'custom' || !source.url;
-                  const isPeeking = expandedGroupPreview === source.id;
-                  const nodesList = source.nodes || [];
-
-                  return (
-                    <div
-                      key={source.id}
-                      className={`rounded-xl border transition-all duration-200 bg-white overflow-hidden ${isChecked
-                          ? 'border-[#CC785C] bg-[#FAF0EC]/40 shadow-2xs'
-                          : 'border-[#ECE7DE] hover:border-[#CC785C]/40 hover:bg-[#FAF8F5]'
-                        }`}
-                    >
+                    return (
                       <div
-                        onClick={() => toggleSourceSelection(source.id)}
-                        className="p-3.5 flex items-start justify-between gap-3 cursor-pointer select-none"
+                        key={c.type}
+                        className="p-3 bg-ui-surface border border-ui-border rounded-xl flex items-center gap-3 transition-colors shadow-2xs"
                       >
-                        <div className="flex items-start gap-3 min-w-0 flex-1">
-                          <div className="mt-0.5 shrink-0 text-[#CC785C]">
-                            {isChecked ? (
-                              <CheckSquare className="w-4 h-4 fill-[#FAF0EC]" />
-                            ) : (
-                              <Square className="w-4 h-4 text-[#C4BEB3]" />
-                            )}
-                          </div>
-
-                          <div className="min-w-0 flex-1 space-y-1">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              {isCustom ? (
-                                <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-[#FBF2EA] text-[#C45E38] border border-[#F2D8C9] shrink-0">
-                                  独立组
-                                </span>
-                              ) : (
-                                <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-[#EAF2EE] text-[#2D6A5A] border border-[#D5E5DE] shrink-0">
-                                  订阅
-                                </span>
-                              )}
-
-                              <span className="text-xs font-bold text-[#1F1E1D] truncate">
-                                {source.name}
-                              </span>
-                            </div>
-
-                            <div className="text-[11px] text-[#8C877D] truncate">
-                              {isCustom ? (
-                                <span>独立节点</span>
-                              ) : (
-                                <span className="truncate">{source.url}</span>
-                              )}
-                            </div>
-                          </div>
+                        <div className="w-32 shrink-0">
+                          <span className="text-xs font-semibold text-ui-text block">{c.label}</span>
+                          <span className="text-[10px] text-ui-muted">独立指定模版</span>
                         </div>
 
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="px-2 py-0.5 text-[10px] font-mono font-semibold rounded bg-[#FAF8F5] border border-[#ECE7DE] text-[#69655E]">
-                            {nodesList.length} 节点
-                          </span>
-
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setExpandedGroupPreview(prev => prev === source.id ? null : source.id);
+                        <div className="flex-1 min-w-0">
+                          <Select
+                            value={currentTplId}
+                            onValueChange={nextValue => {
+                              const val = nextValue;
+                              onChangeProfile(prev => prev ? {
+                                ...prev,
+                                templates: {
+                                  ...(prev.templates || {}),
+                                  [c.type]: val || undefined
+                                }
+                              } : prev);
                             }}
-                            className="p-1 text-[#8C877D] hover:text-[#1F1E1D] hover:bg-[#EFEAE2] rounded transition-colors cursor-pointer"
-                            title="快速预览组内节点"
+                            className="w-full"
                           >
-                            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isPeeking ? 'rotate-180 text-[#CC785C]' : ''}`} />
-                          </button>
+                            {clientTemplates.map(t => (
+                              <SelectItem key={t.id} value={t.id}>
+                                {t.name} {t.isDefault ? '(系统默认)' : ''}
+                              </SelectItem>
+                            ))}
+                          </Select>
                         </div>
-                      </div>
 
-                      {/* 组内节点极简抽屉预览 */}
-                      {isPeeking && (
-                        <div className="px-3.5 pb-3 pt-1 border-t border-[#ECE7DE]/60 bg-[#FAF8F5]/80 space-y-1.5 text-xs animate-in fade-in duration-150">
-                          <div className="text-[10px] text-[#8C877D] font-medium">
-                            组内包含节点列表 ({nodesList.length} 个):
-                          </div>
-                          <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
-                            {nodesList.length === 0 ? (
-                              <div className="text-[11px] text-[#8C877D] py-1">当前组内无节点</div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onChangeProfile(prev => {
+                              if (!prev) return prev;
+                              const nextTemplates = { ...(prev.templates || {}) };
+                              delete nextTemplates[c.type];
+                              return { ...prev, templates: nextTemplates };
+                            });
+                          }}
+                          className="px-2.5 py-1.5 text-xs text-ui-muted hover:text-[#C5534A] hover:bg-[#FDF2F0] rounded-lg transition-colors shrink-0 cursor-pointer"
+                          title="恢复跟随系统默认模版"
+                        >
+                          恢复默认
+                        </button>
+                      </div>
+                    );
+                  })}
+
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ================= TAB 2: NODE GROUPS SELECTION ================= */}
+        {activeTab === 'nodes' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-3.5 rounded-xl bg-ui-subtle border border-ui-border">
+              <div className="text-xs text-[#3D3A37]">
+                <span className="font-bold">节点分组：</span>
+                勾选此订阅包含的节点分组。若留空则包含所有分组。
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleSelectAllSources}
+                  className="px-2.5 py-1 text-xs font-medium rounded-lg bg-ui-surface hover:bg-ui-hover border border-ui-border text-ui-text cursor-pointer"
+                >
+                  全选
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearAllSources}
+                  className="px-2.5 py-1 text-xs font-medium rounded-lg bg-ui-surface hover:bg-ui-hover border border-ui-border text-ui-text cursor-pointer"
+                >
+                  清空
+                </button>
+              </div>
+            </div>
+
+            <ProfileUsage sources={allAvailableSources} sourceIds={profile.nodeFilter?.sourceIds} />
+
+            {/* 分组卡片网格展示区 */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pr-1">
+              {allAvailableSources.map(source => {
+                const isChecked = selectedSourceSet.has(source.id);
+                const isCustom = source.type === 'manual' || source.type === 'custom' || source.id === 'custom' || !source.url;
+                const isPeeking = expandedGroupPreview === source.id;
+                const nodesList = source.nodes || [];
+
+                return (
+                  <div
+                    key={source.id}
+                    className={`rounded-xl border transition-all duration-200 bg-ui-surface overflow-hidden ${isChecked
+                      ? 'border-ui-accent bg-ui-accent-soft/40 shadow-2xs'
+                      : 'border-ui-border hover:border-ui-accent/40 hover:bg-ui-subtle'
+                      }`}
+                  >
+                    <div
+                      onClick={() => toggleSourceSelection(source.id)}
+                      className="p-3.5 flex items-start justify-between gap-3 cursor-pointer select-none"
+                    >
+                      <div className="flex items-start gap-3 min-w-0 flex-1">
+                        <div className="mt-0.5 shrink-0 text-ui-accent">
+                          {isChecked ? (
+                            <CheckSquare className="w-4 h-4 fill-[#FAF0EC]" />
+                          ) : (
+                            <Square className="w-4 h-4 text-[#C4BEB3]" />
+                          )}
+                        </div>
+
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {isCustom ? (
+                              <Badge tone="accent" className="border">
+                                独立组
+                              </Badge>
                             ) : (
-                              nodesList.map(n => (
-                                <div key={n.id} className="flex items-center justify-between text-[11px] py-0.5">
-                                  <div className="flex items-center gap-1.5 truncate">
-                                    <span>{n.countryEmoji || '🌐'}</span>
-                                    <span className="text-[#1F1E1D] truncate">{n.name}</span>
-                                  </div>
-                                  <span className="text-[10px] font-mono text-[#8C877D] shrink-0 ml-2">
-                                    {n.server}:{n.port}
-                                  </span>
+                              <Badge tone="success" className="border">
+                                订阅
+                              </Badge>
+                            )}
+
+                            <span className="text-xs font-bold text-ui-text truncate">
+                              {source.name}
+                            </span>
+                          </div>
+
+                          <div className="text-[11px] text-ui-muted truncate">
+                            {isCustom ? (
+                              <span>独立节点</span>
+                            ) : (
+                              <span className="truncate">{source.url}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Badge tone="neutral" className="font-mono border">
+                          {nodesList.length} 节点
+                        </Badge>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpandedGroupPreview(prev => prev === source.id ? null : source.id);
+                          }}
+                          className="p-1 text-ui-muted hover:text-ui-text hover:bg-ui-hover rounded transition-colors cursor-pointer"
+                          title="快速预览组内节点"
+                        >
+                          <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isPeeking ? 'rotate-180 text-ui-accent' : ''}`} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 组内节点极简抽屉预览 */}
+                    {isPeeking && (
+                      <div className="px-3.5 pb-3 pt-1 border-t border-ui-border/60 bg-ui-subtle/80 space-y-1.5 text-xs animate-in fade-in duration-150">
+                        <div className="text-[10px] text-ui-muted font-medium">
+                          组内包含节点列表 ({nodesList.length} 个):
+                        </div>
+                        <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
+                          {nodesList.length === 0 ? (
+                            <div className="text-[11px] text-ui-muted py-1">当前组内无节点</div>
+                          ) : (
+                            nodesList.map(n => (
+                              <div key={n.id} className="flex items-center justify-between text-[11px] py-0.5">
+                                <div className="flex items-center gap-1.5 truncate">
+                                  <span>{n.countryEmoji || '🌐'}</span>
+                                  <span className="text-ui-text truncate">{n.name}</span>
                                 </div>
-                              ))
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* ================= TAB 3: PROXY GROUPS ================= */}
-          {activeTab === 'groups' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-[#FAF8F5] border border-[#E8E4DC]">
-                <div className="text-xs text-[#3D3A37]">
-                  <span className="font-bold">策略组：</span>
-                  勾选此订阅要启用的策略组。若留空则输出所有全局策略组。
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={handleSelectAllGroups}
-                    className="px-2.5 py-1 text-xs font-medium rounded-lg bg-white hover:bg-[#EFEAE2] border border-[#E3DDD2] text-[#1F1E1D] cursor-pointer"
-                  >
-                    全选
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleClearGroups}
-                    className="px-2.5 py-1 text-xs font-medium rounded-lg bg-white hover:bg-[#EFEAE2] border border-[#E3DDD2] text-[#1F1E1D] cursor-pointer"
-                  >
-                    清空
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pr-1">
-                {(config?.proxyGroups || []).map(group => {
-                  const isChecked = selectedGroupSet.has(group.id);
-                  return (
-                    <div
-                      key={group.id}
-                      onClick={() => toggleGroupSelection(group.id)}
-                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-2.5 select-none ${isChecked
-                        ? 'border-[#CC785C] bg-[#FAF0EC]/60 shadow-2xs'
-                        : 'border-[#ECE7DE] bg-white hover:border-[#CC785C]/40 hover:bg-[#FAF8F5]'
-                        }`}
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="shrink-0 text-[#CC785C]">
-                          {isChecked ? (
-                            <CheckSquare className="w-4 h-4 fill-[#FAF0EC]" />
-                          ) : (
-                            <Square className="w-4 h-4 text-[#C4BEB3]" />
+                                <span className="text-[10px] font-mono text-ui-muted shrink-0 ml-2">
+                                  {n.server}:{n.port}
+                                </span>
+                              </div>
+                            ))
                           )}
                         </div>
-                        <div className="min-w-0">
-                          <div className="text-xs font-bold text-[#1F1E1D] truncate">
-                            {group.name}
-                          </div>
-                          <div className="text-[10px] text-[#8C877D] mt-0.5">
-                            类型: {group.type} {group.filter && `• 匹配: ${group.filter}`}
-                          </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ================= TAB 3: PROXY GROUPS ================= */}
+        {activeTab === 'groups' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-3.5 rounded-xl bg-ui-subtle border border-ui-border">
+              <div className="text-xs text-[#3D3A37]">
+                <span className="font-bold">策略组：</span>
+                勾选此订阅要启用的策略组。若留空则输出所有全局策略组。
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleSelectAllGroups}
+                  className="px-2.5 py-1 text-xs font-medium rounded-lg bg-ui-surface hover:bg-ui-hover border border-ui-border text-ui-text cursor-pointer"
+                >
+                  全选
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearGroups}
+                  className="px-2.5 py-1 text-xs font-medium rounded-lg bg-ui-surface hover:bg-ui-hover border border-ui-border text-ui-text cursor-pointer"
+                >
+                  清空
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pr-1">
+              {(config?.proxyGroups || []).map(group => {
+                const isChecked = selectedGroupSet.has(group.id);
+                return (
+                  <div
+                    key={group.id}
+                    onClick={() => toggleGroupSelection(group.id)}
+                    className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-2.5 select-none ${isChecked
+                      ? 'border-ui-accent bg-ui-accent-soft/60 shadow-2xs'
+                      : 'border-ui-border bg-ui-surface hover:border-ui-accent/40 hover:bg-ui-subtle'
+                      }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="shrink-0 text-ui-accent">
+                        {isChecked ? (
+                          <CheckSquare className="w-4 h-4 fill-[#FAF0EC]" />
+                        ) : (
+                          <Square className="w-4 h-4 text-[#C4BEB3]" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-ui-text truncate">
+                          {group.name}
+                        </div>
+                        <div className="text-[10px] text-ui-muted mt-0.5">
+                          类型: {group.type} {group.filter && `• 匹配: ${group.filter}`}
                         </div>
                       </div>
                     </div>
-                  );
-                })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ================= TAB 4: ROUTING RULES ================= */}
+        {activeTab === 'rules' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-3.5 rounded-xl bg-ui-subtle border border-ui-border">
+              <div className="text-xs text-[#3D3A37]">
+                <span className="font-bold">分流规则：</span>
+                勾选此订阅要启用的分流规则。
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleSelectAllRules}
+                  className="px-2.5 py-1 text-xs font-medium rounded-lg bg-ui-surface hover:bg-ui-hover border border-ui-border text-ui-text cursor-pointer"
+                >
+                  全选
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearRules}
+                  className="px-2.5 py-1 text-xs font-medium rounded-lg bg-ui-surface hover:bg-ui-hover border border-ui-border text-ui-text cursor-pointer"
+                >
+                  清空
+                </button>
               </div>
             </div>
-          )}
 
-          {/* ================= TAB 4: ROUTING RULES ================= */}
-          {activeTab === 'rules' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-[#FAF8F5] border border-[#E8E4DC]">
-                <div className="text-xs text-[#3D3A37]">
-                  <span className="font-bold">分流规则：</span>
-                  勾选此订阅要启用的分流规则。
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={handleSelectAllRules}
-                    className="px-2.5 py-1 text-xs font-medium rounded-lg bg-white hover:bg-[#EFEAE2] border border-[#E3DDD2] text-[#1F1E1D] cursor-pointer"
+            <div className="space-y-2 pr-1">
+              {(config?.rulesList || []).map(rule => {
+                const isChecked = selectedRuleSet.has(rule.id);
+                const isBuiltinTarget = rule.outbound.toUpperCase() === 'REJECT' || rule.outbound.toUpperCase() === 'DIRECT' || rule.outbound === '🎯 本地直连';
+                const isTargetGroupEnabled = isBuiltinTarget || selectedGroupSet.size === 0 || selectedGroupSet.has(`grp-${rule.outbound}`) || (config?.proxyGroups || []).some(g => g.name === rule.outbound && selectedGroupSet.has(g.id));
+
+                return (
+                  <div
+                    key={rule.id}
+                    onClick={() => toggleRuleSelection(rule.id)}
+                    className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 select-none ${isChecked
+                      ? 'border-ui-accent bg-ui-accent-soft/60 shadow-2xs'
+                      : 'border-ui-border bg-ui-surface hover:border-ui-accent/40 hover:bg-ui-subtle'
+                      }`}
                   >
-                    全选
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleClearRules}
-                    className="px-2.5 py-1 text-xs font-medium rounded-lg bg-white hover:bg-[#EFEAE2] border border-[#E3DDD2] text-[#1F1E1D] cursor-pointer"
-                  >
-                    清空
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-2 pr-1">
-                {(config?.rulesList || []).map(rule => {
-                  const isChecked = selectedRuleSet.has(rule.id);
-                  const isBuiltinTarget = rule.outbound.toUpperCase() === 'REJECT' || rule.outbound.toUpperCase() === 'DIRECT' || rule.outbound === '🎯 本地直连';
-                  const isTargetGroupEnabled = isBuiltinTarget || selectedGroupSet.size === 0 || selectedGroupSet.has(`grp-${rule.outbound}`) || (config?.proxyGroups || []).some(g => g.name === rule.outbound && selectedGroupSet.has(g.id));
-
-                  return (
-                    <div
-                      key={rule.id}
-                      onClick={() => toggleRuleSelection(rule.id)}
-                      className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 select-none ${isChecked
-                        ? 'border-[#CC785C] bg-[#FAF0EC]/60 shadow-2xs'
-                        : 'border-[#ECE7DE] bg-white hover:border-[#CC785C]/40 hover:bg-[#FAF8F5]'
-                        }`}
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="shrink-0 text-[#CC785C]">
-                          {isChecked ? (
-                            <CheckSquare className="w-4 h-4 fill-[#FAF0EC]" />
-                          ) : (
-                            <Square className="w-4 h-4 text-[#C4BEB3]" />
-                          )}
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="shrink-0 text-ui-accent">
+                        {isChecked ? (
+                          <CheckSquare className="w-4 h-4 fill-[#FAF0EC]" />
+                        ) : (
+                          <Square className="w-4 h-4 text-[#C4BEB3]" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-ui-text truncate">
+                            {rule.name}
+                          </span>
+                          <Badge tone="neutral">
+                            {rule.type}
+                          </Badge>
                         </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-[#1F1E1D] truncate">
-                              {rule.name}
+                        <div className="text-[10px] text-ui-muted truncate mt-0.5 flex items-center gap-1.5">
+                          <span>指向: <span className="font-semibold text-ui-accent">{rule.outbound}</span></span>
+                          <span>• {rule.payload}</span>
+                          {!isTargetGroupEnabled && (
+                            <span className="text-[10px] text-amber-600 font-medium">
+                              (目标组未选，将自动回退)
                             </span>
-                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#EFEAE2] text-[#69655E]">
-                              {rule.type}
-                            </span>
-                          </div>
-                          <div className="text-[10px] text-[#8C877D] truncate mt-0.5 flex items-center gap-1.5">
-                            <span>指向: <span className="font-semibold text-[#CC785C]">{rule.outbound}</span></span>
-                            <span>• {rule.payload}</span>
-                            {!isTargetGroupEnabled && (
-                              <span className="text-[10px] text-amber-600 font-medium">
-                                (目标组未选，将自动回退)
-                              </span>
-                            )}
-                          </div>
+                          )}
                         </div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+                );
+              })}
             </div>
-          )}
+          </div>
+        )}
+      </ModalBody>
+      <ModalFooter className="justify-between">
+        <div className="text-xs text-ui-muted">
+          已选 {selectedSourceSet.size} 个分组 ({totalEffectiveNodesInProfile} 个节点) • {profile.selectedGroupIds?.length || 0} 个策略组 • {profile.selectedRuleIds?.length || 0} 条规则
         </div>
 
-        {/* Modal Footer */}
-        <div className="px-6 py-4 border-t border-[#E8E4DC] flex items-center justify-between bg-[#FAF8F5] shrink-0">
-          <div className="text-xs text-[#8C877D]">
-            已选 {selectedSourceSet.size} 个分组 ({totalEffectiveNodesInProfile} 个节点) • {profile.selectedGroupIds?.length || 0} 个策略组 • {profile.selectedRuleIds?.length || 0} 条规则
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold rounded-xl border border-[#E3DDD2] hover:bg-[#EFEAE2] text-[#69655E] transition-colors cursor-pointer"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              disabled={loading}
-              onClick={onSave}
-              className="px-5 py-2 text-xs font-semibold rounded-xl bg-[#CC785C] hover:bg-[#B8684E] text-white transition-all shadow-sm cursor-pointer disabled:opacity-50"
-            >
-              {loading ? '正在保存...' : isCreating ? '创建订阅' : '保存修改'}
-            </button>
-          </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="ui-button-secondary"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={onSave}
+            className="ui-button-primary"
+          >
+            {loading ? '正在保存...' : isCreating ? '创建订阅' : '保存修改'}
+          </button>
         </div>
-      </div>
-    </div>
+      </ModalFooter>
+    </>
   );
 };

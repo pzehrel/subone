@@ -1,75 +1,105 @@
 @import "tailwindcss";
+@import "./styles/theme.css";
+@import "./styles/forms.css";
+@import "./styles/tables.css";
+@import "./styles/popconfirm.css";
 
 @layer base {
   body {
-    background-color: #FAF8F5;
-    color: #2D2B28;
+    background-color: var(--ui-page);
+    color: var(--ui-text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     min-height: 100vh;
     letter-spacing: -0.01em;
   }
 }
 
-/* Claude Style Warm Neutral Panels */
-.claude-panel {
-  background-color: #FFFFFF;
-  border: 1px solid #E8E4DC;
+/* Shared surfaces and controls. */
+.ui-panel {
+  background-color: var(--ui-surface);
+  border: 1px solid var(--ui-border);
   box-shadow: 0 1px 3px rgba(45, 43, 40, 0.04), 0 1px 2px rgba(45, 43, 40, 0.02);
 }
 
-.claude-card {
-  background-color: #FDFCFB;
-  border: 1px solid #EFECE6;
+.ui-card {
+  background-color: var(--ui-subtle);
+  border: 1px solid var(--ui-divider);
 }
 
-.claude-input {
-  background-color: #FFFFFF;
-  border: 1px solid #DFD9CF;
-  color: #1F1E1D;
-  transition: all 0.15s ease;
+/* Button variants. */
+.ui-button-primary,
+.ui-button-secondary,
+.ui-button-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-space-2);
+  min-height: 32px;
+  padding: 6px 14px;
+  border-radius: var(--ui-radius-control);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  cursor: pointer;
 }
 
-.claude-input:focus {
-  outline: none;
-  border-color: #CC785C;
-  box-shadow: 0 0 0 3px rgba(204, 120, 92, 0.15);
-}
+.ui-button-primary:disabled,
+.ui-button-secondary:disabled,
+.ui-button-danger:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* Primary warm button */
-.btn-claude-primary {
-  background-color: #CC785C;
+.ui-button-primary:focus-visible,
+.ui-button-secondary:focus-visible,
+.ui-button-danger:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+
+.ui-button-danger {
+  background-color: var(--ui-danger);
   color: #FFFFFF;
-  transition: all 0.15s ease;
+  transition: background-color var(--ui-duration), box-shadow var(--ui-duration);
+}
+.ui-button-danger:hover:not(:disabled) { background-color: var(--ui-danger-hover); }
+
+.ui-icon-button-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ui-danger);
+  background-color: transparent;
+  cursor: pointer;
+  transition: color var(--ui-duration), background-color var(--ui-duration);
+}
+.ui-icon-button-danger:hover:not(:disabled) {
+  color: var(--ui-danger-hover);
+  background-color: var(--ui-danger-soft);
+}
+.ui-icon-button-danger:focus-visible { outline: 2px solid var(--ui-danger); outline-offset: 2px; }
+.ui-icon-button-danger:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ui-button-primary {
+  background-color: var(--ui-accent);
+  color: #FFFFFF;
+  transition: background-color var(--ui-duration), border-color var(--ui-duration), color var(--ui-duration), box-shadow var(--ui-duration);
 }
 
-.btn-claude-primary:hover {
-  background-color: #BD6A4F;
+.ui-button-primary:hover {
+  background-color: var(--ui-accent-hover);
 }
 
-.btn-claude-secondary {
-  background-color: #F3EFEA;
-  color: #3D3A36;
-  border: 1px solid #E5DFD5;
-  transition: all 0.15s ease;
+.ui-button-secondary {
+  background-color: var(--ui-subtle);
+  color: var(--ui-secondary);
+  border: 1px solid var(--ui-border);
+  transition: background-color var(--ui-duration), border-color var(--ui-duration), color var(--ui-duration), box-shadow var(--ui-duration);
 }
 
-.btn-claude-secondary:hover {
-  background-color: #EAE4D9;
-  color: #1F1E1D;
+.ui-button-secondary:hover {
+  background-color: var(--ui-hover);
+  color: var(--ui-text);
 }
 
-/* Custom warm scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: #F3EFEA;
-}
-::-webkit-scrollbar-thumb {
-  background: #D5CFC5;
-  border-radius: 9999px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #BDB6AA;
+@media (prefers-reduced-motion: reduce) {
+  .ui-input,
+  .ui-button-primary,
+  .ui-button-secondary,
+  .ui-button-danger,
+  .ui-icon-button-danger { transition: none; }
 }

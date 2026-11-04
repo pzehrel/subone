@@ -450,13 +450,14 @@ apiRouter.put('/sources/:id', async (c) => {
     }
   }
 
-  // Re-fetch if remote subscription URL changed
+  // Re-fetch when the URL or parser changes so cached nodes use the selected format.
   const urlChanged = body.url && body.url.trim() !== oldSource.url;
-  if (urlChanged && oldSource.type !== 'manual' && oldSource.type !== 'custom') {
+  const formatChanged = typeof body.type === 'string' && body.type !== oldSource.type;
+  if ((urlChanged || formatChanged) && oldSource.type !== 'manual' && oldSource.type !== 'custom') {
     const updatedUrl = (body.url ? body.url.trim() : oldSource.url) || '';
     if (updatedUrl.startsWith('http://') || updatedUrl.startsWith('https://')) {
       try {
-        console.log(`[Fetcher] Fetching nodes for updated source [${newName || oldSource.name}]: ${updatedUrl}`);
+        console.log(`[Fetcher] Fetching nodes for updated source [${newName || oldSource.name}]`);
         const tempSource = { ...oldSource, ...body, name: newName || oldSource.name, url: updatedUrl };
         const nodes = await fetchAndParseSource(tempSource, appConfig.countryRules);
         body.nodes = nodes;
