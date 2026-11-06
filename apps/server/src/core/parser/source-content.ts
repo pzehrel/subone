@@ -9,11 +9,12 @@ import { parseRawContent } from './fetcher';
 export interface ParsedSourceContent {
   nodes: ProxyNode[];
   format: SourceFormat;
+  encoding?: 'base64';
   document?: Record<string, unknown>;
   doh?: SourceDohService[];
 }
 export class ContentParseError extends Error {
-  constructor(message: string, public format?: SourceFormat) { super(message); }
+  constructor(message: string, public format?: SourceFormat, public encoding?: 'base64') { super(message); }
 }
 const nodeTypes = new Set(['ss', 'ssr', 'vmess', 'vless', 'trojan', 'hysteria', 'hysteria2', 'tuic', 'wireguard', 'snell', 'anytls', 'naive', 'shadowtls', 'http', 'socks5']);
 function validateNode(node: ProxyNode): void {
@@ -74,8 +75,13 @@ export function parseSourceContent(raw: string, sourceId: string, sourceName: st
     if (/^[A-Za-z0-9+/_-]+={0,2}$/.test(compact)) {
       const decoded = Buffer.from(compact.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
       if (decoded !== content && !decoded.includes('\uFFFD')) {
-        const parsed = parseSourceContent(decoded, sourceId, sourceName, countryPatterns);
-        return { ...parsed, format: parsed.format === 'uri' ? 'base64' : parsed.format };
+        try {
+          const parsed = parseSourceContent(decoded, sourceId, sourceName, countryPatterns);
+          return { ...parsed, format: parsed.format === 'uri' ? 'base64' : parsed.format, encoding: 'base64' };
+        } catch (error) {
+          if (error instanceof ContentParseError) throw new ContentParseError(error.message, error.format, 'base64');
+          throw error;
+        }
       }
     }
     const lines = content.split(/[\r\n]+/).map(line => line.trim()).filter(line => line && !/^(#|;|\/\/)/.test(line));

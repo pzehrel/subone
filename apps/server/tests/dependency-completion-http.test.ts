@@ -99,6 +99,23 @@ test('omitted eligible DoH egress is dependency-only in preview, full, provider 
   assert.deepEqual((await api('/profiles')).data.find((entry: any) => entry.id === profile.id).nodeFilter.selectedNodeIds, [ordinary.id]);
 });
 
+test('dependency traces preserve endpoint ports while redacting credentials and query parameters', async () => {
+  bodies.set('/trace-port', 'proxies:\n - {name: Ordinary trace, type: socks5, server: trace.example, port: 1080}\n - {name: Trace exit, type: socks5, server: 192.0.2.81, port: 1080}\ndns:\n nameserver: ["https://user:secret@127.0.0.1:9443/dns-query?token=private#Trace%20exit"]\n');
+  const added = (await api('/sources', 'POST', { name: 'Trace port', url: upstreamOrigin + '/trace-port' })).data;
+  const profile = await profileFor([added.nodes.find((node: any) => node.server === 'trace.example')]);
+  const tpl = (await api('/templates', 'POST', { name: 'Trace Mihomo', type: 'mihomo', content: JSON.stringify({ dns: { enable: true, 'default-nameserver': ['127.0.0.1'], 'proxy-server-nameserver': ['127.0.0.1'], nameserver: ['127.0.0.1'] }, proxies: [{ name: 'template-direct', type: 'socks5', server: '192.0.2.90', port: 1080 }], 'proxy-groups': [], rules: [] }) })).data;
+  await api(`/profiles/${profile.id}`, 'PUT', { templates: { mihomo: tpl.id } });
+  const result = await preview(profile, 'mihomo', { expandNodes: true });
+  assert.equal(result.success, true, JSON.stringify(result));
+  const exit = result.generation.dependencyNodes.find((node: any) => node.name === 'Trace exit');
+  assert.ok(exit, JSON.stringify(result));
+  assert.ok(exit.reason.includes('https://127.0.0.1:9443/dns-query'), JSON.stringify(exit.reason));
+  assert.doesNotMatch(JSON.stringify(exit), /user:|secret|token|private/);
+  const actual = await fetch(`${origin}/s/${profile.token}/mihomo?expand=true`);
+  assert.equal(actual.status, 200);
+  assert.equal(await actual.text(), result.data);
+});
+
 test('completion reaches a newly required source binding and isolates its required managed group', async () => {
   const egress = await addSource('/second-source', { outbounds: [
     { type: 'socks', tag: 'Second source hop', server: 'second-hop.completion.example', server_port: 1080 },

@@ -11,6 +11,8 @@
   --ui-accent: #CC785C;
   --ui-accent-hover: #BD6A4F;
   --ui-accent-soft: #FAF0EC;
+  --ui-code-background: #181716;
+  --ui-code-text: #D8D2C7;
   --ui-overlay: rgb(0 0 0 / 40%);
   --ui-radius-control: 12px;
   --ui-radius-panel: 16px;
@@ -49,6 +51,11 @@
 }
 
 @layer components {
+  .ui-code-viewer {
+    background: var(--ui-code-background);
+    color: var(--ui-code-text);
+  }
+
   .ui-modal-backdrop {
     position: fixed;
     inset: 0;

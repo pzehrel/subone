@@ -349,7 +349,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
             ) : preview.result && (<>
               <GenerationPreview result={preview.result} clientType={preview.type} />
               {previewUsable && (
-                <pre className={`rounded-xl bg-[#181716] p-4 text-[#D8D2C7] font-mono text-xs leading-relaxed overflow-x-auto selection:bg-ui-accent/30 ${wrapPreview ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>
+                <pre className={`ui-code-viewer rounded-xl p-4 font-mono text-xs leading-relaxed overflow-x-auto selection:bg-ui-accent/30 ${wrapPreview ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>
                   {preview.result.data}
                 </pre>
               )}

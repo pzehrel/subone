@@ -53,7 +53,7 @@ export async function refreshSource(id: string, changes: Partial<SubscriptionSou
     const diagnostic = structuredClone(latest);
     diagnostic.lastUpdateError = message;
     if (error instanceof SourceParseError) {
-      diagnostic.rawSubscription = { content: error.content, fetchedAt: error.fetchedAt, contentType: error.contentType, format: error.format, parseStatus: 'failed', error: message };
+      diagnostic.rawSubscription = { content: error.content, fetchedAt: error.fetchedAt, contentType: error.contentType, format: error.format, encoding: error.encoding, parseStatus: 'failed', error: message };
     }
     try { commitSource(diagnostic); } catch (saveError) {
       throw new SourceUpdateError(saveError instanceof Error ? saveError.message : '保存失败', 500);

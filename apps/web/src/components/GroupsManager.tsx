@@ -10,6 +10,7 @@ import { Select, SelectItem } from './ui/Select';
 import { Table, TableCell, TableHead } from './ui/Table';
 import { Textarea } from './ui/Textarea';
 import { GroupsIcon } from './ui/module-icons';
+import { HelpTooltip } from './HelpTooltip';
 import type { ProxyGroupItem, ProxyNode, SourceIconsConfig, SubscriptionSource } from '../types';
 
 interface GroupsManagerProps {
@@ -231,14 +232,13 @@ export function GroupsManager({ groups, sources = [], nodes = [], sourceIcons, o
             <SelectItem value="select">select · 手动选择</SelectItem><SelectItem value="urltest">url-test · 自动测速</SelectItem><SelectItem value="fallback">fallback · 故障切换</SelectItem><SelectItem value="load-balance">load-balance · 负载均衡</SelectItem><SelectItem value="relay">relay · 链式中继</SelectItem><SelectItem value="direct">direct · 直连</SelectItem><SelectItem value="reject">reject · 拒绝</SelectItem>
           </Select></Field>
         </div>
-        <Field><Label>出站</Label>
+        <Field><div className="flex items-center gap-1"><Label>出站</Label>{form.type === 'relay' && <HelpTooltip label="中继顺序帮助" content="按顺序中继，首项为入口，末项为出口。" />}</div>
           <div className="space-y-3 rounded-xl border border-ui-border p-3">
             <div className="flex flex-wrap gap-1.5 min-h-6">{(form.proxies || []).map((value, index) => <Badge key={value} tone={form.type === 'relay' ? 'info' : 'accent'} className="max-w-full">
               {form.type === 'relay' && <span className="shrink-0 text-[10px]">{index + 1}.</span>}<span className="truncate max-w-56" title={outbound(value).label}>{outbound(value).label}{!outbound(value).available && ' · 不可用'}</span>
               {form.type === 'relay' && <><button type="button" className="cursor-pointer disabled:opacity-30" aria-label={`提前 ${outbound(value).label}`} disabled={index === 0} onClick={() => moveProxy(index, -1)}><ArrowLeft size={12} /></button><button type="button" className="cursor-pointer disabled:opacity-30" aria-label={`延后 ${outbound(value).label}`} disabled={index === (form.proxies || []).length - 1} onClick={() => moveProxy(index, 1)}><ArrowRight size={12} /></button></>}
               <button type="button" className="cursor-pointer" aria-label={`移除出站 ${outbound(value).label}`} onClick={() => removeProxy(value)}><X size={12} /></button>
             </Badge>)}{!form.proxies?.length && <span className="text-xs text-ui-muted">未选择出站</span>}</div>
-            {form.type === 'relay' && <p className="text-[11px] text-ui-secondary">按顺序中继，首项为入口，末项为出口。</p>}
             <div className="flex flex-wrap gap-1.5 border-t border-ui-divider pt-3">{candidates.map(candidate => {
               const selected = (form.proxies || []).some(value => outboundKey(value) === candidate.value);
               return <button type="button" key={candidate.value} aria-pressed={selected} aria-label={`出站 ${candidate.label}`} onClick={() => toggleProxy(candidate.value)} className={`flex items-center gap-1 max-w-full rounded-lg border px-2 py-1 text-[11px] cursor-pointer ${selected ? 'border-ui-accent bg-ui-accent/10 text-ui-accent' : 'border-ui-border text-ui-secondary hover:border-ui-accent/60'}`}><span className="shrink-0">{selected ? <Check size={12} /> : <Plus size={12} />}</span><span className="truncate" title={candidate.label}>{candidate.label}</span></button>;

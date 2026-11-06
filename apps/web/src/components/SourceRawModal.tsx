@@ -47,34 +47,36 @@ function SourceRawContent({ source }: { source: SubscriptionSource }) {
     const url = URL.createObjectURL(new Blob([raw.content], { type: raw.contentType || 'text/plain;charset=utf-8' }));
     const anchor = document.createElement('a');
     anchor.href = url;
-    const extension = raw.format === 'mihomo' ? 'yaml' : raw.format === 'singbox' ? 'json' : raw.format === 'quantumultx' ? 'conf' : 'txt';
+    const extension = raw.encoding === 'base64' ? 'txt' : raw.format === 'mihomo' ? 'yaml' : raw.format === 'singbox' ? 'json' : raw.format === 'quantumultx' ? 'conf' : 'txt';
     anchor.download = `${source.name.replace(/[\\/:*?"<>|]/g, '_')}-原文.${extension}`;
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   return (
-    <ModalBody className="space-y-4">
-        {loading && <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />读取中</div>}
-        {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
-        {raw && <>
-          <div className="flex items-start justify-between gap-3">
-            <dl className="grid min-w-0 grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs text-slate-500">
+    <>
+      {raw && <div className="ui-modal-toolbar justify-between items-start">
+            <dl className="grid min-w-0 grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs text-ui-secondary">
               <dt>原文取回</dt><dd>{time(raw.fetchedAt)}</dd>
               <dt>生效结果</dt><dd>{time(raw.lastSuccessfulUpdate)}</dd>
-              <dt>格式</dt><dd>{raw.format ? formatNames[raw.format] : '未识别'}</dd>
+              <dt>格式</dt><dd>{raw.encoding === 'base64' && raw.format !== 'base64' ? 'Base64 · ' : ''}{raw.format ? formatNames[raw.format] : '未识别'}</dd>
               <dt>Content-Type</dt><dd className="break-all">{raw.contentType || '未提供'}</dd>
             </dl>
             <div className="flex shrink-0 items-center gap-1">
-              <button type="button" className="p-2 rounded-lg hover:bg-slate-100" title={copied ? '已复制' : '复制原文'} aria-label={copied ? '已复制原文' : '复制原文'} onClick={copy}>{copied ? <Check size={16} /> : <Copy size={16} />}</button>
-              <button type="button" className="p-2 rounded-lg hover:bg-slate-100" title="下载原文" aria-label="下载原文" onClick={download}><Download size={16} /></button>
+              <button type="button" className="ui-button-secondary" title={copied ? '已复制' : '复制原文'} aria-label={copied ? '已复制原文' : '复制原文'} onClick={copy}>{copied ? <Check size={16} /> : <Copy size={16} />}</button>
+              <button type="button" className="ui-button-secondary" title="下载原文" aria-label="下载原文" onClick={download}><Download size={16} /></button>
             </div>
-          </div>
+      </div>}
+      <ModalBody>
+        {loading && <div className="flex items-center gap-2 text-sm text-ui-muted"><Loader2 size={16} className="animate-spin" />读取中</div>}
+        {error && <p role="alert" className="text-sm text-ui-danger">{error}</p>}
+        {raw && <>
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={raw.parseStatus === 'success' ? 'success' : 'danger'}>{raw.parseStatus === 'success' ? '解析成功' : '解析失败，沿用上次生效结果'}</Badge>
-            {raw.error && <p className="text-xs text-red-600">{raw.error}</p>}
+            {raw.error && <p className="text-xs text-ui-danger">{raw.error}</p>}
           </div>
-          <pre tabIndex={0} className="max-h-[55vh] overflow-auto whitespace-pre-wrap break-all rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-700">{raw.content}</pre>
+          <pre tabIndex={0} className="overflow-auto whitespace-pre-wrap break-all rounded-xl border border-ui-border bg-ui-subtle p-4 text-xs text-ui-secondary">{raw.content}</pre>
         </>}
-    </ModalBody>
+      </ModalBody>
+    </>
   );
 }

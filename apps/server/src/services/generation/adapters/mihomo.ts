@@ -95,7 +95,12 @@ export function adaptMihomoDns(doc: Document, plan: GenerationPlan): void {
         const original = plan.inventory.nodes.find(entry => entry.node.id === node.id)?.node || node;
         const label = original.raw && typeof original.raw === 'object' ? original.raw.detour ?? original.raw['dialer-proxy'] : undefined;
         if (typeof label !== 'string') continue;
-        const route = materialize(sourceReference(source, label, plan));
+        let route: string;
+        try { route = materialize(sourceReference(source, label, plan)); }
+        catch (error) {
+          if (!(error instanceof ConnectionIssue) || error.severity === 'error') throw error;
+          throw new ConnectionIssue('mihomo-node-chain-unapplied', `节点 ${node.name} 的连接出站无法完整映射到 Mihomo：${label}`);
+        }
         if (!(doc.proxies || []).some((value: Document) => value.name === node.name)) doc.proxies.push(nodeToMihomoProxy(node));
         doc.proxies.find((value: Document) => value.name === node.name)['dialer-proxy'] = route;
       }
@@ -143,6 +148,7 @@ export function adaptMihomoDns(doc: Document, plan: GenerationPlan): void {
 }
 
 function isolateMihomoCandidates(doc: Document, plan: GenerationPlan): void {
+  if (plan.target.mode === 'nodes') return;
   const dependencyGroups = new Set(plan.dependencyGroupIds);
   const ordinaryNames = new Set(plan.ordinaryNodes.map(node => node.name));
   const ordinaryGroups = new Set(plan.groups.filter(group => !dependencyGroups.has(group.id)).map(group => group.name));
@@ -157,9 +163,10 @@ function isolateMihomoCandidates(doc: Document, plan: GenerationPlan): void {
     doc['proxy-groups'].push({ name: 'GLOBAL', type: 'select', proxies });
   }
   const dynamic = (template['proxy-groups'] || []).filter((group: Document) => group['include-all'] || group['include-all-proxies']);
-  if (dynamic.length) for (const binding of plan.bindings) {
-    if (binding.status === 'applied') binding.status = 'degraded';
-    binding.diagnostics.push({ code: 'source-doh-candidate-isolation-unapplied', severity: 'warning', sourceId: binding.sourceId, message: `模板动态策略组会包含必要依赖定义：${dynamic.map((group: Document) => group.name).join('、')}` });
+  if (dynamic.length && plan.dependencyNodes.length) {
+    const generation = generationMetadata(plan);
+    generation.diagnostics.push({ code: 'mihomo-candidate-isolation-unapplied', severity: 'error', message: `模板动态策略组无法隔离必要依赖节点，请使用明确的普通候选：${dynamic.map((group: Document) => group.name).join('、')}` });
+    throw new GenerationError('Mihomo 普通候选需修复', generation);
   }
 }
 
@@ -244,9 +251,15 @@ export function validateMihomoRuntime(doc: Document, plan: GenerationPlan): void
         if (matches.length !== 1) return fail('source-doh-dependency-missing', matches.length ? '必要出站名称不唯一' : '缺少必要连接依赖', path);
         const proxy = matches[0];
         if (typeof proxy['dialer-proxy'] === 'string') visit({ kind: 'outbound', id: proxy['dialer-proxy'], label: proxy['dialer-proxy'], reason: 'dialer-proxy' }, path);
-        if (Array.isArray(proxy.proxies) || Array.isArray(proxy.use)) {
+        if (Array.isArray(proxy.proxies) || Array.isArray(proxy.use) || proxy['include-all'] || proxy['include-all-proxies'] || proxy['include-all-providers']) {
           const members = [...array(proxy.proxies), ...(plan.groups.find(group => group.name === entry.id)?.proxies || [])];
-          for (const provider of array(proxy.use)) {
+          // Native 1.19.33 appends every static proxy (not groups), and include-all
+          // also replaces use with every provider. Validate those selectable edges.
+          const allProxies = proxy['include-all'] || proxy['include-all-proxies'];
+          const allProviders = proxy['include-all'] || proxy['include-all-providers'];
+          if ((allProxies || allProviders) && (proxy.filter || proxy['exclude-filter'] || proxy['exclude-type'])) return fail('mihomo-dynamic-members-unverified', '原生动态策略组的筛选成员尚不能完整核验，请使用明确成员', path);
+          if (allProxies) members.push(...(doc.proxies || []).map((value: Document) => value.name));
+          for (const provider of allProviders ? Object.keys(doc['proxy-providers'] || {}) : array(proxy.use)) {
             const source = plan.sources.find(source => source.name.trim() === provider);
             if (!source) return fail('source-doh-dependency-missing', `必要策略组含无法确定的 provider ${provider}`, path);
             let candidates = plan.ordinaryNodes.filter(node => node.sourceId === source.id);

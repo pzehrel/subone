@@ -129,7 +129,7 @@ export function renderGeneration(input: GenerationPlan) {
     validateShadowrocketRuntime(output, plan);
   }
   const generation = generationMetadata(plan);
-  if (generation.diagnostics.some(diagnostic => diagnostic.severity === 'error')) throw new GenerationError(plan.target.type === 'shadowrocket' ? 'Shadowrocket 连接引用需修复' : '来源 DoH 绑定需修复', generation);
+  if (generation.diagnostics.some(diagnostic => diagnostic.severity === 'error')) throw new GenerationError('连接依赖需修复', generation);
   return { output, contentType, generation };
 }
 

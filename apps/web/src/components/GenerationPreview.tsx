@@ -42,7 +42,7 @@ export function GenerationPreview({ result, clientType }: { result: GenerationPr
   return (
     <section aria-label="生成信息" className="space-y-3 text-xs text-ui-secondary">
       {!result.success && (
-        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-red-700">
+        <div role="alert" className="rounded-xl border border-ui-danger/20 bg-ui-danger-soft px-3 py-2 text-ui-danger">
           {result.message || '生成失败'}
         </div>
       )}

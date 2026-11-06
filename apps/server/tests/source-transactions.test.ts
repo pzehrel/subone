@@ -151,6 +151,42 @@ test('whole input validation rejects every incomplete target while recognized em
   assert.equal(raw.format, 'mihomo');
 });
 
+test('Base64 structured raw retains its encoding and exact body after success, failed parsing and reload', async () => {
+  const cases = [
+    ['mihomo', valid, 'proxies:\n - {name: Broken, type: ss, port: 443}\n'],
+    ['singbox', '{"outbounds":[{"type":"socks","tag":"Wrapped","server":"wrapped.example","server_port":1080}]}', '{"outbounds":[{"type":"socks","tag":"Broken","server_port":1080}]}'],
+    ['quantumultx', '[server_local]\nshadowsocks=wrapped.example:443, method=aes-128-gcm, password=secret, tag=Wrapped', '[server_local]\nshadowsocks=broken.example:443, tag=Broken'],
+  ];
+  for (const [format, complete, incomplete] of cases) {
+    const path = `/wrapped-${format}`;
+    const encoded = `  ${Buffer.from(complete).toString('base64')}\n`;
+    responses.set(path, { status: 200, body: encoded });
+    const added = await api('/sources', 'POST', { name: `Wrapped ${format}`, url: upstreamOrigin + path });
+    assert.equal(added.success, true, added.message);
+    assert.equal(added.data.detectedFormat, format);
+    const raw = (await api(`/sources/${added.data.id}/raw`)).data;
+    assert.equal(raw.content, encoded);
+    assert.equal(raw.format, format);
+    assert.equal(raw.encoding, 'base64');
+    await stopApp(); await startApp();
+    assert.deepEqual((await api(`/sources/${added.data.id}/raw`)).data, raw);
+
+    const failedBody = `\n${Buffer.from(incomplete).toString('base64')}  `;
+    responses.set(path, { status: 200, body: failedBody });
+    const failed = await api(`/sources/${added.data.id}/refresh`, 'POST', {});
+    assert.equal(failed.status, 422);
+    const failedRaw = (await api(`/sources/${added.data.id}/raw`)).data;
+    assert.equal(failedRaw.content, failedBody);
+    assert.equal(failedRaw.format, format);
+    assert.equal(failedRaw.encoding, 'base64');
+    assert.equal(failedRaw.parseStatus, 'failed');
+    assert.equal(failedRaw.lastSuccessfulUpdate, added.data.lastUpdated);
+    await stopApp(); await startApp();
+    assert.deepEqual((await api(`/sources/${added.data.id}/raw`)).data, failedRaw);
+    assert.deepEqual((await api('/sources')).data.find((source: any) => source.id === added.data.id).nodes, added.data.nodes);
+  }
+});
+
 test('persistence failure reports failure and publishes no source or effective update', async () => {
   body = valid;
   const before = (await api('/sources')).data;

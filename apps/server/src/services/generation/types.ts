@@ -65,7 +65,7 @@ export function generationMetadata(plan: GenerationPlan): GenerationMetadata {
     dependencyNodes: plan.dependencyNodes.map(node => {
       const requirement = plan.dependencyReasons?.find(value => value.nodeId === node.id);
       return { id: node.id, name: node.name, sourceId: node.sourceId, sourceName: plan.inventory.sources.find(source => source.id === node.sourceId)?.name, bindingSourceId: requirement?.bindingSourceId, reason: (requirement?.reason || []).map(label => {
-        try { const url = new URL(label); return `${url.protocol}//${url.hostname}${url.pathname}`; } catch { return label; }
+        try { const url = new URL(label); return `${url.protocol}//${url.host}${url.pathname}`; } catch { return label; }
       }) };
     }),
     bindings: plan.bindings.map(binding => ({ ...binding, services: binding.services.map(({ id, url }) => ({ id, url })) })),

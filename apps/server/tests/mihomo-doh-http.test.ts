@@ -134,6 +134,80 @@ test('final native dependencies include every selectable member and reject direc
   }
 });
 
+test('native include-all members participate in template node-DNS cycle validation', async () => {
+  for (const flag of ['include-all-proxies', 'include-all']) {
+    const source = await add(`/dynamic-cycle-${flag}`, 'dynamic-cycle.example', []);
+    const content = structuredClone(template);
+    content['proxy-groups'].push({ name: 'Dynamic ordinary', type: 'select', [flag]: true, proxies: ['DIRECT'] });
+    const { profile, tpl } = await profileFor([source], content);
+    assert.equal((await preview(profile)).success, true);
+    content.dns['proxy-server-nameserver'] = ['https://127.0.0.1:9443/dns-query#Dynamic ordinary'];
+    await api(`/templates/${tpl.id}`, 'PUT', { content: yaml.dump(content) });
+    const result = await preview(profile);
+    assert.equal(result.status, 422, JSON.stringify(result));
+    const cycle = result.generation.diagnostics.find((entry: any) => entry.code === 'source-doh-cycle');
+    assert.ok(cycle, JSON.stringify(result));
+    assert.match(cycle.message, /Shared.*127.0.0.1.*Dynamic ordinary.*Shared/);
+    const actual = await fetch(`${origin}/s/${profile.token}/mihomo?expand=true`);
+    assert.equal(actual.status, 422);
+    assert.deepEqual((await actual.json() as any).generation, result.generation);
+    assert.equal((await fetch(`${origin}/s/${profile.token}/source/${source.id}?target=mihomo`)).status, 200);
+  }
+});
+
+test('native dynamic groups reject completed dependency candidates instead of warning and leaking them', async () => {
+  for (const flag of ['include-all-proxies', 'include-all']) for (const nodeChain of [false, true]) {
+    const path = `/dynamic-isolation-${flag}-${nodeChain}`;
+    bodies.set(path, JSON.stringify({ outbounds: [
+      { type: 'socks', tag: 'Ordinary dynamic', server: 'dynamic-isolation.example', server_port: 1080, ...(nodeChain ? { detour: 'Required dependency' } : {}) },
+      { type: 'socks', tag: 'Required dependency', server: '192.0.2.99', server_port: 1080 },
+    ], ...(!nodeChain ? { dns: { servers: [{ type: 'https', server: '127.0.0.1', server_port: 9443, detour: 'Required dependency' }] } } : {}) }));
+    const source = (await api('/sources', 'POST', { name: path, url: upstreamOrigin + path })).data;
+    const content = structuredClone(template);
+    content['proxy-groups'].push({ name: 'Dynamic ordinary', type: 'select', [flag]: true, proxies: ['DIRECT'] });
+    const { profile } = await profileFor([source], content, { mode: 'manual', selectedNodeIds: [source.nodes.find((node: any) => node.name === 'Ordinary dynamic').id] });
+    const result = await preview(profile);
+    assert.equal(result.status, 422, JSON.stringify(result));
+    assert.equal(result.generation.nodeCount, 1);
+    assert.equal(result.generation.dependencyNodeCount, 1);
+    assert.ok(result.generation.diagnostics.some((entry: any) => entry.severity === 'error' && entry.code === 'mihomo-candidate-isolation-unapplied' && entry.message.includes('Dynamic ordinary')));
+    const actual = await fetch(`${origin}/s/${profile.token}/mihomo?expand=true`);
+    assert.equal(actual.status, 422);
+    assert.deepEqual((await actual.json() as any).generation, result.generation);
+    if (!nodeChain) {
+      const provider = await fetch(`${origin}/s/${profile.token}/source/${source.id}?target=mihomo`);
+      assert.equal(provider.status, 200);
+      const output = await provider.text();
+      assert.match(output, /Ordinary dynamic/);
+      assert.doesNotMatch(output, /Required dependency/);
+    }
+  }
+});
+
+test('unsupported source node detours fail full and provider generation even without DoH', async () => {
+  const path = '/unsupported-node-detour';
+  bodies.set(path, JSON.stringify({ outbounds: [
+    { type: 'socks', tag: 'Required chain node', server: 'required-chain.example', server_port: 1080, detour: 'Unsupported native strategy' },
+    { type: 'socks', tag: 'Required chain exit', server: '192.0.2.99', server_port: 1080 },
+    { type: 'selector', tag: 'Unsupported native strategy', outbounds: ['Required chain exit'], interrupt_exist_connections: true },
+  ] }));
+  const source = (await api('/sources', 'POST', { name: 'Unsupported chain', url: upstreamOrigin + path })).data;
+  const { profile } = await profileFor([source], template, { mode: 'manual', selectedNodeIds: [source.nodes.find((node: any) => node.name === 'Required chain node').id] });
+  for (const expanded of [false, true]) {
+    const result = await preview(profile, expanded);
+    assert.equal(result.status, 422, JSON.stringify(result));
+    assert.ok(result.generation.diagnostics.some((entry: any) => entry.severity === 'error' && entry.code === 'mihomo-node-chain-unapplied' && /Required chain node/.test(entry.message)));
+    assert.doesNotMatch(result.message, /DoH/);
+    const actual = await fetch(`${origin}/s/${profile.token}/mihomo${expanded ? '?expand=true' : ''}`);
+    assert.equal(actual.status, 422);
+    assert.deepEqual((await actual.json() as any).generation, result.generation);
+  }
+  const provider = await fetch(`${origin}/s/${profile.token}/source/${source.id}?target=mihomo`);
+  assert.equal(provider.status, 422);
+  const failure = await provider.json() as any;
+  assert.ok(failure.generation.diagnostics.some((entry: any) => entry.code === 'mihomo-node-chain-unapplied' && entry.severity === 'error'));
+});
+
 test('fragment parsing follows native decoding, last bare token and exact case without interface fallback', async () => {
   const source = await add('/fragment-native', 'node.fragment.example', ['https://dns.fragment.example/dns-query#Unknown%26DIRECT']);
   const { profile } = await profileFor([source]);

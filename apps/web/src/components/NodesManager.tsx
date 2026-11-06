@@ -113,7 +113,7 @@ export function NodesManager({ sources, focusSourceId, onUpdateNode, onRefreshSo
         tabIndex={-1}
         className={`scroll-mt-20 rounded-2xl border bg-ui-surface overflow-hidden shadow-2xs transition-all focus:outline-none focus:ring-2 focus:ring-ui-accent/30 ${isExpanded ? 'border-ui-accent/60' : 'border-ui-border hover:border-ui-accent/40'} ${source.enabled === false ? 'opacity-65' : ''}`}
       >
-        <div className={`p-4 flex items-start justify-between gap-3 ${isExpanded ? 'bg-[#FCFAF7]' : ''}`}>
+        <div className={`p-4 flex items-start justify-between gap-3 ${isExpanded ? 'bg-ui-subtle' : ''}`}>
           <button className="flex items-center gap-3 flex-1 min-w-0 text-left cursor-pointer" aria-label={`${isExpanded ? '收起' : '展开'} ${source.name}`} aria-expanded={isExpanded} aria-controls={`source-nodes-${source.id}`} onClick={() => toggleGroup(source.id)}>
             <ChevronDown size={16} className={`shrink-0 text-ui-muted transition-transform ${isExpanded ? 'rotate-180 text-ui-accent' : ''}`} />
             <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">

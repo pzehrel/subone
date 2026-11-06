@@ -1,7 +1,7 @@
+import { managedReferenceTraversal } from '../managed-references';
 import { generateQuantumultXConfig, nodeToQuantumultXProxy, isSupportedByQuantumultX } from '../../../core/generators/quantumultx-generator';
 import { quantumultXReferences, quantumultXOwnedNames, quantumultXEntries, quantumultXDefinitionNames } from '../../../core/quantumultx-config';
-import { resolveGroupNodes } from '../../../core/generators/group-nodes';
-import { registerRuntimeDependencyCollector, type RuntimeDependencyCollection } from '../runtime-dependencies';
+import { registerRuntimeDependencyCollector } from '../runtime-dependencies';
 import { GenerationError, generationMetadata, type GenerationPlan, type GenerationDiagnostic } from '../types';
 
 /** Generic/domain DNS rules do not establish a resolver for proxy server hostnames. */
@@ -19,7 +19,11 @@ export function renderQuantumultX(plan: GenerationPlan): string {
     const template = { quantumultxLines: plan.templateContent.split('\n') };
     const dynamic = quantumultXEntries(template).filter(entry => entry.section === 'policy' && entry.parts.some(part => /server-tag-regex\s*=/.test(part))).map(entry => entry.parts[0].slice(entry.parts[0].indexOf('=') + 1).trim());
     if (quantumultXReferences(template).some(reference => /^proxy$/i.test(reference.literal))) dynamic.push('proxy');
-    if (dynamic.length) for (const binding of plan.bindings) binding.diagnostics.push({ code: 'quantumultx-candidate-isolation-unverified', severity: 'warning', sourceId: binding.sourceId, message: `模板动态策略的必要依赖候选隔离未证实：${[...new Set(dynamic)].join('、')}` });
+    if (dynamic.length) {
+      const generation = generationMetadata(plan);
+      generation.diagnostics.push({ code: 'quantumultx-candidate-isolation-unverified', severity: 'error', message: `模板动态策略无法确认隔离必要依赖节点，请使用明确的普通候选：${[...new Set(dynamic)].join('、')}` });
+      throw new GenerationError('Quantumult X 普通候选需修复', generation);
+    }
   }
   const output = generateQuantumultXConfig(plan.templateContent, [...plan.ordinaryNodes, ...plan.dependencyNodes], plan.groups, plan.rules, plan.sources,
     { expandNodes: plan.expandNodes, baseUrl: plan.baseUrl, subToken: plan.subToken, ordinaryNodeIds: new Set(plan.ordinaryNodes.map(node => node.id)), dependencyGroupIds: new Set(plan.dependencyGroupIds), runtimeSources: plan.inventory.sources });
@@ -91,30 +95,7 @@ export function renderQuantumultXSource(input: GenerationPlan, sourceId: string)
 
 /** Complete only retained native/managed outbound references, never unapplied source DNS. */
 registerRuntimeDependencyCollector('quantumultx', plan => {
-  const result: RuntimeDependencyCollection = { nodes: [], groups: [] };
-  const included = new Set([...plan.ordinaryNodes, ...plan.dependencyNodes].map(node => node.id));
-  const visited = new Set<string>();
-  const owner = plan.bindings[0]?.sourceId || '';
-  const visit = (target: string, reason: string[]): void => {
-    if (!/^(node|group|template|builtin|unresolved|ambiguous):/.test(target)) {
-      const groups = plan.inventory.groups.filter(group => group.name === target);
-      const nodes = plan.inventory.nodes.filter(entry => entry.node.name === target);
-      if (groups.length + nodes.length === 1) target = groups.length ? `group:${groups[0].id}` : `node:${nodes[0].node.id}`;
-    }
-    if (visited.has(target)) return; visited.add(target);
-    if (target.startsWith('node:')) {
-      const id = target.slice(5), entry = plan.inventory.nodes.find(entry => entry.node.id === id);
-      result.nodes.push({ nodeId: id, sourceId: entry?.sourceId, state: !entry ? 'missing' : entry.state !== 'enabled' ? entry.state : included.has(id) ? 'included' : 'omitted', bindingSourceId: owner, reason });
-    } else if (target.startsWith('group:')) {
-      const id = target.slice(6), group = plan.inventory.groups.find(group => group.id === id);
-      result.groups.push({ groupId: id, bindingSourceId: owner, reason });
-      if (!group || ['direct', 'reject'].includes(group.type)) return;
-      for (const member of group.proxies || []) visit(member, [...reason, group.name]);
-      if ((group.sources ?? group.use)?.length || group.filter || group.includeAll || !group.proxies?.length) {
-        for (const node of resolveGroupNodes(group, plan.ordinaryNodes, plan.inventory.sources)) visit(`node:${node.id}`, [...reason, group.name]);
-      }
-    }
-  };
+  const { result, visit } = managedReferenceTraversal(plan, { resolveNames: true, expandGroup: group => !!((group.sources ?? group.use)?.length || group.filter || group.includeAll || !group.proxies?.length) });
   for (const reference of plan.template?.connectionReferences || []) {
     let final = false;
     try { const slot = JSON.parse(JSON.parse(reference.slot)[0]); final = slot[1] === 'filter_local' && slot[2] === 'final'; } catch { /* Another client's slot is not used here. */ }

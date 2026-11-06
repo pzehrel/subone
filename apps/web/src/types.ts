@@ -32,6 +32,7 @@ export interface SourceRawRecord {
   fetchedAt: string;
   contentType?: string;
   format?: SourceFormat;
+  encoding?: 'base64';
   parseStatus: 'success' | 'failed';
   error?: string;
   lastSuccessfulUpdate?: string;

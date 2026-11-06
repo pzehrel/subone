@@ -1,6 +1,6 @@
-import { resolveGroupNodes } from '../../../core/generators/group-nodes';
+import { managedReferenceTraversal } from '../managed-references';
 import { splitLoonParameters } from '../../node-references';
-import { registerRuntimeDependencyCollector, type RuntimeDependencyCollection } from '../runtime-dependencies';
+import { registerRuntimeDependencyCollector } from '../runtime-dependencies';
 import { nodeToUri } from '../../../core/generators/shadowrocket-generator';
 import type { ProxyNode } from '../../../types';
 import { GenerationError, generationMetadata, type GenerationDiagnostic, type GenerationPlan } from '../types';
@@ -41,26 +41,7 @@ export function diagnosePureNodes(plan: GenerationPlan): void {
 
 /** Complete only ordinary native template/group references; source DNS is deliberately unused. */
 registerRuntimeDependencyCollector('shadowrocket', plan => {
-  const result: RuntimeDependencyCollection = { nodes: [], groups: [] };
-  const included = new Set([...plan.ordinaryNodes, ...plan.dependencyNodes].map(node => node.id));
-  const visited = new Set<string>();
-  const owner = plan.bindings[0]?.sourceId || '';
-  const visit = (target: string, reason: string[]) => {
-    if (!target.startsWith('node:') && !target.startsWith('group:')) return;
-    if (visited.has(target)) return; visited.add(target);
-    if (target.startsWith('node:')) {
-      const id = target.slice(5); const entry = plan.inventory.nodes.find(entry => entry.node.id === id);
-      result.nodes.push({ nodeId: id, sourceId: entry?.sourceId, state: !entry ? 'missing' : entry.state !== 'enabled' ? entry.state : included.has(id) ? 'included' : 'omitted', bindingSourceId: owner, reason });
-    } else {
-      const id = target.slice(6); const group = plan.inventory.groups.find(group => group.id === id);
-      result.groups.push({ groupId: id, bindingSourceId: owner, reason });
-      if (!group || ['direct', 'reject'].includes(group.type)) return;
-      for (const member of group.proxies || []) visit(member, [...reason, group.name]);
-      if (group.type !== 'relay' && ((group.sources ?? group.use)?.length || group.filter || !group.proxies?.length)) {
-        for (const node of resolveGroupNodes(group, plan.ordinaryNodes, plan.inventory.sources)) visit(`node:${node.id}`, [...reason, group.name]);
-      }
-    }
-  };
+  const { result, visit } = managedReferenceTraversal(plan, { expandGroup: group => group.type !== 'relay' && !!((group.sources ?? group.use)?.length || group.filter || !group.proxies?.length) });
   for (const group of plan.groups) visit(`group:${group.id}`, ['Shadowrocket group', group.name]);
   for (const reference of plan.template?.connectionReferences || []) {
     if (plan.rules.some(rule => rule.enabled && rule.type === 'FINAL') && /final\s*,/i.test(reference.slot)) continue;

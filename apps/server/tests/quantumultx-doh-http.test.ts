@@ -290,13 +290,19 @@ test('ambiguous native outbound definitions reject instead of silently picking a
   assert.ok(result.generation.diagnostics.some((entry: any) => entry.code === 'quantumultx-reference-ambiguous' && /Duplicate native/.test(entry.message)));
 });
 
-test('template-owned dynamic policies retain their definition and explicitly report dependency candidate isolation limits', async () => {
+test('template-owned dynamic policies refuse unverified dependency candidate isolation', async () => {
   const a = await add('/qx-dynamic-ordinary', [], { proxies: [{ name: 'Dynamic ordinary QX', type: 'socks5', server: 'ordinary.dynamic.example', port: 1080 }] });
   const b = await add('/qx-dynamic-dependency', [], { proxies: [{ name: 'Dynamic dependency QX', type: 'socks5', server: 'dependency.dynamic.example', port: 1080 }] });
   const content = template.replace('[policy]\n', '[policy]\nstatic = Native dynamic QX, server-tag-regex=.*\nstatic = Native required QX, Dynamic dependency QX\n');
   const { profile } = await profileFor([a], content);
-  const result = await preview(profile, false); assert.equal(result.success, true, JSON.stringify(result));
-  assert.equal(result.generation.dependencyNodeCount, 1); assert.match(result.data, /^static = Native dynamic QX, server-tag-regex=\.\*$/m);
-  assert.ok(result.generation.diagnostics.some((entry: any) => entry.code === 'quantumultx-candidate-isolation-unverified' && /Native dynamic QX/.test(entry.message)));
+  const result = await preview(profile, false); assert.equal(result.status, 422, JSON.stringify(result));
+  assert.equal(result.generation.dependencyNodeCount, 1);
+  assert.ok(result.generation.diagnostics.some((entry: any) => entry.code === 'quantumultx-candidate-isolation-unverified' && entry.severity === 'error' && /Native dynamic QX/.test(entry.message)));
+  const actual = await fetch(`${origin}/s/${profile.token}/quantumultx`);
+  assert.equal(actual.status, 422);
+  assert.deepEqual((await actual.json() as any).generation, result.generation);
+  const provider = await fetch(`${origin}/s/${profile.token}/source/${a.id}?target=quantumultx`);
+  assert.equal(provider.status, 200);
+  assert.match(await provider.text(), /ordinary.dynamic.example/);
   assert.equal((await api('/sources')).data.find((source: any) => source.id === b.id).nodes[0].name, 'Dynamic dependency QX');
 });
