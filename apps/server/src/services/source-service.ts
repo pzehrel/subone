@@ -3,6 +3,7 @@ import { fetchAndParseSource, SourceParseError } from '../core/parser/fetcher';
 import { cleanSourceOrGroupName } from '../core/generators/common';
 import { saveConfig } from '../storage/db';
 import type { AppConfig, SubscriptionSource } from '../types';
+import { removeNodeReferences } from './node-references';
 import { prepareSourceNodes } from './node-identity';
 import { collectNodesFromSources } from './profile-service';
 
@@ -25,6 +26,9 @@ export function commitSource(candidate: SubscriptionSource): void {
       }
     }
   }
+  const currentIds = new Set([...(candidate.nodes || []), ...(candidate.infoNodes || [])].map(node => node.id));
+  const removedIds = new Set([...(config.sources[index].nodes || []), ...(config.sources[index].infoNodes || [])].map(node => node.id).filter(id => !currentIds.has(id)));
+  removeNodeReferences(config, removedIds);
   config.sources[index] = candidate;
   commitConfig(config);
 }

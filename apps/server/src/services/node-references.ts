@@ -1,6 +1,7 @@
 import type { AppConfig, ClientType, ProxyGroupItem, ProxyNode, SubscriptionSource } from '../types';
 
 export const nodeReference = (id: string): string => `node:${id}`;
+export const requiresExpandedNodes = (groups: ProxyGroupItem[]): boolean => groups.some(group => group.proxies?.some(value => value.startsWith('node:')));
 export const nodeReferenceId = (value: string): string | undefined => value.startsWith('node:') ? value.slice(5) : undefined;
 
 /** Resolve labels only at an explicit write boundary; unavailable stable refs remain editable. */
@@ -11,7 +12,8 @@ export function normalizeGroupReferences(group: ProxyGroupItem, config: AppConfi
     if (nodeReferenceId(value)) return value;
     const nodeMatches = nodes.filter(node => node.name === value || node.id === value);
     const groupMatches = config.proxyGroups.filter(candidate => candidate.name === value);
-    if (nodeMatches.length + groupMatches.length > 1) throw new Error(`出站名称不唯一：${value}`);
+    const builtinCollision = nodeMatches.length > 0 && /^(direct|reject|block|pass|global|reject-drop)$/i.test(value) ? 1 : 0;
+    if (nodeMatches.length + groupMatches.length + builtinCollision > 1) throw new Error(`出站名称不唯一：${value}`);
     return nodeMatches.length === 1 ? nodeReference(nodeMatches[0].id) : value;
   });
   const mounts = group.sources ?? group.use;
@@ -68,8 +70,15 @@ export function resolveOutputReferences(nodes: ProxyNode[], groups: ProxyGroupIt
 
 /** Removed owned nodes never retarget a stale selection to another source's lookalike. */
 export function removeNodeReferences(config: AppConfig, removedIds: Set<string>): void {
-  for (const group of config.proxyGroups) group.proxies = group.proxies?.filter(value => !removedIds.has(nodeReferenceId(value) || ''));
+  for (const group of config.proxyGroups) {
+    const previous = group.proxies;
+    group.proxies = previous?.filter(value => !removedIds.has(nodeReferenceId(value) || ''));
+    if (previous?.length && group.proxies?.length === 0) group.proxies = ['DIRECT'];
+  }
   for (const profile of config.profiles || []) {
-    if (profile.nodeFilter?.selectedNodeIds) profile.nodeFilter.selectedNodeIds = profile.nodeFilter.selectedNodeIds.filter(id => !removedIds.has(id));
+    if (profile.nodeFilter?.selectedNodeIds?.length) {
+      profile.nodeFilter.selectedNodeIds = profile.nodeFilter.selectedNodeIds.filter(id => !removedIds.has(id));
+      if (!profile.nodeFilter.selectedNodeIds.length) profile.nodeFilter.mode = 'manual';
+    }
   }
 }

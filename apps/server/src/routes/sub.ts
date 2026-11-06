@@ -10,7 +10,7 @@ import { generateLoonConfig, nodeToLoonProxy } from '../core/generators/loon-gen
 import { generateQuantumultXConfig, nodeToQuantumultXProxy } from '../core/generators/quantumultx-generator';
 import { generateEgernConfig, nodeToEgernProxy } from '../core/generators/egern-generator';
 import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../core/generators/shadowrocket-generator';
-import { resolveOutputReferences } from '../services/node-references';
+import { resolveOutputReferences, requiresExpandedNodes } from '../services/node-references';
 import { UnsupportedProxyGroupError } from '../core/generators/errors';
 import { formatSubscriptionUserinfo, parseSubscriptionUserinfo } from '../core/parser/subscription-info';
 import { aggregateSubscriptionInfo } from '../../../../shared/subscription-info';
@@ -74,13 +74,14 @@ async function handlePrivateSubRequest(c: Context, forcedType?: ClientType) {
     let groups = getEffectiveGroupsForProfile(profile, nodes);
     const rules = getEffectiveRulesForProfile(profile);
     let sources = getEffectiveSourcesForProfile(profile, nodes);
+    const explicitNodeReferences = requiresExpandedNodes(groups);
     ({ nodes, groups, sources } = resolveOutputReferences(nodes, groups, sources, detectedType));
     const baseUrl = getBaseUrl(c.req);
     const userinfo = formatSubscriptionUserinfo(aggregateSubscriptionInfo(sources.map(source => source.subscriptionInfo)));
     if (userinfo) c.header('subscription-userinfo', userinfo);
 
     if (detectedType === 'mihomo') {
-      const expand = c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
+      const expand = explicitNodeReferences || c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
       const output = generateMihomoConfig(templateContent, nodes, groups, rules, sources, {
         expandNodes: expand,
         baseUrl,
@@ -97,7 +98,7 @@ async function handlePrivateSubRequest(c: Context, forcedType?: ClientType) {
     }
 
     if (detectedType === 'loon') {
-      const expand = c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
+      const expand = explicitNodeReferences || c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
       const output = generateLoonConfig(templateContent, nodes, groups, rules, sources, {
         expandNodes: expand,
         baseUrl,
@@ -108,7 +109,7 @@ async function handlePrivateSubRequest(c: Context, forcedType?: ClientType) {
     }
 
     if (detectedType === 'quantumultx') {
-      const expand = c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
+      const expand = explicitNodeReferences || c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
       const output = generateQuantumultXConfig(templateContent, nodes, groups, rules, sources, {
         expandNodes: expand,
         baseUrl,
@@ -119,7 +120,7 @@ async function handlePrivateSubRequest(c: Context, forcedType?: ClientType) {
     }
 
     if (detectedType === 'egern') {
-      const expand = c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
+      const expand = explicitNodeReferences || c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
       const output = generateEgernConfig(templateContent, nodes, groups, rules, sources, {
         expandNodes: expand,
         baseUrl,
@@ -182,7 +183,8 @@ async function handleSourceSubRequest(c: Context, forcedTarget?: ClientType) {
   }
 
   try {
-    let sourceNodes: ProxyNode[] = (await getEffectiveNodesForProfile(profile)).filter(node => node.sourceId === matchedSource.id);
+    const profileNodes = await getEffectiveNodesForProfile(profile);
+    let sourceNodes: ProxyNode[] = [];
     const userinfo = Object.entries(parseSubscriptionUserinfo(matchedSource.subscriptionUserinfo))
       .map(([key, value]) => `${key}=${value}`).join('; ');
     if (userinfo) c.header('subscription-userinfo', userinfo);
@@ -194,7 +196,9 @@ async function handleSourceSubRequest(c: Context, forcedTarget?: ClientType) {
     const userAgent = c.req.header('user-agent');
     const detectedType = forcedTarget || detectClientType(userAgent, queryTarget, 'loon');
 
-    sourceNodes = resolveOutputReferences(sourceNodes, [], [matchedSource], detectedType).nodes;
+    const profileGroups = getEffectiveGroupsForProfile(profile, profileNodes);
+    const profileSources = getEffectiveSourcesForProfile(profile, profileNodes);
+    sourceNodes = resolveOutputReferences(profileNodes, profileGroups, profileSources, detectedType).nodes.filter(node => node.sourceId === matchedSource.id);
 
     if (detectedType === 'loon') {
       const proxyLines = sourceNodes.map(nodeToLoonProxy);

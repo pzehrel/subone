@@ -80,6 +80,7 @@ export async function getEffectiveNodesForProfile(profile: SubscriptionProfile):
   const allNodes = await getEffectiveNodes();
   const filter = profile.nodeFilter || { mode: 'all' };
 
+  if (filter.mode === 'manual' && (!filter.selectedNodeIds || filter.selectedNodeIds.length === 0)) return [];
   let filtered: ProxyNode[] = [];
 
   // 1. Group / Source selection (Primary mode)

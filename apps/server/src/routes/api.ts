@@ -43,7 +43,7 @@ import { generateEgernConfig, nodeToEgernProxy } from '../core/generators/egern-
 import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../core/generators/shadowrocket-generator';
 import { detectClientType, ClientType } from '../core/parser/ua-detector';
 import { applyExtractionRules } from '../core/filter/extractor';
-import { normalizeGroupReferences, resolveOutputReferences, removeNodeReferences } from '../services/node-references';
+import { normalizeGroupReferences, resolveOutputReferences, removeNodeReferences, requiresExpandedNodes } from '../services/node-references';
 import { prepareSourceNodes } from '../services/node-identity';
 import { commitConfig, commitSource, refreshSource, SourceUpdateError } from '../services/source-service';
 import { UnsupportedProxyGroupError } from '../core/generators/errors';
@@ -178,43 +178,27 @@ apiRouter.put('/sources/:id', async (c) => {
 });
 
 apiRouter.delete('/sources/:id', (c) => {
-  if (c.req.param('id') === 'custom') {
-    return c.json({ success: false, message: '默认独立节点组不能删除，可清空组内节点' }, 400);
+  const candidate = structuredClone(appConfig);
+  const source = candidate.sources.find(source => source.id === c.req.param('id'));
+  if (!source) return c.json({ success: false, message: 'Source not found' }, 404);
+  const removed = new Set([...(source.nodes || []), ...(source.infoNodes || [])].map(node => node.id));
+  candidate.sources = candidate.sources.filter(item => item.id !== source.id);
+  removeNodeReferences(candidate, removed);
+  candidate.proxyGroups = candidate.proxyGroups.filter(group => group.id !== `grp-${source.id}`);
+  for (const group of candidate.proxyGroups) {
+    const mounts = group.sources ?? group.use;
+    if (!mounts) continue;
+    const kept = mounts.filter(id => id !== source.id);
+    group.sources = kept;
+    group.use = [...kept];
+    if (mounts.length && !kept.length && !group.proxies?.length) group.proxies = ['DIRECT'];
   }
-  const deletedSource = appConfig.sources.find(s => s.id === c.req.param('id'));
-  appConfig.sources = appConfig.sources.filter(s => s.id !== c.req.param('id'));
-
-  if (deletedSource) {
-    const sClean = cleanSourceOrGroupName(deletedSource.name).toLowerCase();
-    const sId = (deletedSource.id || '').trim().toLowerCase();
-    const sRaw = (deletedSource.name || '').trim().toLowerCase();
-
-    const matchesSource = (target: string) => {
-      if (!target) return false;
-      const t = target.trim().toLowerCase();
-      const tClean = cleanSourceOrGroupName(target).toLowerCase();
-      return t === sId || t === sRaw || tClean === sClean || tClean === sId;
-    };
-
-    appConfig.proxyGroups = (appConfig.proxyGroups || []).filter(g => 
-      g.id !== `grp-src-${deletedSource.id}` && !matchesSource(g.name)
-    );
-    appConfig.proxyGroups.forEach(grp => {
-      if (grp.use) grp.use = grp.use.filter(u => !matchesSource(u));
-      if (grp.sources) grp.sources = grp.sources.filter(s => !matchesSource(s));
-      if (grp.proxies) grp.proxies = grp.proxies.filter(p => !matchesSource(p));
-    });
-
-    // Clean up sourceIds references in profiles
-    (appConfig.profiles || []).forEach(p => {
-      if (p.nodeFilter?.sourceIds) {
-        p.nodeFilter.sourceIds = p.nodeFilter.sourceIds.filter(id => id !== c.req.param('id') && !matchesSource(id));
-      }
-    });
+  for (const profile of candidate.profiles || []) {
+    if (!profile.nodeFilter?.sourceIds?.includes(source.id)) continue;
+    profile.nodeFilter.sourceIds = profile.nodeFilter.sourceIds.filter(id => id !== source.id);
+    if (!profile.nodeFilter.sourceIds.length) { profile.nodeFilter.mode = 'manual'; profile.nodeFilter.selectedNodeIds = []; }
   }
-
-  saveConfig(appConfig);
-  setGlobalNodesCache(collectNodesFromSources(appConfig));
+  try { commitConfig(candidate); } catch (error: any) { return c.json({ success: false, message: error.message }, 500); }
   return c.json({ success: true, message: 'Source deleted' });
 });
 
@@ -372,20 +356,16 @@ apiRouter.post('/groups/batch-import', (c) => {
     return c.json({ success: false, message: '未能从粘贴内容中识别到策略组' }, 400);
   }
 
-  if (replaceAll) {
-    appConfig.proxyGroups = parsed;
-  } else {
-    // Merge by unique name
-    const existingNames = new Set(appConfig.proxyGroups.map(g => g.name));
-    parsed.forEach(p => {
-      if (!existingNames.has(p.name)) {
-        appConfig.proxyGroups.push(p);
-      }
-    });
-  }
-
-  saveConfig(appConfig);
-  return c.json({ success: true, count: parsed.length, data: appConfig.proxyGroups });
+  try {
+    const candidate = structuredClone(appConfig);
+    const names = new Set(replaceAll ? [] : candidate.proxyGroups.map(group => group.name));
+    const additions = parsed.filter(group => !names.has(group.name));
+    if (replaceAll) candidate.proxyGroups = additions;
+    else candidate.proxyGroups.push(...additions);
+    candidate.proxyGroups = candidate.proxyGroups.map(group => normalizeGroupReferences(group, candidate));
+    commitConfig(candidate);
+    return c.json({ success: true, count: parsed.length, data: candidate.proxyGroups });
+  } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });
 
 apiRouter.post('/groups/generate-country-presets', (c) => {
@@ -841,11 +821,12 @@ apiRouter.post('/generate/preview', async (c) => {
       ? getEffectiveSourcesForProfile(targetProfile, nodes)
       : appConfig.sources;
 
+    const explicitNodeReferences = requiresExpandedNodes(groups);
     ({ nodes, groups, sources: effectiveSources } = resolveOutputReferences(nodes, groups, effectiveSources, targetType));
     let output = '';
     const baseUrl = getBaseUrl(c.req);
     const subToken = targetProfile?.token || 'preview-token';
-    const expand = Boolean(body?.expandNodes || c.req.query('expand') === 'true' || c.req.query('expand') === '1');
+    const expand = explicitNodeReferences || Boolean(body?.expandNodes || c.req.query('expand') === 'true' || c.req.query('expand') === '1');
 
     if (targetType === 'mihomo') {
       output = generateMihomoConfig(templateContent, nodes, groups, rules, effectiveSources, {
