@@ -167,9 +167,9 @@ export function collectRuntimeDependencies(plan: GenerationPlan): RuntimeDepende
       if (source) outbound(source, sourceReference(source, value.detour), owner, reason);
       else templateOutbound(value.detour, owner, reason);
     }
-    if (needsHostnameLookup(value.server)) {
+    if (needsHostnameLookup(value.server) || !source && resolverTag(value.domain_resolver)) {
       const document = source?.parsedConfig || template;
-      const tag = resolverTag(value.domain_resolver ?? (document.route as Document | undefined)?.default_domain_resolver);
+      const tag = resolverTag(value.domain_resolver ?? (needsHostnameLookup(value.server) ? (document.route as Document | undefined)?.default_domain_resolver : undefined));
       resolver(source, tag, owner, reason);
     }
   };
