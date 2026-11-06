@@ -187,7 +187,7 @@ test('Mihomo DNS egress identity survives insertion of an unrelated resolver aft
   const response = await fetch(`${origin}/s/${profile.token}/mihomo?expand=true`);
   assert.equal(response.status, 200);
   const emitted = yaml.load(await response.text()) as any;
-  assert.deepEqual(emitted.dns.nameserver, ['https://unrelated.identity.example/query#DIRECT', 'https://mihomo.identity.example/query#Mihomo renamed exit']);
+  assert.deepEqual(emitted.dns.nameserver, ['https://unrelated.identity.example/query#DIRECT', 'https://mihomo.identity.example/query#Mihomo%20renamed%20exit']);
   assert.equal((await api('/templates')).data.find((entry: any) => entry.id === tpl.id).content, content);
 });
 

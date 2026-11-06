@@ -182,17 +182,22 @@ test('all six complete outputs share preview and dispatch while unsupported adap
   const egernTemplate = (await api('/templates', 'POST', { name: 'Egern dispatch template', type: 'egern', content: 'dns:\n  bootstrap: [127.0.0.1]\nproxies:\n  - socks5: {name: template-direct, server: 192.0.2.90, port: 1080}\npolicy_groups: []\nrules: []\n' })).data;
   await api(`/profiles/${profile.id}`, 'PUT', { templates: { ...profile.templates, egern: egernTemplate.id } });
   for (const target of ['singbox', 'mihomo', 'loon', 'quantumultx', 'egern', 'shadowrocket']) {
+    if (target === 'mihomo') {
+      const tpl = (await api('/templates', 'POST', { name: 'Mihomo dispatch', type: 'mihomo', content: JSON.stringify({ dns: { enable: true, nameserver: ['127.0.0.1'], 'default-nameserver': ['127.0.0.1'], 'proxy-server-nameserver': ['127.0.0.1'] } }) })).data;
+      await api(`/profiles/${profile.id}`, 'PUT', { templates: { ...profile.templates, mihomo: tpl.id } });
+    }
     const preview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: target, expandNodes: true });
     assert.equal(preview.success, true, `${target}: ${preview.message}`);
     const actual = await fetch(`${origin}/s/${profile.token}/${target}?expand=true`);
     assert.equal(actual.status, 200, target);
     assert.equal(await actual.text(), preview.data, target);
     assert.equal(preview.generation.bindings.length, 2);
-    if (target !== 'singbox') {
+    if (!['singbox', 'mihomo'].includes(target)) {
       assert.deepEqual(preview.generation.bindings.map((binding: any) => binding.status), ['unapplied', 'unapplied']);
       assert.deepEqual(preview.generation.diagnostics.map((entry: any) => entry.sourceId), [a.id, b.id]);
       assert.ok(preview.generation.diagnostics.every((entry: any) => entry.code === 'source-doh-unsupported'));
     }
+    if (target === 'mihomo') assert.deepEqual(preview.generation.bindings.map((binding: any) => binding.status), ['applied', 'applied']);
   }
 });
 
