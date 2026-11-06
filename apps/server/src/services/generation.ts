@@ -12,8 +12,9 @@ import { adaptSingboxDns } from './generation/adapters/singbox';
 import { renderEgern, renderEgernSource } from './generation/adapters/egern';
 import { adaptLoonDns, validateLoonRuntime } from './generation/adapters/loon';
 import { adaptMihomoDns, renderMihomoSource, validateMihomoRuntime } from './generation/adapters/mihomo';
+import { adaptShadowrocketDns, diagnosePureNodes, validateShadowrocketRuntime } from './generation/adapters/shadowrocket';
 import { retainTemplateDns } from './generation/adapters/unsupported';
-import { GenerationError, generationMetadata, type GenerationOptions, type GenerationPlan } from './generation/types';
+import { GenerationError, generationMetadata, type GenerationMetadata, type GenerationOptions, type GenerationPlan } from './generation/types';
 export { GenerationError } from './generation/types';
 export type { GenerationPlan, GenerationMetadata, GenerationBinding, GenerationDiagnostic } from './generation/types';
 
@@ -24,11 +25,11 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
   const groups = options.profile ? getEffectiveGroupsForProfile(options.profile, ordinary) : config.proxyGroups;
   const sources = options.profile ? getEffectiveSourcesForProfile(options.profile, ordinary) : config.sources;
   const savedTemplate = config.templates.find(template => template.id === (options.templateId || options.profile?.templates?.[options.target])) || config.templates.find(template => template.type === options.target && template.content === options.templateContent);
-  const template = prepareTemplateReferences({ ...(savedTemplate || { id: 'unsaved', name: '', type: options.target }), content: options.templateContent }, config, savedTemplate);
+  const nodeOnly = options.target === 'shadowrocket' && ['base64', 'b64'].includes(options.format || '') || options.outputRole === 'source' && ['shadowrocket', 'singbox'].includes(options.target);
+  const template = nodeOnly ? { id: 'nodes-only', name: '', type: options.target, content: options.templateContent } : prepareTemplateReferences({ ...(savedTemplate || { id: 'unsaved', name: '', type: options.target }), content: options.templateContent }, config, savedTemplate);
   const stableTemplate = (nodes: typeof ordinary, selectedGroups: typeof groups) => resolveTemplateReferences(template, nodes.map(node => ({ ...node, name: nodeReference(node.id) })), selectedGroups.map(group => ({ ...group, name: groupReference(group.id) })));
-  const nodeOnly = options.target === 'shadowrocket' && ['base64', 'b64'].includes(options.format || '');
   const plan: GenerationPlan = {
-    target: { type: options.target, ...(options.target === 'singbox' ? { version: '1.14.4' } : options.target === 'egern' ? { version: '2.21.0' } : options.target === 'mihomo' ? { version: '1.19.33' } : options.target === 'loon' ? { version: '3.5.3' } : {}), mode: nodeOnly ? 'nodes' : 'complete' },
+    target: { type: options.target, ...(options.target === 'singbox' ? { version: '1.14.4' } : options.target === 'egern' ? { version: '2.21.0' } : options.target === 'mihomo' ? { version: '1.19.33' } : options.target === 'loon' ? { version: '3.5.3' } : options.target === 'shadowrocket' ? { version: '2.2.93' } : {}), mode: nodeOnly ? 'nodes' : 'complete' },
     templateContent: stableTemplate(ordinary, groups), template, inventory: createRuntimeInventory(config),
     ordinaryNodes: structuredClone(ordinary), dependencyNodes: [], dependencyGroupIds: [], dependencyReasons: [], groups: structuredClone(groups),
     rules: structuredClone(options.profile ? getEffectiveRulesForProfile(options.profile) : config.rulesList),
@@ -71,7 +72,7 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
     }
     plan.templateContent = stableTemplate([...plan.ordinaryNodes, ...plan.dependencyNodes], plan.groups);
   } while (changed);
-  const resolved = resolveOutputReferences([...plan.ordinaryNodes, ...plan.dependencyNodes], plan.groups, plan.inventory.sources, options.target, templateOutboundNames(template));
+  const resolved = resolveOutputReferences([...plan.ordinaryNodes, ...plan.dependencyNodes], nodeOnly ? [] : plan.groups, plan.inventory.sources, nodeOnly ? 'uri' : options.target, nodeOnly ? [] : templateOutboundNames(template));
   const ordinaryIds = new Set(plan.ordinaryNodes.map(node => node.id));
   plan.ordinaryNodes = resolved.nodes.filter(node => ordinaryIds.has(node.id));
   plan.dependencyNodes = resolved.nodes.filter(node => !ordinaryIds.has(node.id));
@@ -94,6 +95,7 @@ export function renderGeneration(input: GenerationPlan) {
   let output: string;
   let contentType = 'text/plain; charset=utf-8';
   if (plan.target.mode === 'nodes') {
+    diagnosePureNodes(plan);
     output = generateShadowrocketBase64(plan.ordinaryNodes);
   } else if (plan.target.type === 'singbox') {
     const { document, nodeTags } = generateSingboxDocument(templateContent, nodes, groups, rules, sources, new Set(plan.ordinaryNodes.map(node => node.id)), new Set(plan.groups.filter(group => !plan.dependencyGroupIds.includes(group.id)).map(group => group.id)));
@@ -113,21 +115,25 @@ export function renderGeneration(input: GenerationPlan) {
   } else if (plan.target.type === 'loon') {
     output = generateLoonConfig(templateContent, nodes, groups, rules, sources, { ...options, nodeServerDns: adaptLoonDns(plan), runtimeSources: plan.inventory.sources });
     validateLoonRuntime(output, plan);
+  } else if (plan.target.type === 'shadowrocket') {
+    adaptShadowrocketDns(plan);
+    output = generateShadowrocketConfig(templateContent, nodes, groups, rules, sources, { ...options, runtimeSources: plan.inventory.sources });
+    validateShadowrocketRuntime(output, plan);
   } else {
     retainTemplateDns(plan);
     switch (plan.target.type) {
       case 'quantumultx': output = generateQuantumultXConfig(templateContent, nodes, groups, rules, sources, options); break;
-      case 'shadowrocket': output = generateShadowrocketConfig(templateContent, nodes, groups, rules, sources, options); break;
     }
   }
   const generation = generationMetadata(plan);
-  if (generation.diagnostics.some(diagnostic => diagnostic.severity === 'error')) throw new GenerationError('来源 DoH 绑定需修复', generation);
+  if (generation.diagnostics.some(diagnostic => diagnostic.severity === 'error')) throw new GenerationError(plan.target.type === 'shadowrocket' ? 'Shadowrocket 连接引用需修复' : '来源 DoH 绑定需修复', generation);
   return { output, contentType, generation };
 }
 
 /** Allocate against the full profile, then slice. Client adapters can share this provider interface. */
-export function renderSourceGeneration(plan: GenerationPlan, sourceId: string) {
+export function renderSourceGeneration(plan: GenerationPlan, sourceId: string): { output: string; contentType: string; generation?: GenerationMetadata } {
   const nodes = plan.ordinaryNodes.filter(node => node.sourceId === sourceId);
+  if (plan.target.mode === 'nodes') return renderGeneration({ ...plan, ordinaryNodes: nodes, bindings: plan.bindings.filter(binding => binding.sourceId === sourceId) });
   switch (plan.target.type) {
     case 'mihomo': return renderMihomoSource(plan, sourceId);
     case 'loon': {

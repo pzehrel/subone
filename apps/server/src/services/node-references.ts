@@ -36,23 +36,23 @@ export function normalizeGroupReferences(group: ProxyGroupItem, config: AppConfi
 }
 
 /** Allocate client names once, then resolve all stable edges against this exact selected set. */
-export function resolveOutputReferences(nodes: ProxyNode[], groups: ProxyGroupItem[], sources: SubscriptionSource[], client?: ClientType, reservedNames: Iterable<string> = []): { nodes: ProxyNode[]; groups: ProxyGroupItem[]; sources: SubscriptionSource[] } {
+export function resolveOutputReferences(nodes: ProxyNode[], groups: ProxyGroupItem[], sources: SubscriptionSource[], client?: ClientType | 'uri', reservedNames: Iterable<string> = []): { nodes: ProxyNode[]; groups: ProxyGroupItem[]; sources: SubscriptionSource[] } {
   const enabledSources = new Set(sources.filter(source => source.enabled).map(source => source.id));
   const selected = nodes.filter(node => node.enabled !== false && (!node.sourceId || enabledSources.has(node.sourceId)));
-  const used = new Set([...reservedNames, ...['direct', 'reject', 'block', 'pass', 'global', 'reject-drop', 'dns-out', 'compatible'].flatMap(name => [name, name.toUpperCase()])]);
+  const used = new Set([...reservedNames, ...(client === 'uri' ? [] : ['direct', 'reject', 'block', 'pass', 'global', 'reject-drop', 'dns-out', 'compatible'].flatMap(name => [name, name.toUpperCase()]))]);
   const names = new Map<string, string>();
   const groupNames = new Map<string, string>();
   for (const group of [...groups].sort((a, b) => a.id.localeCompare(b.id))) {
     let base = group.name.trim() || 'Group';
-    if (client && !['singbox', 'mihomo', 'egern'].includes(client)) base = base.replace(/[=,\r\n]/g, '_');
+    if (client && !['singbox', 'mihomo', 'egern', 'uri'].includes(client)) base = base.replace(/[=,\r\n]/g, '_');
     let name = base; let suffix = 2;
     while (used.has(name)) name = `${base} (${suffix++})`;
     used.add(name); groupNames.set(group.id, name);
   }
-  used.add('🎯 本地直连');
+  if (client !== 'uri') used.add('🎯 本地直连');
   for (const node of [...selected].sort((a, b) => a.id.localeCompare(b.id))) {
     let base = node.name.trim() || `${node.type.toUpperCase()}-${node.server}`;
-    if (client && !['singbox', 'mihomo', 'egern'].includes(client)) base = base.replace(/[=,\r\n]/g, '_');
+    if (client && !['singbox', 'mihomo', 'egern', 'uri'].includes(client)) base = base.replace(/[=,\r\n]/g, '_');
     let name = base; let suffix = 2;
     while (used.has(name)) name = `${base} (${suffix++})`;
     used.add(name); names.set(node.id, name);
@@ -92,7 +92,7 @@ const stableJson = (value: any): string => JSON.stringify(value, (_key, item) =>
 
 function templateDocument(template: ConfigTemplate): any {
   try {
-    if (template.type === 'loon') return { loonLines: template.content.split('\n') };
+    if (['loon', 'shadowrocket'].includes(template.type)) return { loonLines: template.content.split('\n') };
     if (template.type === 'singbox') return JSON.parse(template.content);
     if (['mihomo', 'egern'].includes(template.type)) return yaml.load(template.content);
   } catch { /* Editing an incomplete template must remain possible. */ }
@@ -124,8 +124,8 @@ export function splitLoonParameters(value: string): string[] {
 
 function ownedOutboundNames(document: any, type: ClientType): Set<string> {
   if (type === 'egern') return new Set([...templateArray(document?.proxies), ...templateArray(document?.policy_groups)].map(entry => entry && typeof entry === 'object' ? (Object.values(entry)[0] as any)?.name : undefined).filter((name): name is string => typeof name === 'string'));
-  if (type === 'loon') return new Set(loonSections(document).flatMap(({ section, line }) => {
-    if (!['proxy', 'proxy group', 'remote proxy', 'remote filter'].includes(section) || /^\s*[#;]/.test(line)) return [];
+  if (['loon', 'shadowrocket'].includes(type)) return new Set(loonSections(document).flatMap(({ section, line }) => {
+    if (!(type === 'shadowrocket' ? ['proxy', 'proxy group'] : ['proxy', 'proxy group', 'remote proxy', 'remote filter']).includes(section) || /^\s*[#;]/.test(line)) return [];
     const match = /^\s*([^=]+?)\s*=/.exec(line); return match ? [match[1]] : [];
   }));
   const entries = type === 'singbox' ? templateArray(document?.outbounds) : [...templateArray(document?.proxies), ...templateArray(document?.['proxy-groups'])];
@@ -145,7 +145,7 @@ function templateSlots(document: any, type: ClientType): TemplateSlot[] {
   };
   const ownerKey = (entry: any, index: number, name: string) => typeof entry?.[name] === 'string' ? entry[name] : `#${index}`;
   if (!document || typeof document !== 'object') return slots;
-  if (type === 'loon') {
+  if (['loon', 'shadowrocket'].includes(type)) {
     for (const { section, line, index } of loonSections(document)) {
       if (!line.trim() || /^\s*[#;\[]/.test(line)) continue;
       const assignment = /^([^=]+?)=(.*)$/.exec(line);
@@ -165,7 +165,7 @@ function templateSlots(document: any, type: ClientType): TemplateSlot[] {
         let target = parts.length - 1;
         while (target > 0 && /^(no-resolve|src)$/i.test(parts[target].trim())) target--;
         if (target > 0) { const identity = [...parts]; identity[target] = '$outbound'; addPart(target, ['rule', identity.join(',')]); }
-      } else if (section === 'remote rule') {
+      } else if (type === 'loon' && section === 'remote rule') {
         const policy = parts.findIndex(part => /^\s*policy\s*=/.test(part));
         if (policy >= 0) addPart(policy, ['remote-rule', parts[0].trim()], 'policy');
         else if (parts.length > 1 && !parts[1].includes('=')) addPart(1, ['remote-rule', parts[0].trim()]);
@@ -282,7 +282,7 @@ export function resolveTemplateReferences(template: ConfigTemplate, nodes: Proxy
     if (name) slot.write(name);
     else if (nodeId || groupId || reference.target.startsWith('unresolved:')) slot.write(reference.target);
   }
-  return template.type === 'loon' ? document.loonLines.join('\n') : template.type === 'singbox' ? JSON.stringify(document) : yaml.dump(document, { lineWidth: -1, noRefs: true });
+  return ['loon', 'shadowrocket'].includes(template.type) ? document.loonLines.join('\n') : template.type === 'singbox' ? JSON.stringify(document) : yaml.dump(document, { lineWidth: -1, noRefs: true });
 }
 
 /** Removed owned nodes never retarget a stale selection to another source's lookalike. */

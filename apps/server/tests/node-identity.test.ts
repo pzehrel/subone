@@ -138,6 +138,16 @@ test('disabled nodes and sources are excluded from every effective, preview, pri
   assert.equal((await api('/nodes')).data.some((n: any) => n.id === stopped.id), false);
   for (const target of ['mihomo', 'singbox', 'loon', 'quantumultx', 'egern', 'shadowrocket']) {
     const preview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: target, expandNodes: true });
+    if (target === 'shadowrocket') {
+      // Full native groups retain disabled explicit members as repair intent; URI providers carry only ordinary entries.
+      assert.equal(preview.status, 422);
+      assert.ok(preview.generation.diagnostics.some((entry: any) => entry.code === 'shadowrocket-outbound-reference-missing'));
+      assert.equal((await fetch(`${origin}/s/${profile.token}/${target}?expand=true`)).status, 422);
+      const provider = await fetch(`${origin}/s/${profile.token}/source/${created.id}/${target}`);
+      assert.equal(provider.status, 200);
+      assert.equal(Buffer.from(await provider.text(), 'base64').toString().includes('stopped.example'), false);
+      continue;
+    }
     if (target === 'egern') {
       // Native Egern keeps explicit required members as repair intent.
       assert.equal(preview.status, 422);

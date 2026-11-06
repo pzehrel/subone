@@ -1,6 +1,7 @@
 import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
-import { adaptRulesetForShadowrocket, formatRuleTag } from './ruleset-adapter';
-import { resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag } from './common';
+import { adaptRulesetForShadowrocket } from './ruleset-adapter';
+import { formatCidr } from './common';
+import { resolveGroupNodes } from './group-nodes';
 
 export function nodeToShadowrocketProxy(node: ProxyNode): string {
   const name = node.name.replace(/[=,]/g, '_');
@@ -288,67 +289,33 @@ export function generateShadowrocketBase64(nodes: ProxyNode[]): string {
   return Buffer.from(uris.join('\n'), 'utf-8').toString('base64');
 }
 
+interface ShadowrocketGeneratorOptions {
+  expandNodes?: boolean;
+  ordinaryNodeIds?: ReadonlySet<string>;
+  dependencyGroupIds?: ReadonlySet<string>;
+  runtimeSources?: SubscriptionSource[];
+}
+
+/** Append managed declarations without replacing native template definitions. */
+function appendIniSection(content: string, section: string, additions: string[]): string {
+  const lines = content.split('\n');
+  const index = lines.findIndex(line => line.trim().toLowerCase() === `[${section.toLowerCase()}]`);
+  if (index >= 0) lines.splice(index + 1, 0, ...additions);
+  else lines.push('', `[${section}]`, ...additions);
+  return lines.join('\n');
+}
+
 export function generateShadowrocketConfig(
   templateConf: string,
   nodes: ProxyNode[],
   proxyGroups: ProxyGroupItem[] = [],
   rulesList: UnifiedRuleItem[] = [],
   sources: SubscriptionSource[] = [],
-  options?: { expandNodes?: boolean }
+  options?: ShadowrocketGeneratorOptions,
 ): string {
-  const expandNodes = Boolean(options?.expandNodes);
-  const lines = templateConf.split('\n');
-  const resultLines: string[] = [];
-
-  const allNodesMap = new Map<string, ProxyNode>();
-  nodes.forEach(n => allNodesMap.set(n.name, n));
-  sources.forEach(s => {
-    if ((s.type === 'filter' || s.type === 'custom' || !s.url || !s.url.startsWith('http')) && Array.isArray(s.nodes)) {
-      s.nodes.forEach(n => {
-        if (!allNodesMap.has(n.name)) allNodesMap.set(n.name, n);
-      });
-    }
-  });
-  const allCandidateNodes = Array.from(allNodesMap.values());
-
-  const networkSourceIds = new Set(
-    sources.filter(s => s.enabled && s.type !== 'custom' && s.type !== 'filter' && s.url && s.url.startsWith('http')).map(s => s.id)
-  );
-  const nodesToWrite = expandNodes
-    ? allCandidateNodes
-    : allCandidateNodes.filter(n => !n.sourceId || n.sourceId === 'custom' || n.sourceId.startsWith('custom') || !networkSourceIds.has(n.sourceId));
-  const generatedProxyLines = nodesToWrite.map(nodeToShadowrocketProxy);
-
-  let inProxySection = false;
-  let hasHandledProxy = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trim();
-
-    if (trimmed === '[Proxy]') {
-      inProxySection = true;
-      hasHandledProxy = true;
-      resultLines.push(line);
-      resultLines.push(...generatedProxyLines);
-      continue;
-    }
-
-    if (inProxySection && trimmed.startsWith('[')) {
-      inProxySection = false;
-    }
-
-    if (inProxySection) continue;
-    resultLines.push(line);
-  }
-
-  if (!hasHandledProxy) {
-    resultLines.push('\n[Proxy]');
-    resultLines.push(...generatedProxyLines);
-  }
-
-  const baseConfig = resultLines.join('\n');
-  return injectUnifiedToShadowrocket(baseConfig, nodes, proxyGroups, rulesList, sources, options);
+  // This complete INI path carries concrete declarations. No unverified remote syntax is invented.
+  const content = appendIniSection(templateConf, 'Proxy', nodes.map(nodeToShadowrocketProxy));
+  return injectUnifiedToShadowrocket(content, nodes, proxyGroups, rulesList, sources, options);
 }
 
 export function injectUnifiedToShadowrocket(
@@ -357,249 +324,51 @@ export function injectUnifiedToShadowrocket(
   proxyGroups: ProxyGroupItem[],
   rulesList: UnifiedRuleItem[],
   sources: SubscriptionSource[] = [],
-  options?: { expandNodes?: boolean }
+  options?: ShadowrocketGeneratorOptions,
 ): string {
-  const expandNodes = Boolean(options?.expandNodes);
-  const lines = templateConf.split('\n');
-  const activeRules = rulesList.filter(r => r.enabled);
-  const remoteRules = activeRules.filter(r => r.kind === 'remote');
-  const localRules = activeRules.filter(r => r.kind === 'local');
-
-  const customSources = sources.filter(s => s.type === 'custom' || s.id === 'custom');
-  const customTagName = customSources[0]?.name
-    ? (customSources[0].name.startsWith('⚡️') ? customSources[0].name : `⚡️ ${customSources[0].name}`)
-    : '⚡️ 自建节点';
-
-  const effectiveGroups: ProxyGroupItem[] = proxyGroups.map(g => ({
-    ...g,
-    proxies: g.proxies ? [...g.proxies] : undefined,
-    use: g.use ? [...g.use] : undefined,
-  }));
-
-  // Sanitize effectiveGroups: if there is a custom group, sync its name to customTagName and remove any stale '⚡️ 独立节点组'
-  const customGrp = effectiveGroups.find(g =>
-    g.id === 'grp-src-custom' ||
-    g.name === customTagName ||
-    g.name === '⚡️ 独立节点组' ||
-    g.name === '独立节点组'
-  );
-  if (customGrp) {
-    customGrp.name = customTagName;
-    customGrp.use = [customSources[0]?.name || '自建节点'];
-    const idx = effectiveGroups.indexOf(customGrp);
-    for (let i = effectiveGroups.length - 1; i >= 0; i--) {
-      if (i !== idx) {
-        const g = effectiveGroups[i];
-        if (g.id === 'grp-src-custom' || g.name === '⚡️ 独立节点组' || g.name === '独立节点组') {
-          effectiveGroups.splice(i, 1);
-        }
-      }
+  const ordinary = nodes.filter(node => !options?.ordinaryNodeIds || options.ordinaryNodeIds.has(node.id));
+  const groupLines = proxyGroups.map(group => {
+    if (group.type === 'direct' || group.type === 'reject') return `${group.name} = select, ${group.type.toUpperCase()}`;
+    const members = [...(group.proxies || [])].map(member => member === '🎯 本地直连' ? 'DIRECT' : member);
+    const mounts = group.sources ?? group.use;
+    if (group.type !== 'relay' && (mounts?.length || group.filter || !members.length)) {
+      for (const node of resolveGroupNodes(group, ordinary, options?.runtimeSources || sources)) if (!members.includes(node.name)) members.push(node.name);
     }
-    effectiveGroups.forEach(grp => {
-      if (grp !== customGrp) {
-        if (grp.use) {
-          grp.use = grp.use.map(u => (u === '独立节点组' || u === '⚡️ 独立节点组' ? (customSources[0]?.name || '自建节点') : u));
-        }
-        if (grp.proxies) {
-          grp.proxies = grp.proxies.map(p => (p === '⚡️ 独立节点组' || p === '独立节点组' ? customTagName : p));
-        }
-      }
-    });
-  }
-
-  const networkSources = sources.filter(s => s.enabled && s.type !== 'custom' && s.url && s.url.startsWith('http'));
-  const customNodes = nodes.filter(n => n.sourceId === 'custom' || n.sourceId?.startsWith('custom') || !n.sourceId);
-  const customNodeNames = customNodes.map(n => n.name.replace(/[=,]/g, '_'));
-  const allNodeNames = nodes.map(n => n.name.replace(/[=,]/g, '_'));
-
-  // 1. Build [Proxy Group]
-  const groupLines: string[] = [];
-  const existingGroupNames = new Set<string>();
-
-  effectiveGroups.forEach(grp => {
-    existingGroupNames.add(grp.name.toLowerCase());
-    let members: string[] = [];
-
-    if (grp.use && grp.use.length > 0) {
-      grp.use.forEach(u => {
-        const customSrc = sources.find(s => (s.type === 'custom' || s.id === 'custom') && (s.name === u || s.id === u));
-        const isCustomU = u === '自建节点' || u === '独立节点组' || u === 'custom' || u === '手工自建' || customSources.some(cs => cs.name === u);
-        if (customSrc || isCustomU) {
-          const groupNodes = nodes
-            .filter(n => n.sourceId === (customSrc?.id || 'custom') || n.sourceName === (customSrc?.name || u) || (!n.sourceId && isCustomU))
-            .map(n => n.name.replace(/[=,]/g, '_'));
-          members.push(...(groupNodes.length > 0 ? groupNodes : customNodeNames));
-        } else {
-          const cleanU = u.replace(/^[⚡️\s]+/, '').trim().toLowerCase();
-          const matchedSrc = sources.find(s => {
-            const sClean = s.name.replace(/^[⚡️\s]+/, '').trim().toLowerCase();
-            return sClean === cleanU || s.id.trim().toLowerCase() === cleanU;
-          });
-          if (matchedSrc) {
-            const isRemoteNetwork = matchedSrc.enabled && matchedSrc.type !== 'custom' && matchedSrc.type !== 'filter' && matchedSrc.url && matchedSrc.url.startsWith('http');
-            if (!isRemoteNetwork || expandNodes) {
-              let srcNodes: string[] = [];
-              if (Array.isArray(matchedSrc.nodes) && matchedSrc.nodes.length > 0) {
-                srcNodes = matchedSrc.nodes.map(n => n.name.replace(/[=,]/g, '_'));
-              } else {
-                srcNodes = nodes
-                  .filter(n => {
-                    const sName = (n.sourceName || '').trim().toLowerCase().replace(/^[⚡️\s]+/, '');
-                    const sId = (n.sourceId || '').trim().toLowerCase();
-                    return sName === cleanU || sId === cleanU;
-                  })
-                  .map(n => n.name.replace(/[=,]/g, '_'));
-              }
-              members.push(...srcNodes);
-            } else {
-              const sTag = matchedSrc.name.replace(/[=,]/g, '_').trim();
-              members.push(sTag.startsWith('⚡️') ? sTag : `⚡️ ${sTag}`);
-            }
-          }
-        }
-      });
-    }
-
-    if (grp.proxies && grp.proxies.length > 0) {
-      grp.proxies.forEach(p => {
-        if (p === 'DIRECT' || p === '🎯 本地直连') {
-          members.push('DIRECT');
-        } else if (p === 'REJECT' || p === '🛑 广告拦截' || p === '🛑 全局拦截') {
-          members.push('REJECT');
-        } else {
-          const cleanP = (p === '⚡️ 独立节点组' || p === '独立节点组') ? customTagName : p;
-          members.push(cleanP.replace(/[=,]/g, '_'));
-        }
-      });
-    }
-
-    if (grp.filter) {
-      try {
-        const reg = new RegExp(grp.filter, 'i');
-        const matched = nodes
-          .filter(n => reg.test(n.name))
-          .map(n => n.name.replace(/[=,]/g, '_'));
-        members.push(...matched);
-      } catch (e) {
-        // ignore regex error
-      }
-    }
-
-    members = Array.from(new Set(members)).filter(Boolean);
-
-    if (members.length === 0) {
-      if (allNodeNames.length > 0) {
-        members.push(allNodeNames[0]);
-      } else {
-        members.push('DIRECT');
-      }
-    }
-
-    if (grp.type === 'relay') {
-      const relayMembers = grp.proxies && grp.proxies.length > 0
-        ? grp.proxies.map(p => p.replace(/[=,]/g, '_'))
-        : ['DIRECT'];
-      groupLines.push(`${grp.name} = relay, ${relayMembers.join(', ')}`);
-      return;
-    }
-
-    const grpType = grp.type === 'urltest' ? 'url-test' : (grp.type === 'fallback' ? 'fallback' : 'select');
-    if (grpType === 'url-test') {
-      groupLines.push(`${grp.name} = url-test, ${members.join(', ')}, url=${grp.url || 'http://cp.cloudflare.com/generate_204'}, interval=${grp.interval || 300}, tolerance=${grp.tolerance || 50}`);
-    } else if (grpType === 'fallback') {
-      groupLines.push(`${grp.name} = fallback, ${members.join(', ')}, url=${grp.url || 'http://cp.cloudflare.com/generate_204'}, interval=${grp.interval || 300}`);
-    } else {
-      groupLines.push(`${grp.name} = select, ${members.join(', ')}`);
-    }
+    if (!members.length && !group.proxies?.length && !mounts?.length && !group.filter && !group.includeAll) members.push('DIRECT');
+    const type = group.type === 'urltest' ? 'url-test' : group.type;
+    const probe = ['url-test', 'fallback'].includes(type)
+      ? `, url=${group.url || 'http://cp.cloudflare.com/generate_204'}, interval=${group.interval || 300}${type === 'url-test' ? `, tolerance=${group.tolerance || 50}` : ''}` : '';
+    return `${group.name} = ${type}${members.length ? ', ' + members.join(', ') : ''}${probe}`;
   });
-
-  if (customNodes.length > 0 && !effectiveGroups.some(g => g.id === 'grp-src-custom' || g.name.includes('自建') || g.name.includes('独立') || customSources.some(cs => g.name.includes(cs.name)))) {
-    groupLines.push(`${customTagName} = select, ${customNodeNames.join(', ')}`);
-  }
-
-  // 2. Build [Rule]
-  const availableGroupNames = new Set(proxyGroups.map(g => g.name));
-  const fallbackGroup = proxyGroups.find(g => g.name === '🚀 节点选择')?.name || proxyGroups[0]?.name || 'DIRECT';
-
+  const active = rulesList.filter(rule => rule.enabled);
   const ruleLines: string[] = [];
-
-  remoteRules.forEach((r, idx) => {
-    const adapted = adaptRulesetForShadowrocket(r, idx);
-    const safeOutbound = resolveSafeOutbound(r.outbound, availableGroupNames, fallbackGroup);
-    ruleLines.push(`RULE-SET,${adapted.url},${safeOutbound}`);
-  });
-
-  localRules.forEach(r => {
-    if (r.type === 'FINAL') {
-      return;
-    }
-    const safeOutbound = resolveSafeOutbound(r.outbound, availableGroupNames, fallbackGroup);
-    const payloads = r.payload.split(/[,;\n]+/).map(p => p.trim()).filter(Boolean);
-    payloads.forEach(p => {
-      if (r.type === 'IP-CIDR') {
-        ruleLines.push(`IP-CIDR,${p},${safeOutbound},no-resolve`);
-      } else if (r.type === 'SRC-IP-CIDR') {
-        ruleLines.push(`SRC-IP-CIDR,${formatCidr(p)},${safeOutbound},no-resolve`);
-      } else {
-        ruleLines.push(`${r.type},${p},${safeOutbound}`);
+  const outbound = (value: string) => value === '🎯 本地直连' ? 'DIRECT' : value;
+  for (const [index, rule] of active.entries()) {
+    if (rule.kind === 'remote') {
+      ruleLines.push(`RULE-SET,${adaptRulesetForShadowrocket(rule, index).url},${outbound(rule.outbound)}`);
+    } else if (rule.type !== 'FINAL') {
+      for (const payload of rule.payload.split(/[,;\n]+/).map(value => value.trim()).filter(Boolean)) {
+        const cidr = rule.type === 'SRC-IP-CIDR' ? formatCidr(payload) : payload;
+        ruleLines.push(`${rule.type},${cidr},${outbound(rule.outbound)}${['IP-CIDR', 'SRC-IP-CIDR'].includes(rule.type) ? ',no-resolve' : ''}`);
       }
-    });
+    }
+  }
+  let section = ''; let nativeFinal: string | undefined;
+  const lines = templateConf.split('\n').filter(line => {
+    const header = /^\s*\[([^\]]+)\]/.exec(line);
+    if (header) section = header[1].toLowerCase();
+    if (section === 'rule' && /^\s*FINAL\s*,/i.test(line)) { nativeFinal ??= line; return false; }
+    return true;
   });
-
-  const finalRule = activeRules.find(r => r.type === 'FINAL');
-  const finalOutbound = finalRule
-    ? resolveSafeOutbound(finalRule.outbound, availableGroupNames, fallbackGroup)
-    : (availableGroupNames.has('🐟 漏网之鱼') ? '🐟 漏网之鱼' : fallbackGroup);
-  ruleLines.push(`FINAL,${finalOutbound}`);
-
-  const result: string[] = [];
-  let inRuleSection = false;
-  let hasHandledRule = false;
-  let inGroupSection = false;
-  let hasHandledGroup = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    if (trimmed === '[Rule]') {
-      inRuleSection = true;
-      hasHandledRule = true;
-      result.push(line);
-      result.push(...ruleLines);
-      continue;
-    }
-
-    if (trimmed === '[Proxy Group]') {
-      inGroupSection = true;
-      hasHandledGroup = true;
-      result.push(line);
-      result.push(...groupLines);
-      continue;
-    }
-
-    if (inRuleSection && trimmed.startsWith('[')) {
-      inRuleSection = false;
-    }
-    if (inGroupSection && trimmed.startsWith('[')) {
-      inGroupSection = false;
-    }
-
-    if (inRuleSection || inGroupSection) {
-      continue;
-    }
-
-    result.push(line);
-  }
-
-  if (!hasHandledGroup && groupLines.length > 0) {
-    result.push('\n[Proxy Group]');
-    result.push(...groupLines);
-  }
-
-  if (!hasHandledRule && ruleLines.length > 0) {
-    result.push('\n[Rule]');
-    result.push(...ruleLines);
-  }
-
+  const managedFinal = active.find(rule => rule.type === 'FINAL');
+  const fallback = proxyGroups.find(group => group.name === '🐟 漏网之鱼')?.name || proxyGroups[0]?.name || 'DIRECT';
+  const finalLine = managedFinal ? `FINAL,${outbound(managedFinal.outbound)}` : nativeFinal || `FINAL,${fallback}`;
+  let content = appendIniSection(lines.join('\n'), 'Proxy Group', groupLines);
+  content = appendIniSection(content, 'Rule', ruleLines);
+  // FINAL must follow every native and managed rule in this section.
+  const result = content.split('\n');
+  const start = result.findIndex(line => line.trim().toLowerCase() === '[rule]');
+  const end = result.findIndex((line, index) => index > start && /^\s*\[/.test(line));
+  result.splice(end < 0 ? result.length : end, 0, finalLine);
   return result.join('\n');
 }

@@ -79,6 +79,8 @@ async function handlePrivateSubRequest(c: Context, forcedType?: ClientType) {
     if (userinfo) c.header('subscription-userinfo', userinfo);
     const result = renderGeneration(plan);
     c.header('Content-Type', result.contentType);
+    c.header('X-SubOne-Mode', result.generation.target.mode);
+    c.header('X-SubOne-Diagnostics', result.generation.diagnostics.map(diagnostic => diagnostic.code).join(','));
     c.header('X-SubOne-DoH', result.generation.bindings.map(binding => binding.status).join(','));
     return c.body(result.output);
 
@@ -123,12 +125,17 @@ async function handleSourceSubRequest(c: Context, forcedTarget?: ClientType) {
   try {
     const queryTarget = c.req.query('target') || c.req.query('type') || c.req.param('target');
     const detectedType = forcedTarget || detectClientType(c.req.header('user-agent'), queryTarget, 'loon');
-    const plan = await createGenerationPlan({ target: detectedType, profile, templateContent: getEffectiveTemplateForProfile(profile, detectedType)?.content || '', baseUrl: getBaseUrl(c.req) });
+    const plan = await createGenerationPlan({ target: detectedType, outputRole: 'source', profile, templateContent: getEffectiveTemplateForProfile(profile, detectedType)?.content || '', baseUrl: getBaseUrl(c.req) });
     const userinfo = Object.entries(parseSubscriptionUserinfo(matchedSource.subscriptionUserinfo))
       .map(([key, value]) => `${key}=${value}`).join('; ');
     if (userinfo && plan.ordinaryNodes.some(node => node.sourceId === matchedSource.id)) c.header('subscription-userinfo', userinfo);
     const result = renderSourceGeneration(plan, matchedSource.id);
     c.header('Content-Type', result.contentType);
+    c.header('X-SubOne-Mode', plan.target.mode);
+    if (result.generation) {
+      c.header('X-SubOne-DoH', result.generation.bindings.map(binding => binding.status).join(','));
+      c.header('X-SubOne-Diagnostics', result.generation.diagnostics.map(diagnostic => diagnostic.code).join(','));
+    }
     return c.body(result.output);
 
   } catch (err: any) {

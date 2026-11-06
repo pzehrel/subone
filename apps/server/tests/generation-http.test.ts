@@ -180,7 +180,8 @@ test('all six complete outputs share preview and dispatch while unsupported adap
   const profile = await profileFor([a, b]);
   // Native templates retain required definitions; each client gets its own schema.
   const egernTemplate = (await api('/templates', 'POST', { name: 'Egern dispatch template', type: 'egern', content: 'dns:\n  bootstrap: [127.0.0.1]\nproxies:\n  - socks5: {name: template-direct, server: 192.0.2.90, port: 1080}\npolicy_groups: []\nrules: []\n' })).data;
-  profile.templates = { ...profile.templates, egern: egernTemplate.id };
+  const rocketTemplate = (await api('/templates', 'POST', { name: 'Shadowrocket dispatch template', type: 'shadowrocket', content: '[General]\ndns-server = system\n[Proxy]\ntemplate-direct = socks5, 192.0.2.90, 1080\n[Proxy Group]\n[Rule]\n' })).data;
+  profile.templates = { ...profile.templates, egern: egernTemplate.id, shadowrocket: rocketTemplate.id };
   await api(`/profiles/${profile.id}`, 'PUT', { templates: profile.templates });
   for (const target of ['singbox', 'mihomo', 'loon', 'quantumultx', 'egern', 'shadowrocket']) {
     if (target === 'mihomo') {
