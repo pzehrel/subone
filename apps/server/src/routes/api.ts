@@ -45,6 +45,7 @@ import { detectClientType, ClientType } from '../core/parser/ua-detector';
 import { applyExtractionRules } from '../core/filter/extractor';
 import { normalizeGroupReferences, resolveOutputReferences, removeNodeReferences } from '../services/node-references';
 import { prepareSourceNodes } from '../services/node-identity';
+import { bindSourceDoh } from '../core/parser/source-doh';
 import { commitConfig, commitSource, refreshSource, SourceUpdateError } from '../services/source-service';
 import { UnsupportedProxyGroupError } from '../core/generators/errors';
 import {
@@ -131,6 +132,7 @@ apiRouter.post('/sources', async (c) => {
       source.nodes = await fetchAndParseSource(source, appConfig.countryRules);
     } catch (error: any) { return c.json({ success: false, message: error.message || '上游更新失败' }, 422); }
     prepareSourceNodes(source);
+    bindSourceDoh(source);
     source.nodeCount = source.nodes.length;
     const candidate = structuredClone(appConfig);
     candidate.sources.push(source);

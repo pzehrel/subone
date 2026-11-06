@@ -135,3 +135,52 @@ test('QuanX DNS entries preserve every endpoint, domain scope and SSID option th
   assert.equal(dnsOnly.data.nodeCount, 0);
   assert.deepEqual(dnsOnly.data.doh.services.map((entry: any) => entry.url), ['https://only.example/dns-query']);
 });
+
+test('explicit DoH egress retains only reachable private strategies and binds unambiguous source node identities', async () => {
+  const raw = `proxies:\n${node}dns:\n nameserver: ['https://dns.example/dns-query#Route', 'https://direct-node.example/dns-query#First', 'https://missing.example/dns-query#Missing']\nproxy-groups:\n - {name: Route, type: select, proxies: [Nested, First], use: [private-provider], filter: keep}\n - {name: Nested, type: fallback, proxies: [First, DIRECT], interval: 30}\n - {name: Unrelated, type: select, proxies: [DIRECT]}\n`;
+  bodies.set('/egress', raw);
+  const created = await api('/sources', 'POST', { name: 'Egress source', url: `${upstreamOrigin}/egress` });
+  assert.equal(created.success, true);
+  const saved = await source(created.data.id);
+  const route = saved.doh.outbounds.find((entry: any) => entry.name === 'Route');
+  const nested = saved.doh.outbounds.find((entry: any) => entry.name === 'Nested');
+  assert.deepEqual(saved.doh.services[0].outbound, { kind: 'source-group', name: 'Route', outboundId: route.id });
+  assert.deepEqual(saved.doh.services[1].outbound, { kind: 'source-node', name: 'First', nodeId: saved.nodes[0].id });
+  assert.deepEqual(saved.doh.services[2].outbound, { kind: 'unresolved', name: 'Missing' });
+  assert.equal(saved.doh.outbounds.length, 2);
+  assert.deepEqual(route.raw, { name: 'Route', type: 'select', proxies: ['Nested', 'First'], use: ['private-provider'], filter: 'keep' });
+  assert.deepEqual(route.references, [{ kind: 'source-group', name: 'Nested', outboundId: nested.id }, { kind: 'source-node', name: 'First', nodeId: saved.nodes[0].id }]);
+  assert.deepEqual(nested.references[1], { kind: 'direct', name: 'DIRECT' });
+  await api(`/nodes/${saved.nodes[0].id}`, 'PUT', { name: 'Local exit' });
+  await api(`/sources/${saved.id}`, 'PUT', { name: 'Source renamed' });
+  const renamed = await source(saved.id);
+  assert.deepEqual(renamed.doh, saved.doh);
+  bodies.set('/egress', raw.replaceAll('First', 'Upstream renamed'));
+  assert.equal((await api(`/sources/${saved.id}/refresh`, 'POST', {})).success, true);
+  const refreshed = await source(saved.id);
+  assert.equal(refreshed.nodes[0].id, saved.nodes[0].id);
+  assert.equal(refreshed.nodes[0].name, 'Local exit');
+  assert.equal(refreshed.doh.services[1].outbound.nodeId, saved.nodes[0].id);
+  await stopApp(); await startApp();
+  assert.deepEqual((await source(saved.id)).doh, refreshed.doh);
+});
+
+test('DoH target validation includes explicit connection fields without rejecting ordinary DNS or ambiguous egress names', async () => {
+  const typed = { type: 'https', server: 'dns.example' };
+  bodies.set('/connection-fields', JSON.stringify({ outbounds: [], dns: { servers: [typed, { type: 'udp', server: '192.0.2.53' }, { type: 'tls', server: 'ordinary.example' }] } }));
+  const created = await api('/sources', 'POST', { name: 'Strict connection', url: `${upstreamOrigin}/connection-fields` });
+  assert.equal(created.success, true);
+  const saved = await source(created.data.id);
+  for (const extra of [{ tls: 'broken' }, { headers: { Authorization: 123 } }, { domain_resolver: { strategy: 'ipv4_only' } }, { address_resolver: 123 }, { server: 'dns.example', path: '/bad%ZZ' }]) {
+    bodies.set('/connection-fields', JSON.stringify({ outbounds: [], dns: { servers: [typed, { ...typed, ...extra }] } }));
+    assert.equal((await api(`/sources/${saved.id}/refresh`, 'POST', {})).success, false, JSON.stringify(extra));
+    assert.deepEqual((await source(saved.id)).doh, saved.doh);
+  }
+  bodies.set('/ambiguous', `proxies:\n${node}${node.replace('node.example', 'other.example')}dns:\n nameserver: ['https://dns.example/query#First']\nproxy-groups:\n - {name: First, type: select, proxies: [DIRECT]}\n`);
+  const ambiguous = await api('/sources', 'POST', { name: 'Ambiguous', url: `${upstreamOrigin}/ambiguous` });
+  assert.equal(ambiguous.success, true);
+  const relation = ambiguous.data.doh.services[0].outbound;
+  assert.equal(relation.kind, 'ambiguous');
+  assert.equal(relation.name, 'First');
+  assert.deepEqual(relation.candidates, [...ambiguous.data.nodes.map((entry: any) => `node:${entry.id}`), `outbound:${ambiguous.data.doh.outbounds[0].id}`]);
+});
