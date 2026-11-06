@@ -3,7 +3,7 @@ import { fetchAndParseSource, SourceParseError } from '../core/parser/fetcher';
 import { cleanSourceOrGroupName } from '../core/generators/common';
 import { saveConfig } from '../storage/db';
 import type { AppConfig, SubscriptionSource } from '../types';
-import { removeNodeReferences } from './node-references';
+import { prepareTemplateReferences, removeNodeReferences } from './node-references';
 import { prepareSourceNodes } from './node-identity';
 import { bindSourceDoh } from '../core/parser/source-doh';
 import { collectNodesFromSources } from './profile-service';
@@ -19,6 +19,7 @@ export function commitSource(candidate: SubscriptionSource): void {
   const config = structuredClone(getAppConfig());
   const index = config.sources.findIndex(source => source.id === candidate.id);
   if (index < 0) throw new Error('Source not found');
+  config.templates = config.templates.map(template => prepareTemplateReferences(template, config, template));
   const oldName = cleanSourceOrGroupName(config.sources[index].name).toLowerCase();
   if (candidate.name !== config.sources[index].name) {
     for (const group of config.proxyGroups) {

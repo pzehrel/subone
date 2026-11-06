@@ -12,6 +12,7 @@ import { formatSourceGroupTag, cleanSourceOrGroupName } from '../core/generators
 import { applyExtractionRules } from '../core/filter/extractor';
 import { refreshSource } from './source-service';
 import { selectSubscriptionSources } from '../../../../shared/subscription-info';
+import { groupReferenceId } from './node-references';
 import {
   getAppConfig,
   getGlobalNodesCache,
@@ -158,26 +159,26 @@ export function getEffectiveGroupsForProfile(profile: SubscriptionProfile, _effe
     groups = (appConfig.proxyGroups || []).filter(g => set.has(g.id));
 
     // Recursively ensure any groups referenced by selected groups in proxies list are also included
-    const includedGroupNames = new Set(groups.map(g => g.name));
+    const includedGroupIds = new Set(groups.map(g => g.id));
     let added = true;
     while (added) {
       added = false;
-      const referencedGroupNames = new Set<string>();
+      const referencedGroupIds = new Set<string>();
       groups.forEach(g => {
         if (g.proxies) {
           g.proxies.forEach(p => {
-            if (!includedGroupNames.has(p)) {
-              referencedGroupNames.add(p);
-            }
+            const id = groupReferenceId(p);
+            const target = id ? appConfig.proxyGroups.find(group => group.id === id) : appConfig.proxyGroups.find(group => group.name === p);
+            if (target && !includedGroupIds.has(target.id)) referencedGroupIds.add(target.id);
           });
         }
       });
 
-      if (referencedGroupNames.size > 0) {
-        const additionalGroups = (appConfig.proxyGroups || []).filter(g => referencedGroupNames.has(g.name));
+      if (referencedGroupIds.size > 0) {
+        const additionalGroups = (appConfig.proxyGroups || []).filter(g => referencedGroupIds.has(g.id));
         additionalGroups.forEach(ag => {
-          if (!includedGroupNames.has(ag.name)) {
-            includedGroupNames.add(ag.name);
+          if (!includedGroupIds.has(ag.id)) {
+            includedGroupIds.add(ag.id);
             groups.push(ag);
             added = true;
           }

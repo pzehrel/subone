@@ -208,6 +208,13 @@ export interface ExtractionRule {
 
 export type ClientType = 'singbox' | 'mihomo' | 'loon' | 'quantumultx' | 'egern' | 'shadowrocket';
 
+export interface TemplateConnectionReference {
+  /** Owner tag/name and known connection field, independent of unrelated array entries. */
+  slot: string;
+  literal: string;
+  target: string;
+}
+
 export interface ConfigTemplate {
   id: string;
   name: string;
@@ -215,6 +222,7 @@ export interface ConfigTemplate {
   content: string;
   isDefault?: boolean;
   description?: string;
+  connectionReferences?: TemplateConnectionReference[];
 }
 
 export interface ProxyGroupItem {

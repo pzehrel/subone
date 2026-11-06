@@ -38,7 +38,7 @@ import {
 } from '../storage/default-templates';
 import { ClientType } from '../core/parser/ua-detector';
 import { applyExtractionRules } from '../core/filter/extractor';
-import { normalizeGroupReferences, removeNodeReferences } from '../services/node-references';
+import { normalizeGroupReferences, prepareTemplateReferences, removeGroupReferences, removeNodeReferences } from '../services/node-references';
 import { prepareSourceNodes } from '../services/node-identity';
 import { bindSourceDoh } from '../core/parser/source-doh';
 import { commitConfig, commitSource, refreshSource, SourceUpdateError } from '../services/source-service';
@@ -83,6 +83,8 @@ apiRouter.put('/nodes/:id', (c) => {
     return c.json({ success: false, message: '仅可设置本地名称和启停' }, 400);
   }
   const candidate = structuredClone(appConfig);
+  try { candidate.templates = candidate.templates.map(template => prepareTemplateReferences(template, candidate, template)); }
+  catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
   for (const source of candidate.sources) {
     const node = [...(source.nodes || []), ...(source.infoNodes || [])].find(node => node.id === c.req.param('id'));
     if (!node) continue;
@@ -175,8 +177,8 @@ apiRouter.delete('/sources/:id', (c) => {
   const source = candidate.sources.find(source => source.id === c.req.param('id'));
   if (!source) return c.json({ success: false, message: 'Source not found' }, 404);
   const removed = new Set([...(source.nodes || []), ...(source.infoNodes || [])].map(node => node.id));
-  candidate.sources = candidate.sources.filter(item => item.id !== source.id);
   removeNodeReferences(candidate, removed);
+  candidate.sources = candidate.sources.filter(item => item.id !== source.id);
   candidate.proxyGroups = candidate.proxyGroups.filter(group => group.id !== `grp-${source.id}`);
   for (const group of candidate.proxyGroups) {
     const mounts = group.sources ?? group.use;
@@ -184,7 +186,7 @@ apiRouter.delete('/sources/:id', (c) => {
     const kept = mounts.filter(id => id !== source.id);
     group.sources = kept;
     group.use = [...kept];
-    if (mounts.length && !kept.length && !group.proxies?.length) group.proxies = ['DIRECT'];
+    if (mounts.length && !kept.length && !group.proxies?.length) group.proxies = [`unresolved:${source.name}`];
   }
   for (const profile of candidate.profiles || []) {
     if (!profile.nodeFilter?.sourceIds?.includes(source.id)) continue;
@@ -446,6 +448,8 @@ apiRouter.put('/groups/:id', (c) => {
 
   try {
     const candidate = structuredClone(appConfig);
+    candidate.templates = candidate.templates.map(template => prepareTemplateReferences(template, candidate, template));
+    candidate.proxyGroups = candidate.proxyGroups.map(group => normalizeGroupReferences(group, candidate));
     candidate.proxyGroups[idx] = normalizeGroupReferences(updated, candidate);
     commitConfig(candidate);
     return c.json({ success: true, data: candidate.proxyGroups[idx] });
@@ -453,9 +457,15 @@ apiRouter.put('/groups/:id', (c) => {
 });
 
 apiRouter.delete('/groups/:id', (c) => {
-  appConfig.proxyGroups = appConfig.proxyGroups.filter(g => g.id !== c.req.param('id'));
-  saveConfig(appConfig);
-  return c.json({ success: true, message: 'Group deleted' });
+  const candidate = structuredClone(appConfig);
+  const group = candidate.proxyGroups.find(group => group.id === c.req.param('id'));
+  if (!group) return c.json({ success: false, message: 'Group not found' }, 404);
+  try {
+    removeGroupReferences(candidate, group);
+    candidate.proxyGroups = candidate.proxyGroups.filter(item => item.id !== group.id);
+    commitConfig(candidate);
+    return c.json({ success: true, message: 'Group deleted' });
+  } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });
 
 
@@ -631,14 +641,14 @@ apiRouter.post('/templates', (c) => {
     description: body.description || '',
     isDefault: Boolean(body.isDefault),
   };
-  if (newTemplate.isDefault) {
-    appConfig.templates.forEach(t => {
-      if (t.type === newTemplate.type) t.isDefault = false;
-    });
-  }
-  appConfig.templates.push(newTemplate);
-  saveConfig(appConfig);
-  return c.json({ success: true, data: newTemplate });
+  try {
+    const candidate = structuredClone(appConfig);
+    const prepared = prepareTemplateReferences(newTemplate, candidate);
+    if (prepared.isDefault) candidate.templates.forEach(template => { if (template.type === prepared.type) template.isDefault = false; });
+    candidate.templates.push(prepared);
+    commitConfig(candidate);
+    return c.json({ success: true, data: prepared });
+  } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });
 
 apiRouter.put('/templates/:id', (c) => {
@@ -647,15 +657,15 @@ apiRouter.put('/templates/:id', (c) => {
   if (index === -1) {
     return c.json({ success: false, message: 'Template not found' }, 404);
   }
-  const updated = { ...appConfig.templates[index], ...body };
-  if (updated.isDefault) {
-    appConfig.templates.forEach(t => {
-      if (t.type === updated.type && t.id !== updated.id) t.isDefault = false;
-    });
-  }
-  appConfig.templates[index] = updated;
-  saveConfig(appConfig);
-  return c.json({ success: true, data: updated });
+  try {
+    const candidate = structuredClone(appConfig);
+    const previous = candidate.templates[index];
+    const updated = prepareTemplateReferences({ ...previous, ...body }, candidate, previous);
+    if (updated.isDefault) candidate.templates.forEach(template => { if (template.type === updated.type && template.id !== updated.id) template.isDefault = false; });
+    candidate.templates[index] = updated;
+    commitConfig(candidate);
+    return c.json({ success: true, data: updated });
+  } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });
 
 apiRouter.post('/templates/:id/reset', (c) => {
@@ -663,15 +673,18 @@ apiRouter.post('/templates/:id/reset', (c) => {
   if (index === -1) {
     return c.json({ success: false, message: '模版未找到' }, 404);
   }
-  const tpl = appConfig.templates[index];
+  const candidate = structuredClone(appConfig);
+  const tpl = candidate.templates[index];
   if (tpl.id === 'tpl-singbox-gateway' || tpl.name.includes('旁路由') || tpl.name.includes('网关')) {
     tpl.content = loadSingboxGatewayTemplate();
   } else {
     tpl.content = loadDefaultTemplate(tpl.type);
   }
-  appConfig.templates[index] = tpl;
-  saveConfig(appConfig);
-  return c.json({ success: true, data: tpl });
+  try {
+    candidate.templates[index] = prepareTemplateReferences(tpl, candidate);
+    commitConfig(candidate);
+    return c.json({ success: true, data: candidate.templates[index] });
+  } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });
 
 apiRouter.delete('/templates/:id', (c) => {
@@ -799,7 +812,7 @@ apiRouter.post('/generate/preview', async (c) => {
     }
 
     const plan = await createGenerationPlan({
-      target: targetType, profile: targetProfile, templateContent,
+      target: targetType, profile: targetProfile, templateContent, templateId,
       expandNodes: typeof body.expandNodes === 'boolean' ? body.expandNodes : (c.req.query('expand') === 'true' || c.req.query('expand') === '1' ? true : undefined),
       format: body.format || c.req.query('format'), baseUrl: getBaseUrl(c.req),
     });
