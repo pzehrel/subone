@@ -87,6 +87,6 @@ export function prepareSourceNodes(candidate: SubscriptionSource, previous?: Sub
     const label = node.raw && typeof node.raw === 'object' ? node.raw.detour ?? node.raw['dialer-proxy'] : node.detour;
     if (typeof label !== 'string') continue;
     const matches = incoming.filter(target => target.originalName === label);
-    node.detourRef = matches.length === 1 ? `node:${matches[0].id}` : undefined;
+    node.detourRef = matches.length === 1 ? `node:${matches[0].id}` : `${matches.length ? 'ambiguous' : 'unresolved'}:${label}`;
   }
 }

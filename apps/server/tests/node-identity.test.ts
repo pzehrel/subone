@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +13,14 @@ let child: ChildProcess;
 let origin: string;
 let upstreamOrigin: string;
 const bodies = new Map<string, string>();
-const upstream = createServer((request, response) => response.end(bodies.get(request.url || '/') || 'proxies: []'));
+let holdPath: string | undefined;
+let onHeld: (() => void) | undefined;
+let releaseResponse: (() => void) | undefined;
+const upstream = createServer((request, response) => {
+  const send = () => response.end(bodies.get(request.url || '/') || 'proxies: []');
+  if (request.url === holdPath) { holdPath = undefined; releaseResponse = send; onHeld?.(); }
+  else send();
+});
 async function startApp() {
   child = spawn(process.execPath, ['--import', 'tsx', join(__dirname, 'helpers/http-server.ts')], { env: { ...process.env, SUBONE_ROOT: directory }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
   let errors = '';
@@ -114,7 +121,7 @@ test('stable profile and explicit group references follow local and upstream ren
   bodies.set('/references', clash([ss('Beta upstream', 'beta.example'), ss('Alpha upstream', 'alpha.example')]));
   await api(`/sources/${created.id}/refresh`, 'POST', {});
   await stopApp(); await startApp();
-  const output = await fetch(`${origin}/s/${profile.token}/mihomo?expand=true`).then(response => response.text());
+  const output = await fetch(`${origin}/s/${profile.token}/mihomo`).then(response => response.text());
   const config = yaml.load(output) as any;
   assert.deepEqual(config.proxies.map((p: any) => p.name).sort(), ['Beta upstream', 'My alpha']);
   assert.deepEqual(config['proxy-groups'].find((g: any) => g.name === 'Pinned members').proxies, ['My alpha', 'Beta upstream']);
@@ -144,4 +151,180 @@ test('disabled nodes and sources are excluded from every effective, preview, pri
   assert.equal((await fetch(`${origin}/s/${profile.token}/source/${created.id}/mihomo`)).status, 404);
   await api(`/sources/${created.id}`, 'PUT', { enabled: true });
   assert.deepEqual((await source(created.id)).nodes, savedNodes);
+});
+
+test('source removal clears owned records and stable selections without retargeting another source', async () => {
+  const removed = await add('/delete-owned', clash([ss('Owned', 'owned.example')]));
+  const survivor = await add('/delete-survivor', clash([ss('Owned', 'survivor.example')]));
+  const node = removed.nodes[0];
+  const group = (await api('/groups', 'POST', { name: 'Owned reference', type: 'select', proxies: [`node:${node.id}`], sources: [removed.id] })).data;
+  const profile = (await api('/profiles', 'POST', { name: 'Owned selection', nodeFilter: { mode: 'all', selectedNodeIds: [node.id] }, selectedGroupIds: [group.id] })).data;
+  const sourceProfile = (await api('/profiles', 'POST', { name: 'Owned source selection', nodeFilter: { mode: 'all', sourceIds: [removed.id] } })).data;
+  await api(`/nodes/${node.id}`, 'PUT', { name: 'Owned local', enabled: false });
+  const beforeRaw = (await api(`/sources/${removed.id}/raw`)).data;
+  assert.equal((await api(`/nodes/${node.id}`, 'PUT', { server: 'mutated.example' })).status, 400);
+  assert.deepEqual((await api(`/sources/${removed.id}/raw`)).data, beforeRaw);
+  for (const [path, method, value] of [['/custom-nodes', 'POST', { name: 'Independent' }], ['/custom-nodes/import', 'POST', { text: 'ss://a' }], [`/nodes/${node.id}`, 'DELETE', undefined], [`/sources/${removed.id}/clear-nodes`, 'POST', {}]] as const) {
+    assert.equal((await fetch(`${origin}/api${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: value === undefined ? undefined : JSON.stringify(value) })).status, 404);
+  }
+  assert.equal((await api(`/sources/${removed.id}`, 'DELETE')).success, true);
+  assert.equal(await source(removed.id), undefined);
+  assert.equal((await api(`/nodes/${node.id}`, 'PUT', { name: 'Gone' })).status, 404);
+  const config = (await api('/config')).data;
+  assert.equal(config.proxyGroups.find((g: any) => g.id === group.id).proxies.includes(`node:${node.id}`), false);
+  assert.equal(config.profiles.find((p: any) => p.id === profile.id).nodeFilter.selectedNodeIds.includes(node.id), false);
+  for (const selected of [profile, sourceProfile]) {
+    const preview = await api('/generate/preview', 'POST', { profileId: selected.id, customType: 'mihomo', expandNodes: true });
+    assert.equal(preview.nodeCount, 0);
+    assert.equal(preview.data.includes('survivor.example'), false);
+  }
+  await stopApp(); await startApp();
+  assert.equal(await source(removed.id), undefined);
+  assert.equal((await source(survivor.id)).nodes[0].name, 'Owned');
+});
+
+test('URI display changes never infer connection settings and canonical raw options preserve identity', async () => {
+  const uri = 'vless://11111111-1111-4111-8111-111111111111@uri.example:443?security=tls&sni=uri.example&x-custom=a&x-custom=b';
+  const created = await add('/uri', `${uri}#Basic`);
+  const node = created.nodes[0];
+  bodies.set('/uri', `${uri}#Vision%20XTLS`);
+  await api(`/sources/${created.id}/refresh`, 'POST', {});
+  const renamed = (await source(created.id)).nodes[0];
+  assert.equal(renamed.id, node.id);
+  assert.equal(renamed.flow, undefined);
+  const encoded = (value: object) => `v2rayn://${Buffer.from(JSON.stringify(value)).toString('base64')}`;
+  const payload = { Protocol: 'vless', Address: 'v2ray.example', Port: 443, Id: '11111111-1111-4111-8111-111111111111', Remarks: 'Basic', StreamSecurity: 'tls', Network: 'tcp', UnknownOption: { name: 'keep', tag: 'also keep' } };
+  const jsonSource = await add('/v2ray', encoded(payload));
+  bodies.set('/v2ray', encoded({ ...payload, Remarks: 'H2 vision xtls' }));
+  await api(`/sources/${jsonSource.id}/refresh`, 'POST', {});
+  const jsonRenamed = (await source(jsonSource.id)).nodes[0];
+  assert.equal(jsonRenamed.id, jsonSource.nodes[0].id);
+  assert.equal(jsonRenamed.flow, undefined);
+  assert.equal(jsonRenamed.network, 'tcp');
+  bodies.set('/v2ray', encoded({ ...payload, UnknownOption: { name: 'changed', tag: 'also keep' } }));
+  await api(`/sources/${jsonSource.id}/refresh`, 'POST', {});
+  assert.notEqual((await source(jsonSource.id)).nodes[0].id, jsonRenamed.id);
+});
+
+test('source-local node chains retain stable targets through upstream and local renames', async () => {
+  const outbounds = (target: string, dependent: string) => JSON.stringify({ outbounds: [
+    { type: 'shadowsocks', tag: target, server: 'entry.example', server_port: 443, method: 'aes-128-gcm', password: 'entry' },
+    { type: 'shadowsocks', tag: dependent, server: 'exit.example', server_port: 443, method: 'aes-128-gcm', password: 'exit', detour: target },
+  ] });
+  const initial = await add('/chain', outbounds('Entry', 'Exit'));
+  const entry = initial.nodes[0]; const exit = initial.nodes[1];
+  await api(`/nodes/${entry.id}`, 'PUT', { name: 'My entry' });
+  await api(`/nodes/${exit.id}`, 'PUT', { name: 'My exit' });
+  bodies.set('/chain', outbounds('Entry upstream', 'Exit upstream'));
+  await api(`/sources/${initial.id}/refresh`, 'POST', {});
+  const updated = await source(initial.id);
+  assert.deepEqual(updated.nodes.map((n: any) => n.id), [entry.id, exit.id]);
+  assert.equal(updated.nodes[1].detourRef, `node:${entry.id}`);
+  assert.equal(updated.nodes[1].raw.detour, 'Entry upstream');
+  const profile = (await api('/profiles', 'POST', { name: 'Chain', nodeFilter: { mode: 'all', sourceIds: [initial.id] } })).data;
+  const preview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'singbox', customTemplate: '{"outbounds":[]}' });
+  const generated = JSON.parse(preview.data);
+  assert.equal(generated.outbounds.find((outbound: any) => outbound.tag === 'My exit').detour, 'My entry');
+  assert.equal((await api(`/sources/${initial.id}/raw`)).data.content, outbounds('Entry upstream', 'Exit upstream'));
+});
+
+test('ambiguous labels reject group writes while explicit IDs keep collision-safe names consistent in providers', async () => {
+  const a = await add('/collision-a', clash([ss('A=B', 'collision-a.example')]));
+  const b = await add('/collision-b', clash([ss('A,B', 'collision-b.example')]));
+  const duplicate = await add('/collision-copy', clash([ss('A=B', 'collision-copy.example')]));
+  const rejected = await api('/groups', 'POST', { name: 'Ambiguous labels', type: 'select', proxies: ['A=B'] });
+  assert.equal(rejected.status, 400);
+  const group = (await api('/groups', 'POST', { name: 'A_B', type: 'select', proxies: [`node:${a.nodes[0].id}`, `node:${b.nodes[0].id}`, `node:${duplicate.nodes[0].id}`] })).data;
+  const profile = (await api('/profiles', 'POST', { name: 'Collisions', nodeFilter: { mode: 'all', sourceIds: [a.id, b.id, duplicate.id] }, selectedGroupIds: [group.id] })).data;
+  const preview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'loon', expandNodes: true });
+  assert.equal(preview.success, true);
+  const members = preview.data.split('\n').find((line: string) => line.startsWith('A_B = select'));
+  assert.ok(members, preview.data);
+  for (const created of [a, b, duplicate]) {
+    const provider = await fetch(`${origin}/s/${profile.token}/source/${created.id}/loon`).then(response => response.text());
+    const emittedName = provider.split('\n').find(line => line.includes(created.nodes[0].server))!.split(' = ')[0];
+    assert.ok(members.includes(emittedName), `${emittedName}: ${members}`);
+    assert.ok(preview.data.includes(`${emittedName} = Shadowsocks,${created.nodes[0].server},`));
+  }
+});
+
+test('successful upstream removal clears references and a returning connection starts with fresh local settings', async () => {
+  const created = await add('/returning', clash([ss('Returning', 'returning.example')]));
+  const old = created.nodes[0];
+  await api(`/nodes/${old.id}`, 'PUT', { name: 'Old setting', enabled: false });
+  const profile = (await api('/profiles', 'POST', { name: 'Returning selected', nodeFilter: { selectedNodeIds: [old.id] } })).data;
+  bodies.set('/returning', 'proxies: []');
+  await api(`/sources/${created.id}/refresh`, 'POST', {});
+  assert.deepEqual((await source(created.id)).nodes, []);
+  bodies.set('/returning', clash([ss('Returning', 'returning.example')]));
+  await api(`/sources/${created.id}/refresh`, 'POST', {});
+  const returned = (await source(created.id)).nodes[0];
+  assert.notEqual(returned.id, old.id);
+  assert.equal(returned.name, 'Returning');
+  assert.equal(returned.enabled, true);
+  assert.equal((await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'mihomo', expandNodes: true })).nodeCount, 0);
+});
+
+test('QuanX labels and option order preserve identity while unknown or repeated connection options remain significant', async () => {
+  const created = await add('/qx-identity', '[server_local]\nshadowsocks=qx.example:443, method=aes-128-gcm, password=secret, x-option=one, x-option=two, tag=First\n');
+  const original = created.nodes[0];
+  await api(`/nodes/${original.id}`, 'PUT', { name: 'Local QX' });
+  bodies.set('/qx-identity', '[server_local]\nshadowsocks=qx.example:443, tag=Renamed, x-option=one, x-option=two, password=secret, method=aes-128-gcm\n');
+  await api(`/sources/${created.id}/refresh`, 'POST', {});
+  assert.equal((await source(created.id)).nodes[0].id, original.id);
+  assert.equal((await source(created.id)).nodes[0].name, 'Local QX');
+  bodies.set('/qx-identity', '[server_local]\nshadowsocks=qx.example:443, tag=Renamed, x-option=two, x-option=one, password=secret, method=aes-128-gcm\n');
+  await api(`/sources/${created.id}/refresh`, 'POST', {});
+  assert.notEqual((await source(created.id)).nodes[0].id, original.id);
+});
+
+test('a local rename and disable saved during an upstream fetch survives its successful commit', async () => {
+  const created = await add('/concurrent', clash([ss('Before', 'concurrent.example')]));
+  const node = created.nodes[0];
+  const held = new Promise<void>(resolve => { onHeld = resolve; });
+  holdPath = '/concurrent';
+  const refreshing = api(`/sources/${created.id}/refresh`, 'POST', {});
+  await held;
+  try {
+    assert.equal((await api(`/nodes/${node.id}`, 'PUT', { name: 'Saved during fetch', enabled: false })).success, true);
+    bodies.set('/concurrent', clash([ss('After upstream', 'concurrent.example')]));
+  } finally { releaseResponse?.(); }
+  assert.equal((await refreshing).success, true);
+  const updated = (await source(created.id)).nodes[0];
+  assert.equal(updated.id, node.id);
+  assert.equal(updated.name, 'Saved during fetch');
+  assert.equal(updated.originalName, 'After upstream');
+  assert.equal(updated.enabled, false);
+});
+
+test('failed local setting and source deletion saves publish no partial mutation', async () => {
+  const created = await add('/save-failure', clash([ss('Saved', 'save.example')]));
+  const node = created.nodes[0];
+  const before = (await api('/config')).data;
+  await chmod(join(directory, 'data'), 0o500);
+  try {
+    const local = await api(`/nodes/${node.id}`, 'PUT', { name: 'Unsaved', enabled: false });
+    assert.equal(local.status, 500);
+    assert.deepEqual((await api('/config')).data, before);
+    const deleted = await api(`/sources/${created.id}`, 'DELETE');
+    assert.equal(deleted.status, 500);
+    assert.deepEqual((await api('/config')).data, before);
+  } finally { await chmod(join(directory, 'data'), 0o700); }
+  await stopApp(); await startApp();
+  assert.deepEqual((await api('/config')).data, before);
+});
+
+test('YAML group imports bind node and source labels once and preserve unavailable references on reads and edits', async () => {
+  const created = await add('/yaml-group', clash([ss('YAML member', 'yaml-group.example')]));
+  const imported = await api('/groups/batch-import', 'POST', { text: yaml.dump({ 'proxy-groups': [{ name: 'YAML group', type: 'select', proxies: ['YAML member'], use: [created.name, 'missing-source-id'] }] }) });
+  assert.equal(imported.success, true);
+  const group = imported.data.find((g: any) => g.name === 'YAML group');
+  assert.deepEqual(group.proxies, [`node:${created.nodes[0].id}`]);
+  assert.deepEqual(group.sources, [created.id, 'missing-source-id']);
+  await api(`/nodes/${created.nodes[0].id}`, 'PUT', { name: 'Renamed YAML member' });
+  const listed = (await api('/groups')).data.find((g: any) => g.id === group.id);
+  assert.deepEqual(listed.sources, [created.id, 'missing-source-id']);
+  const edited = await api(`/groups/${group.id}`, 'PUT', { ...listed, name: 'Edited YAML group' });
+  assert.deepEqual(edited.data.sources, [created.id, 'missing-source-id']);
+  assert.deepEqual(edited.data.proxies, [`node:${created.nodes[0].id}`]);
 });

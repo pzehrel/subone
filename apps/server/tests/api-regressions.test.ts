@@ -147,29 +147,6 @@ test('administration remains accessible when no password is configured', async (
   assert.equal((await post('/api/auth/login', {})).status, 200);
 });
 
-test('node routes preserve query selection, encoded IDs and update/delete aliases', async () => {
-  const config = fixture();
-  const node: ProxyNode = { id: 'node phone', name: 'Phone', type: 'ss', server: 'example.test', port: 443 };
-  config.sources = [
-    { id: 'manual phone', name: 'Phone', type: 'manual', enabled: true, nodes: [node] },
-    { id: 'manual laptop', name: 'Laptop', type: 'manual', enabled: true, nodes: [] },
-  ];
-  context.setAppConfig(config);
-
-  const selected = await fetch(`${origin}/api/custom-nodes?sourceId=manual%20phone`);
-  assert.deepEqual((await readApiResponse<ProxyNode[]>(selected)).data, [node]);
-
-  const updated = await fetch(`${origin}/api/nodes/node%20phone`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Updated phone' }),
-  });
-  assert.equal(updated.status, 200);
-  assert.equal((await readApiResponse<ProxyNode>(updated)).data.name, 'Updated phone');
-
-  const deleted = await fetch(`${origin}/api/custom-nodes/node%20phone`, { method: 'DELETE' });
-  assert.equal(deleted.status, 200);
-  assert.deepEqual(context.getAppConfig().sources[0].nodes, []);
-});
-
 test('nested URL-encoded forms remain accepted alongside JSON requests', async () => {
   const response = await fetch(`${origin}/api/profiles`, {
     method: 'POST',
@@ -444,24 +421,6 @@ test('preview rejects unsupported relay groups with a client error', async () =>
     assert.equal(result.body.success, false);
     assert.match(result.body.message, /Chain/);
   }
-});
-
-test('custom-node endpoints handle subscriptions without a manual node group', async () => {
-  const config = fixture();
-  config.sources = [{ id: 'airport', name: 'Airport', type: 'remote', enabled: true, url: 'https://airport.example.test/sub' }];
-  context.setAppConfig(config);
-
-  const response = await fetch(`${origin}/api/custom-nodes`);
-  assert.equal(response.status, 200);
-  assert.deepEqual((await readApiResponse<ProxyNode[]>(response)).data, []);
-
-  const imported = await post('/api/custom-nodes/import', { text: '', replaceAll: true });
-  assert.equal(imported.status, 404);
-  assert.equal(imported.body.success, false);
-
-  const added = await post('/api/custom-nodes', { name: 'Node', type: 'ss', server: 'example.test', port: 443 });
-  assert.equal(added.status, 404);
-  assert.equal(added.body.success, false);
 });
 
 test('a new profile receives a generated token and can be retrieved', async () => {

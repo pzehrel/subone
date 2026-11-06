@@ -121,7 +121,7 @@ function parseVless(uri: string, index: number, countryPatterns?: CountryPattern
 
   const security = params.get('security') || 'none';
   const type = (params.get('type') || 'tcp').toLowerCase();
-  const flow = params.get('flow') || (name.toLowerCase().includes('vision') || name.toLowerCase().includes('xtls') ? 'xtls-rprx-vision' : undefined);
+  const flow = params.get('flow') || undefined;
   const sni = params.get('sni') || undefined;
   const fp = params.get('fp') || 'chrome';
   const rawPbk = params.get('pbk');
@@ -797,7 +797,7 @@ function parseV2rayN(uri: string, index: number, countryPatterns?: CountryPatter
   const path = json.Path || json.path || undefined;
   const host = json.RequestHost || json.requestHost || undefined;
 
-  if (name.toLowerCase().includes('h2') || network === 'h2' || network === 'http') {
+  if (network === 'h2' || network === 'http') {
     network = 'http';
   }
 
@@ -848,7 +848,7 @@ function parseV2rayN(uri: string, index: number, countryPatterns?: CountryPatter
   } else if (type === 'vless') {
     node.uuid = json.Id || json.id || json.Password || '';
     node.tls = json.StreamSecurity === 'tls' || json.StreamSecurity === 'reality' || Boolean(json.PublicKey);
-    node.flow = json.Flow || json.flow || (name.toLowerCase().includes('vision') || name.toLowerCase().includes('xtls') ? 'xtls-rprx-vision' : undefined);
+    node.flow = json.Flow || json.flow || undefined;
     if (json.StreamSecurity === 'reality' || json.PublicKey) {
       node.reality = {
         enabled: true,
@@ -880,7 +880,7 @@ function parseV2rayN(uri: string, index: number, countryPatterns?: CountryPatter
     node.username = json.Username || json.username || json.Password || '';
     node.password = json.Password || json.password || '';
     node.tls = true;
-    const isQuic = Boolean(extra.NaiveQuic || extra.quic || name.toLowerCase().includes('quic'));
+    const isQuic = Boolean(extra.NaiveQuic || extra.quic);
     node.quic = isQuic;
     if (isQuic) {
       node.quicCongestionControl = extra.CongestionControl || extra.congestion_control || 'bbr';

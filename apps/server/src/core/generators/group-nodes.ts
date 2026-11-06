@@ -2,7 +2,7 @@ import { ProxyGroupItem, ProxyNode, SubscriptionSource } from '../../types/index
 import { cleanSourceOrGroupName } from './common';
 
 export function resolveGroupNodes(group: ProxyGroupItem, nodes: ProxyNode[], sources: SubscriptionSource[]): ProxyNode[] {
-  nodes = nodes.filter(node => node.enabled !== false && sources.some(source => source.enabled && source.id === node.sourceId));
+  nodes = nodes.filter(node => node.enabled !== false && (sources.length === 0 || sources.some(source => source.enabled && source.id === node.sourceId)));
   const uses = group.sources || group.use || [];
   const normalize = (value: string) => cleanSourceOrGroupName(value).trim().toLowerCase();
   const wanted = new Set(uses.map(normalize));
