@@ -92,14 +92,42 @@ const stableJson = (value: any): string => JSON.stringify(value, (_key, item) =>
 
 function templateDocument(template: ConfigTemplate): any {
   try {
+    if (template.type === 'loon') return { loonLines: template.content.split('\n') };
     if (template.type === 'singbox') return JSON.parse(template.content);
     if (['mihomo', 'egern'].includes(template.type)) return yaml.load(template.content);
   } catch { /* Editing an incomplete template must remain possible. */ }
   return undefined;
 }
 
+function loonSections(document: any): { section: string; line: string; index: number }[] {
+  let section = '';
+  return (document?.loonLines || []).map((line: string, index: number) => {
+    const header = /^\s*\[([^\]]+)\]/.exec(line);
+    if (header) section = header[1].toLowerCase();
+    return { section, line, index };
+  });
+}
+
+/** Split native INI parameters without splitting quoted URLs or logical rule expressions. */
+export function splitLoonParameters(value: string): string[] {
+  const parts: string[] = []; let start = 0; let quote = false; let depth = 0;
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
+    if (char === '"') quote = !quote;
+    if (quote) continue;
+    if (char === '(') depth++;
+    else if (char === ')') depth--;
+    else if (char === ',' && depth === 0) { parts.push(value.slice(start, index)); start = index + 1; }
+  }
+  parts.push(value.slice(start)); return parts;
+}
+
 function ownedOutboundNames(document: any, type: ClientType): Set<string> {
   if (type === 'egern') return new Set([...templateArray(document?.proxies), ...templateArray(document?.policy_groups)].map(entry => entry && typeof entry === 'object' ? (Object.values(entry)[0] as any)?.name : undefined).filter((name): name is string => typeof name === 'string'));
+  if (type === 'loon') return new Set(loonSections(document).flatMap(({ section, line }) => {
+    if (!['proxy', 'proxy group', 'remote proxy', 'remote filter'].includes(section) || /^\s*[#;]/.test(line)) return [];
+    const match = /^\s*([^=]+?)\s*=/.exec(line); return match ? [match[1]] : [];
+  }));
   const entries = type === 'singbox' ? templateArray(document?.outbounds) : [...templateArray(document?.proxies), ...templateArray(document?.['proxy-groups'])];
   return new Set(entries.map((entry: any) => type === 'singbox' ? entry?.tag : entry?.name).filter((name: unknown): name is string => typeof name === 'string'));
 }
@@ -117,7 +145,33 @@ function templateSlots(document: any, type: ClientType): TemplateSlot[] {
   };
   const ownerKey = (entry: any, index: number, name: string) => typeof entry?.[name] === 'string' ? entry[name] : `#${index}`;
   if (!document || typeof document !== 'object') return slots;
-  if (type === 'singbox') {
+  if (type === 'loon') {
+    for (const { section, line, index } of loonSections(document)) {
+      if (!line.trim() || /^\s*[#;\[]/.test(line)) continue;
+      const assignment = /^([^=]+?)=(.*)$/.exec(line);
+      const prefix = section === 'proxy group' && assignment ? assignment[1] + '=' : '';
+      const parts = splitLoonParameters(prefix ? assignment![2] : line);
+      const addPart = (part: number, owner: unknown[], option = '') => {
+        const value = parts[part]; const content = option ? value.slice(value.indexOf('=') + 1) : value;
+        slots.push({ slot: JSON.stringify([type, ...owner, part]), literal: content.trim(), write: target => {
+          const spacing = /^(\s*).*?(\s*)$/.exec(content)!;
+          parts[part] = (option ? value.slice(0, value.indexOf('=') + 1) : '') + spacing[1] + target + spacing[2];
+          document.loonLines[index] = prefix + parts.join(',');
+        } });
+      };
+      if (section === 'proxy group' && assignment) {
+        for (let part = 1; part < parts.length; part++) if (!parts[part].includes('=')) addPart(part, ['group', assignment[1].trim()]);
+      } else if (section === 'rule') {
+        let target = parts.length - 1;
+        while (target > 0 && /^(no-resolve|src)$/i.test(parts[target].trim())) target--;
+        if (target > 0) { const identity = [...parts]; identity[target] = '$outbound'; addPart(target, ['rule', identity.join(',')]); }
+      } else if (section === 'remote rule') {
+        const policy = parts.findIndex(part => /^\s*policy\s*=/.test(part));
+        if (policy >= 0) addPart(policy, ['remote-rule', parts[0].trim()], 'policy');
+        else if (parts.length > 1 && !parts[1].includes('=')) addPart(1, ['remote-rule', parts[0].trim()]);
+      }
+    }
+  } else if (type === 'singbox') {
     for (const [index, server] of templateArray(document.dns?.servers).entries()) add(['dns', ownerKey(server, index, 'tag')], server, 'detour');
     for (const [index, outbound] of templateArray(document.outbounds).entries()) {
       const owner = ['outbound', ownerKey(outbound, index, 'tag')];
@@ -228,7 +282,7 @@ export function resolveTemplateReferences(template: ConfigTemplate, nodes: Proxy
     if (name) slot.write(name);
     else if (nodeId || groupId || reference.target.startsWith('unresolved:')) slot.write(reference.target);
   }
-  return template.type === 'singbox' ? JSON.stringify(document) : yaml.dump(document, { lineWidth: -1, noRefs: true });
+  return template.type === 'loon' ? document.loonLines.join('\n') : template.type === 'singbox' ? JSON.stringify(document) : yaml.dump(document, { lineWidth: -1, noRefs: true });
 }
 
 /** Removed owned nodes never retarget a stale selection to another source's lookalike. */
