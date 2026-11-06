@@ -379,7 +379,8 @@ export function generateSingboxDocument(
   proxyGroups: ProxyGroupItem[] = [],
   rulesList: UnifiedRuleItem[] = [],
   sources: any[] = [],
-  ordinaryNodeIds?: ReadonlySet<string>
+  ordinaryNodeIds?: ReadonlySet<string>,
+  ordinaryGroupIds?: ReadonlySet<string>
 ): { document: any; nodeTags: Map<string, string[]> } {
   let doc: any;
   try {
@@ -424,7 +425,7 @@ export function generateSingboxDocument(
     return ob;
   }).filter(Boolean);
 
-  doc = injectUnifiedToSingbox(doc, proxyOutbounds, proxyGroups, rulesList, sources, ordinaryNodeIds);
+  doc = injectUnifiedToSingbox(doc, proxyOutbounds, proxyGroups, rulesList, sources, ordinaryNodeIds, ordinaryGroupIds);
 
   const nodeTags = new Map<string, string[]>();
   for (const outbound of doc.outbounds || []) {
@@ -440,7 +441,8 @@ export function injectUnifiedToSingbox(
   proxyGroups: ProxyGroupItem[],
   rulesList: UnifiedRuleItem[],
   sources: any[] = [],
-  ordinaryNodeIds?: ReadonlySet<string>
+  ordinaryNodeIds?: ReadonlySet<string>,
+  ordinaryGroupIds?: ReadonlySet<string>
 ): any {
   if (!doc.route) doc.route = {};
   if (!doc.outbounds) doc.outbounds = [];
@@ -527,16 +529,17 @@ export function injectUnifiedToSingbox(
       ? grp.sources
       : (grp.use && grp.use.length > 0 ? grp.use : []);
 
+    const groupCandidates = ordinaryGroupIds && !ordinaryGroupIds.has(grp.id) && targetSources.length ? proxyOutbounds : ordinaryOutbounds;
     let matchedNodes: any[] = [];
     if (targetSources.length > 0) {
       const targetNormalized = new Set(targetSources.map(s => cleanSourceOrGroupName(s).toLowerCase()));
-      matchedNodes = ordinaryOutbounds.filter(p => {
+      matchedNodes = groupCandidates.filter(p => {
         const sName = cleanSourceOrGroupName(p._sourceName || '').toLowerCase();
         const sId = (p._sourceId || '').trim().toLowerCase();
         return targetNormalized.has(sName) || targetNormalized.has(sId);
       });
     } else {
-      matchedNodes = [...ordinaryOutbounds];
+      matchedNodes = [...groupCandidates];
     }
 
     if (grp.filter && grp.filter.trim()) {
@@ -626,8 +629,9 @@ export function injectUnifiedToSingbox(
   const hasGlobal = groupOutbounds.some((g: any) => g.tag === 'GLOBAL') ||
     customTemplateOutbounds.some((g: any) => g.tag === 'GLOBAL');
   if (!hasGlobal) {
-    const mainSelectorTag = effectiveGroups.find(g => g.name === '🚀 节点选择')?.name ||
-      effectiveGroups[0]?.name ||
+    const ordinaryGroups = effectiveGroups.filter(group => !ordinaryGroupIds || ordinaryGroupIds.has(group.id));
+    const mainSelectorTag = ordinaryGroups.find(g => g.name === '🚀 节点选择')?.name ||
+      ordinaryGroups[0]?.name ||
       '🎯 本地直连';
     const globalOutbounds = Array.from(new Set([mainSelectorTag, ...allNodeTags]));
     groupOutbounds.unshift({

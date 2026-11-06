@@ -450,6 +450,10 @@ apiRouter.put('/groups/:id', (c) => {
     const candidate = structuredClone(appConfig);
     candidate.templates = candidate.templates.map(template => prepareTemplateReferences(template, candidate, template));
     candidate.proxyGroups = candidate.proxyGroups.map(group => normalizeGroupReferences(group, candidate));
+    const previousGroup = candidate.proxyGroups[idx];
+    if (previousGroup.name !== updated.name && candidate.proxyGroups.filter(group => group.name === previousGroup.name).length === 1) {
+      for (const rule of candidate.rulesList) if (rule.outbound === previousGroup.name) rule.outbound = updated.name;
+    }
     candidate.proxyGroups[idx] = normalizeGroupReferences(updated, candidate);
     commitConfig(candidate);
     return c.json({ success: true, data: candidate.proxyGroups[idx] });

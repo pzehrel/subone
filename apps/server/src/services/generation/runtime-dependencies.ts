@@ -1,6 +1,6 @@
 import { defaultMihomoDohEgress } from '../../core/parser/source-doh';
 import { isIP } from 'node:net';
-import type { AppConfig, ProxyGroupItem, ProxyNode, SourceDohReference, SubscriptionSource } from '../../types';
+import type { AppConfig, ClientType, ProxyGroupItem, ProxyNode, SourceDohReference, SubscriptionSource } from '../../types';
 import type { GenerationPlan, GenerationDiagnostic } from './types';
 
 type Document = Record<string, any>;
@@ -100,8 +100,16 @@ export interface RuntimeNodeRequirement {
 export interface RuntimeGroupRequirement { groupId: string; bindingSourceId: string; reason: string[] }
 export interface RuntimeDependencyCollection { nodes: RuntimeNodeRequirement[]; groups: RuntimeGroupRequirement[] }
 
-/** Inventory traversal for dependency completion. It never edits the plan or silently enables objects. */
+type RuntimeDependencyCollector = (plan: GenerationPlan) => RuntimeDependencyCollection;
+const collectors = new Map<ClientType, RuntimeDependencyCollector>();
+export function registerRuntimeDependencyCollector(target: ClientType, collector: RuntimeDependencyCollector): void { collectors.set(target, collector); }
 export function collectRuntimeDependencies(plan: GenerationPlan): RuntimeDependencyCollection {
+  if (plan.target.mode === 'nodes') return { nodes: [], groups: [] };
+  return collectors.get(plan.target.type)?.(plan) ?? collectSingboxRuntimeDependencies(plan);
+}
+
+/** Inventory traversal for dependency completion. It never edits the plan or silently enables objects. */
+function collectSingboxRuntimeDependencies(plan: GenerationPlan): RuntimeDependencyCollection {
   const result: RuntimeDependencyCollection = { nodes: [], groups: [] };
   if (plan.target.mode === 'nodes' || plan.target.type !== 'singbox') return result;
   let template: Document;
@@ -135,7 +143,9 @@ export function collectRuntimeDependencies(plan: GenerationPlan): RuntimeDepende
     for (const member of group.proxies || []) templateOutbound(member, owner, [...reason, group.name]);
     // Mounted candidates follow the same ordinary selection as generated automatic groups.
     const mounts = group.sources ?? group.use;
-    let candidates = mounts?.length ? plan.inventory.nodes.filter(entry => { const source = sourceOf(entry.sourceId); return mounts.includes(entry.sourceId) || !!source && mounts.includes(source.name); }).map(entry => entry.node) : plan.ordinaryNodes;
+    const candidatesPool = plan.groups.some(candidate => candidate.id === id) && !plan.dependencyGroupIds.includes(id) ? plan.ordinaryNodes : plan.inventory.nodes.filter(entry => entry.state === 'enabled').map(entry => entry.node);
+    let candidates = mounts?.length ? candidatesPool.filter(candidate => {
+      const entry = plan.inventory.nodes.find(entry => entry.node.id === candidate.id)!; const source = sourceOf(entry.sourceId); return mounts.includes(entry.sourceId) || !!source && mounts.includes(source.name); }) : plan.ordinaryNodes;
     if (group.filter) { try { const regex = new RegExp(group.filter.replace(/\(\?i\)/gi, ''), 'i'); candidates = candidates.filter(node => regex.test(node.name)); } catch { /* Actual generator reports invalid patterns. */ } }
     if (group.type !== 'relay' && (mounts?.length || group.filter || !group.proxies?.length)) for (const candidate of candidates) node(candidate.id, owner, [...reason, group.name]);
   };
