@@ -52,6 +52,7 @@ test('Loon projects separate source node DNS lists in order with partial transpo
   const preview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'loon', expandNodes: true });
   assert.equal(preview.success, true, preview.message);
   assert.equal(preview.generation.target.version, '3.5.3');
+  if (process.env.SUBONE_LOON_ARTIFACT) await writeFile(process.env.SUBONE_LOON_ARTIFACT, preview.data);
   assert.deepEqual(preview.generation.bindings.map((binding: any) => [binding.status, binding.appliedServiceIds]), [['degraded', a.doh.services.map((service: any) => service.id)], ['degraded', b.doh.services.map((service: any) => service.id)]]);
   assert.match(proxyLines(preview.data).find(line => line.includes('node.a.example'))!, /server-dns="https:\/\/192\.0\.2\.1\/dns-query,https:\/\/192\.0\.2\.2\/second"$/);
   assert.match(proxyLines(preview.data).find(line => line.includes('node.b.example'))!, /server-dns="https:\/\/192\.0\.2\.3\/dns-query"$/);
