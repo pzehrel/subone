@@ -510,7 +510,7 @@ export function injectUnifiedToMihomo(
 
     const acceptsNodes = grp.includeAll || Boolean(grp.filter) || groupUses.length > 0 ||
       ['👉 手动选择', '♻️ 自动选择'].includes(grp.name);
-    if (options?.expandNodes && acceptsNodes) {
+    if ((options?.expandNodes || options?.dependencyGroupIds?.has(grp.id)) && acceptsNodes) {
       const groupSources = options?.dependencyGroupIds?.has(grp.id)
         ? [...sources, ...candidates.filter(node => node.sourceId && !sources.some(source => source.id === node.sourceId)).map(node => ({ id: node.sourceId!, name: node.sourceName || node.sourceId!, enabled: true, nodes: [] } as unknown as SubscriptionSource))]
         : sources;

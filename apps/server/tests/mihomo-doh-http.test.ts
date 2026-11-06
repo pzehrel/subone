@@ -69,7 +69,7 @@ test('Mihomo applies ordered source DoH by server domain and preserves native te
 
 test('same server domain with incompatible sources keeps template policy and reports every unapplied binding', async () => {
   const a = await add('/conflict-a', 'shared.node.example', ['https://a.conflict.example/dns-query']);
-  const b = await add('/conflict-b', 'SHARED.node.example', ['https://b.conflict.example/dns-query']);
+  const b = await add('/conflict-b', 'shared.node.example', ['https://b.conflict.example/dns-query']);
   const content = structuredClone(template); content.dns['proxy-server-nameserver-policy']['shared.node.example'] = ['tls://192.0.2.55'];
   const { profile } = await profileFor([a, b], content);
   const result = await preview(profile); assert.equal(result.success, true, JSON.stringify(result));
@@ -199,4 +199,76 @@ test('actual generated Mihomo1.19.33 configuration passes native check and bound
   assert.doesNotMatch(started.stdout + started.stderr, /level=fatal|Parse config error/i);
   if (process.env.SUBONE_MIHOMO_ARTIFACT) await writeFile(process.env.SUBONE_MIHOMO_ARTIFACT, result.data);
   await rm(runtime, { recursive: true, force: true });
+});
+
+test('omitted necessary exits become static dependencies while ordinary groups, GLOBAL and providers retain only the selection', async () => {
+  const source = await add('/omitted-egress', 'ordinary.omitted.example', ['https://192.0.2.53/dns-query#Exit'], { proxies: [{ name: 'Ordinary selected', type: 'socks5', server: 'ordinary.omitted.example', port: 1080 }, { name: 'Exit', type: 'socks5', server: '192.0.2.30', port: 1080 }] });
+  const ordinary = source.nodes.find((node: any) => node.server === 'ordinary.omitted.example'); const exit = source.nodes.find((node: any) => node.server === '192.0.2.30');
+  const { profile, group } = await profileFor([source], template, { mode: 'manual', selectedNodeIds: [ordinary.id] });
+  const result = await preview(profile); assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(result.generation.nodeCount, 1); assert.equal(result.generation.dependencyNodeCount, 1);
+  const doc: any = yaml.load(result.data);
+  assert.ok(doc.proxies.some((entry: any) => entry.server === '192.0.2.30'));
+  assert.deepEqual(doc['proxy-groups'].find((entry: any) => entry.name === group.name).proxies, ['Ordinary selected']);
+  assert.equal(doc['proxy-groups'].find((entry: any) => entry.name === 'GLOBAL').proxies.includes('Exit'), false);
+  const response = await fetch(`${origin}/s/${profile.token}/source/${source.id}?target=mihomo`); assert.equal(response.status, 200);
+  assert.deepEqual((yaml.load(await response.text()) as any).proxies.map((entry: any) => entry.name), ['Ordinary selected']);
+  const remote = await preview(profile, false); assert.equal(remote.success, true, JSON.stringify(remote));
+  const remoteDoc: any = yaml.load(remote.data); assert.ok(remoteDoc.proxies.some((entry: any) => entry.name === 'Exit'));
+  assert.match(remoteDoc['proxy-providers'][source.name].url, new RegExp(`/s/${profile.token}/source/${source.id}\\?target=mihomo$`));
+  await api(`/nodes/${exit.id}`, 'PUT', { enabled: false });
+  const disabled = await preview(profile); assert.equal(disabled.status, 422);
+  assert.ok(disabled.generation.diagnostics.some((entry: any) => entry.dependencyState === 'node-disabled'));
+  await api(`/nodes/${exit.id}`, 'PUT', { enabled: true }); await stopApp(); await startApp();
+  assert.equal((await preview(profile)).generation.dependencyNodeCount, 1);
+});
+
+test('template bootstrap reaches unselected managed strategies with stable source-local dependencies and checks all members', async () => {
+  const source = await add('/managed-bootstrap-a', 'node.managed-bootstrap.example', ['https://dns.managed-bootstrap.example/dns-query']);
+  const exitSource = await add('/managed-bootstrap-b', '192.0.2.41', []);
+  const exit = exitSource.nodes[0];
+  const managed = (await api('/groups', 'POST', { name: 'Managed bootstrap', type: 'select', sources: [exitSource.id] })).data;
+  const content = structuredClone(template); content.dns['default-nameserver'] = ['https://127.0.0.1/dns-query#Managed%20bootstrap'];
+  const { profile } = await profileFor([source], content);
+  const result = await preview(profile); assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(result.generation.nodeCount, 1); assert.equal(result.generation.dependencyNodeCount, 1);
+  assert.equal(result.generation.dependencyNodes[0].id, exit.id);
+  assert.equal((await preview(profile, false)).success, true);
+  const doc: any = yaml.load(result.data);
+  const actualExit = doc.proxies.find((entry: any) => entry.server === '192.0.2.41');
+  assert.deepEqual(doc['proxy-groups'].find((entry: any) => entry.name === 'Managed bootstrap').proxies, [actualExit.name]);
+  const global = doc['proxy-groups'].find((entry: any) => entry.name === 'GLOBAL'); assert.equal(global.proxies.includes('Managed bootstrap'), false); assert.equal(global.proxies.includes(actualExit.name), false);
+  await api(`/groups/${managed.id}`, 'PUT', { name: 'Renamed bootstrap' }); await api(`/nodes/${exit.id}`, 'PUT', { name: 'Renamed managed exit' });
+  await stopApp(); await startApp();
+  const renamed = await preview(profile); assert.equal(renamed.success, true, JSON.stringify(renamed));
+  assert.match((yaml.load(renamed.data) as any).dns['default-nameserver'][0], /#Renamed%20bootstrap$/);
+  await api(`/sources/${exitSource.id}`, 'PUT', { enabled: false });
+  const disabled = await preview(profile); assert.equal(disabled.status, 422, JSON.stringify(disabled));
+  assert.ok(disabled.generation.diagnostics.some((entry: any) => entry.code === 'source-doh-dependency-missing'));
+});
+
+test('a capacity-limited binding does not add any unused DNS exit from another service in its array', async () => {
+  const source = await add('/unused-array', 'node.unused-array.example', ['https://192.0.2.53/dns-query#Exit', 'https://192.0.2.54/dns-query#Dynamic'], {
+    proxies: [{ name: 'Ordinary', type: 'socks5', server: 'node.unused-array.example', port: 1080 }, { name: 'Exit', type: 'socks5', server: '192.0.2.55', port: 1080 }],
+    'proxy-groups': [{ name: 'Dynamic', type: 'select', use: ['unavailable-provider'] }],
+  });
+  const ordinary = source.nodes.find((node: any) => node.server === 'node.unused-array.example');
+  const { profile } = await profileFor([source], template, { mode: 'manual', selectedNodeIds: [ordinary.id] });
+  const result = await preview(profile); assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(result.generation.bindings[0].status, 'unapplied'); assert.equal(result.generation.dependencyNodeCount, 0);
+  assert.deepEqual((yaml.load(result.data) as any).dns, template.dns);
+  assert.equal((yaml.load(result.data) as any).proxies.some((entry: any) => entry.server === '192.0.2.55'), false);
+});
+
+test('prospective bootstrap dependencies with conflicting server-domain bindings degrade before adding unused nodes', async () => {
+  const source = await add('/prospective-a', 'shared.prospective.example', ['https://dns.prospective.example/dns-query']);
+  const other = await add('/prospective-b', 'shared.prospective.example', ['https://other.prospective.example/dns-query']);
+  const managed = (await api('/groups', 'POST', { name: 'Prospective bootstrap', type: 'select', sources: [other.id] })).data;
+  const content = structuredClone(template); content.dns['default-nameserver'] = [`https://127.0.0.1/dns-query#${encodeURIComponent(managed.name)}`];
+  const { profile } = await profileFor([source], content);
+  const result = await preview(profile); assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(result.generation.bindings[0].status, 'unapplied'); assert.equal(result.generation.dependencyNodeCount, 0);
+  assert.ok(result.generation.diagnostics.some((entry: any) => entry.code === 'source-doh-domain-conflict'));
+  assert.deepEqual((yaml.load(result.data) as any).dns['proxy-server-nameserver-policy'], content.dns['proxy-server-nameserver-policy']);
+  assert.equal((yaml.load(result.data) as any)['proxy-groups'].some((entry: any) => entry.name === managed.name), false);
 });

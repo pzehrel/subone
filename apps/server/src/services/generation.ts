@@ -1,6 +1,6 @@
 import yaml from 'js-yaml';
 import { getAppConfig } from '../context';
-import { generateMihomoConfig, nodeToMihomoProxy } from '../core/generators/mihomo-generator';
+import { generateMihomoConfig } from '../core/generators/mihomo-generator';
 import { generateSingboxDocument } from '../core/generators/singbox-generator';
 import { generateLoonConfig, nodeToLoonProxy } from '../core/generators/loon-generator';
 import { generateQuantumultXConfig, nodeToQuantumultXProxy } from '../core/generators/quantumultx-generator';
@@ -10,7 +10,7 @@ import { getEffectiveNodes, getEffectiveNodesForProfile, getEffectiveGroupsForPr
 import { requiresExpandedNodes, resolveOutputReferences, prepareTemplateReferences, resolveTemplateReferences, templateOutboundNames, nodeReference, groupReference } from './node-references';
 import { createRuntimeInventory, collectRuntimeDependencies, validateSingboxRuntime } from './generation/runtime-dependencies';
 import { adaptSingboxDns } from './generation/adapters/singbox';
-import { adaptMihomoDns, validateMihomoRuntime } from './generation/adapters/mihomo';
+import { adaptMihomoDns, renderMihomoSource, validateMihomoRuntime } from './generation/adapters/mihomo';
 import { retainTemplateDns } from './generation/adapters/unsupported';
 import { GenerationError, generationMetadata, type GenerationOptions, type GenerationPlan } from './generation/types';
 export { GenerationError } from './generation/types';
@@ -124,10 +124,7 @@ export function renderGeneration(input: GenerationPlan) {
 export function renderSourceGeneration(plan: GenerationPlan, sourceId: string) {
   const nodes = plan.ordinaryNodes.filter(node => node.sourceId === sourceId);
   switch (plan.target.type) {
-    case 'mihomo': {
-      const final = yaml.load(renderGeneration({ ...plan, expandNodes: true }).output) as Record<string, any>;
-      return { output: yaml.dump({ proxies: nodes.map(node => final.proxies.find((proxy: any) => proxy.name === node.name) || nodeToMihomoProxy(node)) }, { indent: 2, lineWidth: -1, noRefs: true }), contentType: 'text/yaml; charset=utf-8' };
-    }
+    case 'mihomo': return renderMihomoSource(plan, sourceId);
     case 'loon': return { output: ['[Proxy]', ...nodes.map(nodeToLoonProxy)].join('\n'), contentType: 'text/plain; charset=utf-8' };
     case 'quantumultx': return { output: nodes.map(nodeToQuantumultXProxy).join('\n'), contentType: 'text/plain; charset=utf-8' };
     case 'egern': return { output: yaml.dump({ proxies: nodes.map(nodeToEgernProxy) }, { indent: 2, lineWidth: -1 }), contentType: 'text/yaml; charset=utf-8' };
