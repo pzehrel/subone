@@ -3,6 +3,7 @@ import { fetchAndParseSource, SourceParseError } from '../core/parser/fetcher';
 import { cleanSourceOrGroupName } from '../core/generators/common';
 import { saveConfig } from '../storage/db';
 import type { AppConfig, SubscriptionSource } from '../types';
+import { prepareSourceNodes } from './node-identity';
 import { collectNodesFromSources } from './profile-service';
 
 /** Publish only after the complete application candidate has been durably saved. */
@@ -53,6 +54,7 @@ export async function refreshSource(id: string, changes: Partial<SubscriptionSou
     }
     throw new SourceUpdateError(message, error instanceof SourceParseError ? 422 : 500);
   }
+  prepareSourceNodes(candidate, getAppConfig().sources.find(source => source.id === id));
   try { commitSource(candidate); } catch (error) {
     throw new SourceUpdateError(error instanceof Error ? error.message : '保存失败', 500);
   }

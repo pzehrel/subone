@@ -4,6 +4,7 @@ export function applyExtractionRules(
   allNodes: ProxyNode[],
   rules: ExtractionRule[]
 ): ProxyNode[] {
+  allNodes = allNodes.filter(node => node.enabled !== false);
   const activeRules = rules.filter(r => r.enabled);
 
   // If no active rules, return all nodes with deduplication and name sanitization
@@ -100,6 +101,7 @@ export function applyExtractionRules(
 }
 
 export function deduplicateNodes(nodes: ProxyNode[]): ProxyNode[] {
+  nodes = nodes.filter(node => node.enabled !== false);
   // First pass: physical deduplication
   // Nodes are only treated as identical if both their connection config AND name match
   const seenKeys = new Set<string>();

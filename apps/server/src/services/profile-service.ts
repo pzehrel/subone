@@ -26,7 +26,7 @@ export function collectNodesFromSources(config: AppConfig): ProxyNode[] {
   const nodes: ProxyNode[] = [];
   (config.sources || []).forEach(s => {
     if (s.enabled && Array.isArray(s.nodes)) {
-      s.nodes.forEach(n => {
+      s.nodes.filter(node => node.enabled !== false).forEach(n => {
         n.sourceName = s.name;
         n.sourceId = s.id;
         nodes.push(n);
@@ -89,7 +89,7 @@ export async function getEffectiveNodesForProfile(profile: SubscriptionProfile):
     const seenKeys = new Set<string>();
     appConfig.sources.forEach(s => {
       if (selectedSourceIds.has(s.id) && s.enabled && s.nodes) {
-        s.nodes.forEach(n => {
+        s.nodes.filter(node => node.enabled !== false).forEach(n => {
           const key = n.id ? `${n.id}#${n.name}` : `${n.server}:${n.port}:${n.name}`;
           if (!seenKeys.has(key)) {
             seenKeys.add(key);

@@ -10,6 +10,7 @@ import { generateLoonConfig, nodeToLoonProxy } from '../core/generators/loon-gen
 import { generateQuantumultXConfig, nodeToQuantumultXProxy } from '../core/generators/quantumultx-generator';
 import { generateEgernConfig, nodeToEgernProxy } from '../core/generators/egern-generator';
 import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../core/generators/shadowrocket-generator';
+import { resolveOutputReferences } from '../services/node-references';
 import { UnsupportedProxyGroupError } from '../core/generators/errors';
 import { formatSubscriptionUserinfo, parseSubscriptionUserinfo } from '../core/parser/subscription-info';
 import { aggregateSubscriptionInfo } from '../../../../shared/subscription-info';
@@ -69,10 +70,11 @@ async function handlePrivateSubRequest(c: Context, forcedType?: ClientType) {
     }
 
     const templateContent = tpl?.content || '';
-    const nodes = await getEffectiveNodesForProfile(profile);
-    const groups = getEffectiveGroupsForProfile(profile, nodes);
+    let nodes = await getEffectiveNodesForProfile(profile);
+    let groups = getEffectiveGroupsForProfile(profile, nodes);
     const rules = getEffectiveRulesForProfile(profile);
-    const sources = getEffectiveSourcesForProfile(profile, nodes);
+    let sources = getEffectiveSourcesForProfile(profile, nodes);
+    ({ nodes, groups, sources } = resolveOutputReferences(nodes, groups, sources, detectedType));
     const baseUrl = getBaseUrl(c.req);
     const userinfo = formatSubscriptionUserinfo(aggregateSubscriptionInfo(sources.map(source => source.subscriptionInfo)));
     if (userinfo) c.header('subscription-userinfo', userinfo);
@@ -180,17 +182,19 @@ async function handleSourceSubRequest(c: Context, forcedTarget?: ClientType) {
   }
 
   try {
-    let sourceNodes: ProxyNode[] = matchedSource.nodes || [];
+    let sourceNodes: ProxyNode[] = (await getEffectiveNodesForProfile(profile)).filter(node => node.sourceId === matchedSource.id);
     const userinfo = Object.entries(parseSubscriptionUserinfo(matchedSource.subscriptionUserinfo))
       .map(([key, value]) => `${key}=${value}`).join('; ');
     if (userinfo) c.header('subscription-userinfo', userinfo);
 
     // 应用提取规则
-    sourceNodes = applyExtractionRules(sourceNodes, appConfig.rules);
+    // Effective profile selection already applies global extraction and local enable state.
 
     const queryTarget = (c.req.query('target') as string) || (c.req.query('type') as string) || (c.req.param('target') as string);
     const userAgent = c.req.header('user-agent');
     const detectedType = forcedTarget || detectClientType(userAgent, queryTarget, 'loon');
+
+    sourceNodes = resolveOutputReferences(sourceNodes, [], [matchedSource], detectedType).nodes;
 
     if (detectedType === 'loon') {
       const proxyLines = sourceNodes.map(nodeToLoonProxy);
