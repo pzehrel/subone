@@ -124,7 +124,7 @@ test('QuanX DNS entries preserve every endpoint, domain scope and SSID option th
   assert.deepEqual(saved.doh.services[2].raw, { line: 'doh-server = /*.internal.example/https://scoped.example/query, excluded_ssids=Mobile', value: '/*.internal.example/https://scoped.example/query', scope: '/*.internal.example/', options: ['excluded_ssids=Mobile'] });
   assert.equal(saved.doh.services[0].raw.options[0], 'included_ssids="Office, Guest"');
   assert.equal((await api(`/sources/${saved.id}/raw`)).data.content, Buffer.from(raw).toString('base64'));
-  for (const malformed of ['https:/broken.example/query', 'https://', 'https://good.example/query, https:/broken.example/query', '']) {
+  for (const malformed of ['https:/broken.example/query', 'https://', 'https://good.example/query, https:/broken.example/query', 'https://good.example/query, included_ssids=Home, https:/broken.example/query', 'https://good.example/query, included_ssids=', 'https://good.example/query, included_ssids=Home, unknown_option=bad', '']) {
     bodies.set('/quanx', `[dns]\ndoh-server = ${malformed}\n`);
     assert.equal((await api(`/sources/${saved.id}/refresh`, 'POST', {})).success, false, malformed);
     assert.deepEqual((await source(saved.id)).doh, saved.doh);
@@ -171,7 +171,7 @@ test('DoH target validation includes explicit connection fields without rejectin
   const created = await api('/sources', 'POST', { name: 'Strict connection', url: `${upstreamOrigin}/connection-fields` });
   assert.equal(created.success, true);
   const saved = await source(created.data.id);
-  for (const extra of [{ tls: 'broken' }, { headers: { Authorization: 123 } }, { domain_resolver: { strategy: 'ipv4_only' } }, { address_resolver: 123 }, { server: 'dns.example', path: '/bad%ZZ' }]) {
+  for (const extra of [{ tls: 'broken' }, { headers: { Authorization: 123 } }, { domain_resolver: { strategy: 'ipv4_only' } }, { address_resolver: 123 }, { server: 'dns.example', path: '/bad%ZZ' }, { domain_resolver: { server: 'bootstrap', strategy: 123 } }, { tls: { certificate: 123 } }, { connect_timeout: 123 }]) {
     bodies.set('/connection-fields', JSON.stringify({ outbounds: [], dns: { servers: [typed, { ...typed, ...extra }] } }));
     assert.equal((await api(`/sources/${saved.id}/refresh`, 'POST', {})).success, false, JSON.stringify(extra));
     assert.deepEqual((await source(saved.id)).doh, saved.doh);
@@ -183,4 +183,24 @@ test('DoH target validation includes explicit connection fields without rejectin
   assert.equal(relation.kind, 'ambiguous');
   assert.equal(relation.name, 'First');
   assert.deepEqual(relation.candidates, [...ambiguous.data.nodes.map((entry: any) => `node:${entry.id}`), `outbound:${ambiguous.data.doh.outbounds[0].id}`]);
+});
+
+test('Mihomo explicit outbound labels remain case-sensitive against builtin DIRECT and RULES', async () => {
+  bodies.set('/case-sensitive', `proxies:\n${node.replace('First', 'direct')}${node.replace('First', 'rules').replace('node.example', 'rules.example')}dns:\n nameserver: ['https://one.example/query#direct', 'https://two.example/query#rules']\n`);
+  const created = await api('/sources', 'POST', { name: 'Case-sensitive egress', url: `${upstreamOrigin}/case-sensitive` });
+  assert.equal(created.success, true);
+  assert.deepEqual(created.data.doh.services.map((entry: any) => entry.outbound), [
+    { kind: 'source-node', name: 'direct', nodeId: created.data.nodes[0].id },
+    { kind: 'source-node', name: 'rules', nodeId: created.data.nodes[1].id },
+  ]);
+});
+
+test('recognizable malformed DoH target syntax cannot be silently skipped as an empty binding', async () => {
+  const previous = (await api('/sources')).data;
+  for (const content of ['proxies: []\ndns:\n nameserver: [https//broken.example/query]\n', '{"outbounds":[],"dns":{"servers":["https://dns.example/query"]}}', '[dns]\ndoh-server\n']) {
+    bodies.set('/malformed-target', content);
+    const failed = await api('/sources', 'POST', { name: 'Malformed DoH', url: `${upstreamOrigin}/malformed-target` });
+    assert.equal(failed.success, false, content);
+    assert.deepEqual((await api('/sources')).data, previous);
+  }
 });

@@ -4,6 +4,7 @@ import type { SourceDohOutbound, SourceDohReference, SourceDohResult, SourceDohS
 
 const mihomoLists = new Set(['nameserver', 'fallback', 'default-nameserver', 'proxy-server-nameserver', 'direct-nameserver']);
 const mihomoPolicies = new Set(['nameserver-policy', 'proxy-server-nameserver-policy']);
+const looksLikeHttps = (value: string) => /^https(?:[:/]|$)/i.test(value);
 
 function splitQuanxValues(value: string): string[] {
   const values: string[] = [];
@@ -31,10 +32,17 @@ function extractQuanxDoh(content: string): SourceDohService[] {
     if (header) { section = header[1].toLowerCase(); return; }
     if (section !== 'dns' || /^(#|;|\/\/)/.test(trimmed)) return;
     const match = /^doh-server\s*=\s*(.*)$/i.exec(trimmed);
-    if (!match) return;
+    if (!match) {
+      if (/^doh-server(?:\s|$)/i.test(trimmed)) throw new Error('QuanX DoH 配置不完整');
+      return;
+    }
     const values = splitQuanxValues(match[1]);
     const optionIndex = values.findIndex(value => /^(?:included_ssids|excluded_ssids)\s*=/i.test(value));
     const options = optionIndex < 0 ? [] : values.slice(optionIndex);
+    for (const option of options) {
+      const assignment = /^(?:included_ssids|excluded_ssids)\s*=\s*(.+)$/i.exec(option);
+      if (!option || (!assignment && (option.includes('=') || /https[:/]/i.test(option)))) throw new Error('QuanX DoH SSID 配置无效');
+    }
     const targets = optionIndex < 0 ? values : values.slice(0, optionIndex);
     if (!targets.length) throw new Error('QuanX DoH 配置不完整');
     targets.forEach((value, valueIndex) => {
@@ -58,16 +66,18 @@ function endpoint(value: string): URL {
 function validateSingboxConnection(server: Record<string, unknown>): void {
   const fail = () => { throw new Error('sing-box DoH 连接配置不完整'); };
   const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
-  for (const key of ['detour', 'address_resolver', 'address_strategy', 'strategy', 'domain_strategy']) {
+  for (const key of ['detour', 'address_resolver', 'address_strategy', 'strategy', 'domain_strategy', 'connect_timeout']) {
     if (server[key] !== undefined && typeof server[key] !== 'string') fail();
   }
   if (server.domain_resolver !== undefined && typeof server.domain_resolver !== 'string' && (!object(server.domain_resolver) || typeof server.domain_resolver.server !== 'string' || !server.domain_resolver.server)) fail();
+  if (object(server.domain_resolver) && server.domain_resolver.strategy !== undefined && typeof server.domain_resolver.strategy !== 'string') fail();
   if (server.tls !== undefined) {
     if (!object(server.tls)) fail();
     else {
       for (const key of ['enabled', 'insecure', 'disable_sni']) if (server.tls[key] !== undefined && typeof server.tls[key] !== 'boolean') fail();
       if (server.tls.server_name !== undefined && typeof server.tls.server_name !== 'string') fail();
       if (server.tls.alpn !== undefined && (!Array.isArray(server.tls.alpn) || server.tls.alpn.some(value => typeof value !== 'string'))) fail();
+      if (server.tls.certificate !== undefined && typeof server.tls.certificate !== 'string' && (!Array.isArray(server.tls.certificate) || server.tls.certificate.some(value => typeof value !== 'string'))) fail();
     }
   }
   if (server.headers !== undefined && (!object(server.headers) || Object.values(server.headers).some(value => typeof value !== 'string' && (!Array.isArray(value) || value.some(item => typeof item !== 'string'))))) fail();
@@ -82,9 +92,10 @@ export function extractSourceDoh(format: SourceFormat, document?: Record<string,
     const servers = (document.dns as Record<string, unknown>).servers;
     if (!Array.isArray(servers)) return services;
     servers.forEach((server, index) => {
+      if (typeof server === 'string' && looksLikeHttps(server)) throw new Error('sing-box DoH 配置不完整');
       if (!server || typeof server !== 'object') return;
       const typed = typeof server.type === 'string' && server.type.toLowerCase() === 'https';
-      const legacy = typeof server.address === 'string' && /^https:/i.test(server.address);
+      const legacy = typeof server.address === 'string' && looksLikeHttps(server.address);
       if (!typed && !legacy) return;
       validateSingboxConnection(server);
       let url: URL;
@@ -103,11 +114,11 @@ export function extractSourceDoh(format: SourceFormat, document?: Record<string,
   if (format !== 'mihomo') return services;
   const collect = (value: unknown, path: string) => {
     if (Array.isArray(value)) { value.forEach((item, index) => collect(item, `${path}[${index}]`)); return; }
-    if (typeof value !== 'string' || !/^https:/i.test(value)) return;
+    if (typeof value !== 'string' || !looksLikeHttps(value)) return;
     const hash = value.indexOf('#');
     const url = endpoint(hash < 0 ? value : value.slice(0, hash));
     const suffix = hash < 0 ? undefined : value.slice(hash + 1).split('&').map(part => decodeURIComponent(part)).find(part => part && !part.includes('='));
-    services.push({ id: randomUUID(), path, url: url.href, raw: value, ...(suffix ? { outbound: suffix.toUpperCase() === 'DIRECT' ? { kind: 'direct' as const, name: suffix } : { kind: suffix.toUpperCase() === 'RULES' ? 'routing' as const : 'unresolved' as const, name: suffix } } : {}) });
+    services.push({ id: randomUUID(), path, url: url.href, raw: value, ...(suffix ? { outbound: suffix === 'DIRECT' ? { kind: 'direct' as const, name: suffix } : { kind: suffix === 'RULES' ? 'routing' as const : 'unresolved' as const, name: suffix } } : {}) });
   };
   for (const [key, value] of Object.entries(document.dns)) {
     if (mihomoLists.has(key)) collect(value, `dns.${key}`);
