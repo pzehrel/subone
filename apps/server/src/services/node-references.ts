@@ -44,7 +44,7 @@ export function resolveOutputReferences(nodes: ProxyNode[], groups: ProxyGroupIt
   const groupNames = new Map<string, string>();
   for (const group of [...groups].sort((a, b) => a.id.localeCompare(b.id))) {
     let base = group.name.trim() || 'Group';
-    if (client && !['singbox', 'mihomo'].includes(client)) base = base.replace(/[=,\r\n]/g, '_');
+    if (client && !['singbox', 'mihomo', 'egern'].includes(client)) base = base.replace(/[=,\r\n]/g, '_');
     let name = base; let suffix = 2;
     while (used.has(name)) name = `${base} (${suffix++})`;
     used.add(name); groupNames.set(group.id, name);
@@ -52,7 +52,7 @@ export function resolveOutputReferences(nodes: ProxyNode[], groups: ProxyGroupIt
   used.add('🎯 本地直连');
   for (const node of [...selected].sort((a, b) => a.id.localeCompare(b.id))) {
     let base = node.name.trim() || `${node.type.toUpperCase()}-${node.server}`;
-    if (client && !['singbox', 'mihomo'].includes(client)) base = base.replace(/[=,\r\n]/g, '_');
+    if (client && !['singbox', 'mihomo', 'egern'].includes(client)) base = base.replace(/[=,\r\n]/g, '_');
     let name = base; let suffix = 2;
     while (used.has(name)) name = `${base} (${suffix++})`;
     used.add(name); names.set(node.id, name);
