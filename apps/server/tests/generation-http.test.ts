@@ -200,7 +200,7 @@ test('all six complete outputs share preview and dispatch while unsupported adap
     } else if (!['singbox', 'mihomo'].includes(target)) {
       assert.deepEqual(preview.generation.bindings.map((binding: any) => binding.status), ['unapplied', 'unapplied']);
       assert.deepEqual(preview.generation.diagnostics.map((entry: any) => entry.sourceId), [a.id, b.id]);
-      assert.ok(preview.generation.diagnostics.every((entry: any) => entry.code === 'source-doh-unsupported'));
+      assert.ok(preview.generation.diagnostics.every((entry: any) => entry.code === (target === 'quantumultx' ? 'source-doh-node-resolver-unverified' : 'source-doh-unsupported')));
     }
     if (target === 'mihomo') assert.deepEqual(preview.generation.bindings.map((binding: any) => binding.status), ['applied', 'applied']);
   }

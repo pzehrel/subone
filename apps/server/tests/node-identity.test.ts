@@ -148,12 +148,14 @@ test('disabled nodes and sources are excluded from every effective, preview, pri
       assert.equal(Buffer.from(await provider.text(), 'base64').toString().includes('stopped.example'), false);
       continue;
     }
-    if (target === 'egern') {
-      // Native Egern keeps explicit required members as repair intent.
+    if (target === 'egern' || target === 'quantumultx') {
+      // Native adapters retain explicit unavailable required members as repair intent.
       assert.equal(preview.status, 422);
-      assert.ok(preview.generation.diagnostics.some((entry: any) => entry.code === 'egern-reference-missing'));
+      assert.ok(preview.generation.diagnostics.some((entry: any) => entry.code === (target === 'egern' ? 'egern-reference-missing' : 'quantumultx-reference-missing')));
       assert.equal((await fetch(`${origin}/s/${profile.token}/${target}?expand=true`)).status, 422);
-      assert.equal((await fetch(`${origin}/s/${profile.token}/source/${created.id}/${target}`)).status, 422);
+      const provider = await fetch(`${origin}/s/${profile.token}/source/${created.id}/${target}`);
+      assert.equal(provider.status, target === 'egern' ? 422 : 200);
+      assert.equal((await provider.text()).includes('stopped.example'), false);
       continue;
     }
     assert.equal(preview.success, true, preview.message);

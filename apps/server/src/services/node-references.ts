@@ -1,4 +1,5 @@
 import yaml from 'js-yaml';
+import { quantumultXOwnedNames, quantumultXReferences } from '../core/quantumultx-config';
 import { mihomoDnsFragment, withMihomoDnsRoute } from '../core/mihomo-dns';
 import type { AppConfig, ClientType, ConfigTemplate, ProxyGroupItem, ProxyNode, SubscriptionSource, TemplateConnectionReference } from '../types';
 
@@ -94,6 +95,7 @@ function templateDocument(template: ConfigTemplate): any {
   try {
     if (['loon', 'shadowrocket'].includes(template.type)) return { loonLines: template.content.split('\n') };
     if (template.type === 'singbox') return JSON.parse(template.content);
+    if (template.type === 'quantumultx') return { quantumultxLines: template.content.split('\n') };
     if (['mihomo', 'egern'].includes(template.type)) return yaml.load(template.content);
   } catch { /* Editing an incomplete template must remain possible. */ }
   return undefined;
@@ -123,6 +125,7 @@ export function splitLoonParameters(value: string): string[] {
 }
 
 function ownedOutboundNames(document: any, type: ClientType): Set<string> {
+  if (type === 'quantumultx' && document) return quantumultXOwnedNames(document);
   if (type === 'egern') return new Set([...templateArray(document?.proxies), ...templateArray(document?.policy_groups)].map(entry => entry && typeof entry === 'object' ? (Object.values(entry)[0] as any)?.name : undefined).filter((name): name is string => typeof name === 'string'));
   if (['loon', 'shadowrocket'].includes(type)) return new Set(loonSections(document).flatMap(({ section, line }) => {
     if (!(type === 'shadowrocket' ? ['proxy', 'proxy group'] : ['proxy', 'proxy group', 'remote proxy', 'remote filter']).includes(section) || /^\s*[#;]/.test(line)) return [];
@@ -145,6 +148,7 @@ function templateSlots(document: any, type: ClientType): TemplateSlot[] {
   };
   const ownerKey = (entry: any, index: number, name: string) => typeof entry?.[name] === 'string' ? entry[name] : `#${index}`;
   if (!document || typeof document !== 'object') return slots;
+  if (type === 'quantumultx') return quantumultXReferences(document);
   if (['loon', 'shadowrocket'].includes(type)) {
     for (const { section, line, index } of loonSections(document)) {
       if (!line.trim() || /^\s*[#;\[]/.test(line)) continue;
@@ -282,6 +286,7 @@ export function resolveTemplateReferences(template: ConfigTemplate, nodes: Proxy
     if (name) slot.write(name);
     else if (nodeId || groupId || reference.target.startsWith('unresolved:')) slot.write(reference.target);
   }
+  if (template.type === 'quantumultx') return document.quantumultxLines.join('\n');
   return ['loon', 'shadowrocket'].includes(template.type) ? document.loonLines.join('\n') : template.type === 'singbox' ? JSON.stringify(document) : yaml.dump(document, { lineWidth: -1, noRefs: true });
 }
 

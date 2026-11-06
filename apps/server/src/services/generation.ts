@@ -3,7 +3,6 @@ import { getAppConfig } from '../context';
 import { generateMihomoConfig } from '../core/generators/mihomo-generator';
 import { generateSingboxDocument } from '../core/generators/singbox-generator';
 import { generateLoonConfig, nodeToLoonProxy } from '../core/generators/loon-generator';
-import { generateQuantumultXConfig, nodeToQuantumultXProxy } from '../core/generators/quantumultx-generator';
 import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../core/generators/shadowrocket-generator';
 import { getEffectiveNodes, getEffectiveNodesForProfile, getEffectiveGroupsForProfile, getEffectiveRulesForProfile, getEffectiveSourcesForProfile } from './profile-service';
 import { requiresExpandedNodes, resolveOutputReferences, prepareTemplateReferences, resolveTemplateReferences, templateOutboundNames, nodeReference, groupReference } from './node-references';
@@ -13,7 +12,7 @@ import { renderEgern, renderEgernSource } from './generation/adapters/egern';
 import { adaptLoonDns, validateLoonRuntime } from './generation/adapters/loon';
 import { adaptMihomoDns, renderMihomoSource, validateMihomoRuntime } from './generation/adapters/mihomo';
 import { adaptShadowrocketDns, diagnosePureNodes, validateShadowrocketRuntime } from './generation/adapters/shadowrocket';
-import { retainTemplateDns } from './generation/adapters/unsupported';
+import { renderQuantumultX, renderQuantumultXSource } from './generation/adapters/quantumultx';
 import { GenerationError, generationMetadata, type GenerationMetadata, type GenerationOptions, type GenerationPlan } from './generation/types';
 export { GenerationError } from './generation/types';
 export type { GenerationPlan, GenerationMetadata, GenerationBinding, GenerationDiagnostic } from './generation/types';
@@ -29,7 +28,7 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
   const template = nodeOnly ? { id: 'nodes-only', name: '', type: options.target, content: options.templateContent } : prepareTemplateReferences({ ...(savedTemplate || { id: 'unsaved', name: '', type: options.target }), content: options.templateContent }, config, savedTemplate);
   const stableTemplate = (nodes: typeof ordinary, selectedGroups: typeof groups) => resolveTemplateReferences(template, nodes.map(node => ({ ...node, name: nodeReference(node.id) })), selectedGroups.map(group => ({ ...group, name: groupReference(group.id) })));
   const plan: GenerationPlan = {
-    target: { type: options.target, ...(options.target === 'singbox' ? { version: '1.14.4' } : options.target === 'egern' ? { version: '2.21.0' } : options.target === 'mihomo' ? { version: '1.19.33' } : options.target === 'loon' ? { version: '3.5.3' } : options.target === 'shadowrocket' ? { version: '2.2.93' } : {}), mode: nodeOnly ? 'nodes' : 'complete' },
+    target: { type: options.target, ...(options.target === 'singbox' ? { version: '1.14.4' } : options.target === 'egern' ? { version: '2.21.0' } : options.target === 'mihomo' ? { version: '1.19.33' } : options.target === 'loon' ? { version: '3.5.3' } : options.target === 'shadowrocket' ? { version: '2.2.93' } : options.target === 'quantumultx' ? { version: '1.8.1' } : {}), mode: nodeOnly ? 'nodes' : 'complete' },
     templateContent: stableTemplate(ordinary, groups), template, inventory: createRuntimeInventory(config),
     ordinaryNodes: structuredClone(ordinary), dependencyNodes: [], dependencyGroupIds: [], dependencyReasons: [], groups: structuredClone(groups),
     rules: structuredClone(options.profile ? getEffectiveRulesForProfile(options.profile) : config.rulesList),
@@ -115,15 +114,12 @@ export function renderGeneration(input: GenerationPlan) {
   } else if (plan.target.type === 'loon') {
     output = generateLoonConfig(templateContent, nodes, groups, rules, sources, { ...options, nodeServerDns: adaptLoonDns(plan), runtimeSources: plan.inventory.sources });
     validateLoonRuntime(output, plan);
-  } else if (plan.target.type === 'shadowrocket') {
+  } else if (plan.target.type === 'quantumultx') {
+    output = renderQuantumultX(plan);
+  } else {
     adaptShadowrocketDns(plan);
     output = generateShadowrocketConfig(templateContent, nodes, groups, rules, sources, { ...options, runtimeSources: plan.inventory.sources });
     validateShadowrocketRuntime(output, plan);
-  } else {
-    retainTemplateDns(plan);
-    switch (plan.target.type) {
-      case 'quantumultx': output = generateQuantumultXConfig(templateContent, nodes, groups, rules, sources, options); break;
-    }
   }
   const generation = generationMetadata(plan);
   if (generation.diagnostics.some(diagnostic => diagnostic.severity === 'error')) throw new GenerationError(plan.target.type === 'shadowrocket' ? 'Shadowrocket 连接引用需修复' : '来源 DoH 绑定需修复', generation);
@@ -141,7 +137,7 @@ export function renderSourceGeneration(plan: GenerationPlan, sourceId: string): 
       const serverDns = adaptLoonDns(structuredClone(plan));
       return { output: ['[Proxy]', ...nodes.map(node => nodeToLoonProxy(node, serverDns.get(node.id)))].join('\n'), contentType: 'text/plain; charset=utf-8' };
     }
-    case 'quantumultx': return { output: nodes.map(nodeToQuantumultXProxy).join('\n'), contentType: 'text/plain; charset=utf-8' };
+    case 'quantumultx': return renderQuantumultXSource(plan, sourceId);
     case 'egern': return { output: renderEgernSource(plan, sourceId), contentType: 'text/yaml; charset=utf-8' };
     default: return { output: generateShadowrocketBase64(nodes), contentType: 'text/plain; charset=utf-8' };
   }
