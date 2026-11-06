@@ -2,7 +2,7 @@ import { Hono, type Handler } from 'hono';
 import type { BodyEnv } from '../middlewares/body';
 import crypto from 'crypto';
 import yaml from 'js-yaml';
-import { appConfig, getBaseUrl, setGlobalNodesCache, getGlobalNodesCache } from '../context';
+import { appConfig, getBaseUrl, setGlobalNodesCache, getGlobalNodesCache, setAppConfig } from '../context';
 import { saveConfig, saveServerConfig, generateRandomSubToken } from '../storage/db';
 import { fetchAndParseSource, parseRawContent } from '../core/parser/fetcher';
 import { applySubscriptionInfo, validateInfoRegex } from '../core/parser/subscription-info';
@@ -43,6 +43,7 @@ import { generateEgernConfig, nodeToEgernProxy } from '../core/generators/egern-
 import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../core/generators/shadowrocket-generator';
 import { detectClientType, ClientType } from '../core/parser/ua-detector';
 import { applyExtractionRules } from '../core/filter/extractor';
+import { commitSource, refreshSource, SourceUpdateError } from '../services/source-service';
 import { UnsupportedProxyGroupError } from '../core/generators/errors';
 import {
   ensureCustomSource,
@@ -62,7 +63,6 @@ export const apiRouter = new Hono<BodyEnv>({ strict: false });
 
 // 1. Config & Settings
 apiRouter.get('/config', (c) => {
-  ensureCustomSource(appConfig);
   return c.json({ success: true, data: appConfig });
 });
 
@@ -315,175 +315,73 @@ apiRouter.post('/sources/:id/clear-nodes', (c) => {
 });
 
 // 3. Network Sources Management (网络订阅源与自建节点组)
-apiRouter.get('/sources', (c) => {
-  ensureCustomSource(appConfig);
-  return c.json({ success: true, data: appConfig.sources });
+apiRouter.get('/sources', (c) => c.json({ success: true, data: appConfig.sources }));
+
+apiRouter.get('/sources/:id/raw', (c) => {
+  const source = appConfig.sources.find(s => s.id === c.req.param('id'));
+  if (!source?.rawSubscription) return c.json({ success: false, message: '订阅原文不存在' }, 404);
+  return c.json({ success: true, data: { ...source.rawSubscription, lastSuccessfulUpdate: source.lastUpdated } });
 });
 
-// Add source: remote network subscription or manual node group
 apiRouter.post('/sources', async (c) => {
   const body = c.get('body');
   try {
-    const sourceName = (body.name || '新节点组').trim();
-    const isManual = body.type === 'manual' || body.type === 'custom';
-
-    // 1. Create manual node group
-    if (isManual) {
-      const newSource: SubscriptionSource = {
-        id: `manual-${Date.now()}`,
-        name: sourceName,
-        url: '',
-        enabled: body.enabled !== false,
-        type: 'manual',
-        nodeCount: 0,
-        nodes: [],
-        lastUpdated: new Date().toISOString(),
-      };
-      appConfig.sources.push(newSource);
-
-      if (body.createGroup) {
-        appConfig.proxyGroups.push({
-          id: `grp-${newSource.id}`,
-          name: newSource.name,
-          type: 'select',
-          sources: [newSource.name],
-        });
-      }
-
-      saveConfig(appConfig);
-      setGlobalNodesCache(collectNodesFromSources(appConfig));
-      return c.json({ success: true, count: 0, data: newSource });
-    }
-
-    // 2. Create remote network subscription
-    const sourceUrl = (body.url || '').trim();
-    if (!sourceUrl) {
-      return c.json({ success: false, message: '订阅链接不能为空' }, 400);
-    }
-
-    try {
-      validateInfoRegex(body);
-    } catch (err: any) {
-      return c.json({ success: false, message: err.message }, 400);
-    }
-
-    const newSource: SubscriptionSource = {
-      id: `src-${Date.now()}`,
-      name: sourceName,
-      url: sourceUrl,
-      enabled: body.enabled !== false,
-      type: 'remote',
-      trafficNodeRegex: body.trafficNodeRegex?.trim(),
-      expiryNodeRegex: body.expiryNodeRegex?.trim(),
-      nodeCount: 0,
-      nodes: [],
+    if (['manual', 'custom'].includes(body.type)) return c.json({ success: false, message: '节点必须来自上游订阅' }, 400);
+    const url = typeof body.url === 'string' ? body.url.trim() : '';
+    if (!/^https?:\/\//.test(url)) return c.json({ success: false, message: '请填写 HTTP 订阅链接' }, 400);
+    try { validateInfoRegex(body); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
+    const source: SubscriptionSource = {
+      id: `src-${crypto.randomUUID()}`, name: (body.name || '新订阅').trim(), url,
+      enabled: body.enabled !== false, type: body.type || 'auto',
+      trafficNodeRegex: body.trafficNodeRegex?.trim(), expiryNodeRegex: body.expiryNodeRegex?.trim(),
     };
-
-    if (sourceUrl.startsWith('http://') || sourceUrl.startsWith('https://')) {
-      try {
-        console.log(`[Fetcher] Fetching nodes for [${sourceName}]: ${sourceUrl}`);
-        const nodes = await fetchAndParseSource(newSource, appConfig.countryRules);
-        newSource.nodes = nodes;
-        newSource.nodeCount = nodes.length;
-        newSource.lastUpdated = new Date().toISOString();
-        console.log(`[Fetcher] Successfully fetched ${nodes.length} nodes from [${sourceName}]`);
-      } catch (err: any) {
-        console.error(`[Fetcher] Failed initial fetch for [${sourceName}]:`, err.message || err);
-      }
-    }
-
-    appConfig.sources.push(newSource);
-
-    if (body.createGroup) {
-      appConfig.proxyGroups.push({
-        id: `grp-${newSource.id}`,
-        name: newSource.name,
-        type: 'urltest',
-        sources: [newSource.name],
-        tolerance: 50,
-        interval: 300,
-        url: 'https://www.google.com/generate_204',
-      });
-    }
-
-    saveConfig(appConfig);
-    setGlobalNodesCache(collectNodesFromSources(appConfig));
-
-    return c.json({ success: true, count: newSource.nodeCount, data: newSource });
-  } catch (err: any) {
-    return c.json({ success: false, message: err.message || 'Failed to add subscription source' }, 500);
-  }
+    try {
+      source.nodes = await fetchAndParseSource(source, appConfig.countryRules);
+    } catch (error: any) { return c.json({ success: false, message: error.message || '上游更新失败' }, 422); }
+    source.nodeCount = source.nodes.length;
+    const candidate = structuredClone(appConfig);
+    candidate.sources.push(source);
+    if (body.createGroup) candidate.proxyGroups.push({
+      id: `grp-${source.id}`, name: source.name, type: 'urltest', sources: [source.id],
+      tolerance: 50, interval: 300, url: 'https://www.google.com/generate_204',
+    });
+    saveConfig(candidate);
+    setAppConfig(candidate);
+    setGlobalNodesCache(collectNodesFromSources(candidate));
+    return c.json({ success: true, count: source.nodeCount, data: source });
+  } catch (error: any) { return c.json({ success: false, message: error.message || '保存失败' }, 500); }
 });
 
 apiRouter.put('/sources/:id', async (c) => {
   const body = c.get('body');
-  const index = appConfig.sources.findIndex(s => s.id === c.req.param('id'));
-  if (index === -1) {
-    return c.json({ success: false, message: 'Source not found' }, 404);
-  }
-  const oldSource = appConfig.sources[index];
+  const current = appConfig.sources.find(s => s.id === c.req.param('id'));
+  if (!current) return c.json({ success: false, message: 'Source not found' }, 404);
+  try { validateInfoRegex(body); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
+  if (['manual', 'custom'].includes(body.type)) return c.json({ success: false, message: '节点必须来自上游订阅' }, 400);
+  if (body.url !== undefined && (typeof body.url !== 'string' || !/^https?:\/\//.test(body.url.trim()))) return c.json({ success: false, message: '请填写 HTTP 订阅链接' }, 400);
+  const candidate = structuredClone(current);
+  if (typeof body.name === 'string' && body.name.trim()) candidate.name = cleanSourceOrGroupName(body.name.trim());
+  if (typeof body.url === 'string') candidate.url = body.url.trim();
+  if (typeof body.type === 'string') candidate.type = body.type;
+  if (typeof body.enabled === 'boolean') candidate.enabled = body.enabled;
+  if (typeof body.customUserAgent === 'string') candidate.customUserAgent = body.customUserAgent.trim();
+  if (typeof body.trafficNodeRegex === 'string') candidate.trafficNodeRegex = body.trafficNodeRegex.trim();
+  if (typeof body.expiryNodeRegex === 'string') candidate.expiryNodeRegex = body.expiryNodeRegex.trim();
   try {
-    validateInfoRegex(body);
-  } catch (err: any) {
-    return c.json({ success: false, message: err.message }, 400);
-  }
-  const oldName = cleanSourceOrGroupName(oldSource.name || '');
-  const newName = body.name ? cleanSourceOrGroupName(body.name) : oldName;
-
-  // If source name changed, update nodes and references in proxyGroups
-  if (newName && newName !== oldName) {
-    if (oldSource.nodes) {
-      oldSource.nodes.forEach(n => {
-        n.sourceName = newName;
-      });
+    let updated: SubscriptionSource;
+    if (candidate.url !== current.url || candidate.type !== current.type || candidate.customUserAgent !== current.customUserAgent) {
+      updated = await refreshSource(current.id, candidate);
+    } else {
+      candidate.nodes = applySubscriptionInfo(candidate, [...(candidate.nodes || []), ...(candidate.infoNodes || [])]);
+      candidate.nodeCount = candidate.nodes.length;
+      [...candidate.nodes, ...(candidate.infoNodes || [])].forEach(node => { node.sourceName = candidate.name; });
+      commitSource(candidate);
+      updated = candidate;
     }
-
-    if (appConfig.proxyGroups) {
-      appConfig.proxyGroups.forEach(grp => {
-        if (grp.sources) {
-          grp.sources = grp.sources.map(s => cleanSourceOrGroupName(s).toLowerCase() === oldName.toLowerCase() ? newName : s);
-        }
-        if (grp.use) {
-          grp.use = grp.use.map(u => cleanSourceOrGroupName(u).toLowerCase() === oldName.toLowerCase() ? newName : u);
-        }
-      });
-    }
+    return c.json({ success: true, data: updated, proxyGroups: appConfig.proxyGroups });
+  } catch (error: any) {
+    return c.json({ success: false, message: error.message || '保存失败' }, error instanceof SourceUpdateError ? error.status : 500);
   }
-
-  // Re-fetch when the URL or parser changes so cached nodes use the selected format.
-  const urlChanged = body.url && body.url.trim() !== oldSource.url;
-  const formatChanged = typeof body.type === 'string' && body.type !== oldSource.type;
-  if ((urlChanged || formatChanged) && oldSource.type !== 'manual' && oldSource.type !== 'custom') {
-    const updatedUrl = (body.url ? body.url.trim() : oldSource.url) || '';
-    if (updatedUrl.startsWith('http://') || updatedUrl.startsWith('https://')) {
-      try {
-        console.log(`[Fetcher] Fetching nodes for updated source [${newName || oldSource.name}]`);
-        const tempSource = { ...oldSource, ...body, name: newName || oldSource.name, url: updatedUrl };
-        const nodes = await fetchAndParseSource(tempSource, appConfig.countryRules);
-        body.nodes = nodes;
-        body.nodeCount = nodes.length;
-        body.lastUpdated = new Date().toISOString();
-        body.infoNodes = tempSource.infoNodes;
-        body.subscriptionUserinfo = tempSource.subscriptionUserinfo;
-        body.subscriptionInfo = tempSource.subscriptionInfo;
-      } catch (err: any) {
-        console.error(`[Fetcher] Failed to fetch updated source URL:`, err.message || err);
-      }
-    }
-  }
-
-  appConfig.sources[index] = { ...appConfig.sources[index], ...body };
-  const updatedSource = appConfig.sources[index];
-  if (updatedSource.type !== 'manual' && updatedSource.type !== 'custom') {
-    updatedSource.nodes = applySubscriptionInfo(updatedSource, [
-      ...(updatedSource.nodes || []),
-      ...(updatedSource.infoNodes || []),
-    ]);
-    updatedSource.nodeCount = updatedSource.nodes.length;
-  }
-  saveConfig(appConfig);
-  setGlobalNodesCache(collectNodesFromSources(appConfig));
-  return c.json({ success: true, data: appConfig.sources[index], proxyGroups: appConfig.proxyGroups });
 });
 
 apiRouter.delete('/sources/:id', (c) => {
@@ -528,34 +426,20 @@ apiRouter.delete('/sources/:id', (c) => {
 });
 
 apiRouter.post('/sources/:id/refresh', async (c) => {
-  const source = appConfig.sources.find(s => s.id === c.req.param('id'));
-  if (!source) {
-    return c.json({ success: false, message: 'Source not found' }, 404);
-  }
-  const url = (source.url || '').trim();
-  if (source.type === 'manual' || source.type === 'custom' || !url || !url.startsWith('http')) {
-    setGlobalNodesCache(collectNodesFromSources(appConfig));
-    saveConfig(appConfig);
-    return c.json({ success: true, nodeCount: source.nodes?.length || 0, data: source.nodes || [] });
-  }
+  if (!appConfig.sources.some(s => s.id === c.req.param('id'))) return c.json({ success: false, message: 'Source not found' }, 404);
   try {
-    const nodes = await fetchAndParseSource(source, appConfig.countryRules);
-    source.nodes = nodes;
-    source.nodeCount = nodes.length;
-    source.lastUpdated = new Date().toISOString();
-    saveConfig(appConfig);
-    setGlobalNodesCache(collectNodesFromSources(appConfig));
-    return c.json({ success: true, nodeCount: nodes.length, data: nodes });
-  } catch (err: any) {
-    return c.json({ success: false, message: err.message || 'Fetch failed' }, 500);
+    const source = await refreshSource(c.req.param('id'));
+    return c.json({ success: true, nodeCount: source.nodeCount, data: source.nodes, source });
+  } catch (error: any) {
+    return c.json({ success: false, message: error.message || 'Fetch failed' }, error instanceof SourceUpdateError ? error.status : 500);
   }
 });
 
 apiRouter.post('/sources/refresh-all', async (c) => {
   try {
-    const all = await refreshAllSources(appConfig);
+    const { nodes: all, results } = await refreshAllSources(appConfig);
     const effective = applyExtractionRules(all, appConfig.rules);
-    return c.json({ success: true, totalNodes: all.length, effectiveNodes: effective.length });
+    return c.json({ success: results.every(result => result.success), results, totalNodes: all.length, effectiveNodes: effective.length });
   } catch (err: any) {
     return c.json({ success: false, message: err.message || 'Refresh all failed' }, 500);
   }

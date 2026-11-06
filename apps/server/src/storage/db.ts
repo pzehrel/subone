@@ -315,9 +315,17 @@ export function saveConfig(config: AppConfig): void {
       }
     };
 
-    fs.writeFileSync(DATA_CONFIG_FILE, JSON.stringify(cleanToPersist, null, 2), 'utf-8');
+    const temporaryFile = `${DATA_CONFIG_FILE}.${crypto.randomUUID()}.tmp`;
+    try {
+      fs.writeFileSync(temporaryFile, JSON.stringify(cleanToPersist, null, 2), { encoding: 'utf-8', mode: 0o600 });
+      const descriptor = fs.openSync(temporaryFile, 'r');
+      try { fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
+      fs.renameSync(temporaryFile, DATA_CONFIG_FILE);
+    } finally {
+      if (fs.existsSync(temporaryFile)) fs.unlinkSync(temporaryFile);
+    }
   } catch (err) {
-    console.error('Failed to save config to data/subone_data.json:', err);
+    throw new Error(`保存订阅数据失败: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
   }
 }
 

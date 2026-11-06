@@ -119,6 +119,16 @@ export interface ProxyNode {
 }
 
 export type SourceType = 'remote' | 'manual';
+export type SourceFormat = 'mihomo' | 'singbox' | 'quantumultx' | 'uri' | 'base64';
+export interface SourceRawRecord {
+  content: string;
+  fetchedAt: string;
+  contentType?: string;
+  format?: SourceFormat;
+  parseStatus: 'success' | 'failed';
+  error?: string;
+}
+
 
 export interface SubscriptionSource {
   id: string;
@@ -128,6 +138,10 @@ export interface SubscriptionSource {
   enabled: boolean;
   customUserAgent?: string;
   lastUpdated?: string;
+  detectedFormat?: SourceFormat;
+  rawSubscription?: SourceRawRecord;
+  parsedConfig?: Record<string, unknown>;
+  lastUpdateError?: string;
   nodeCount?: number;
   nodes?: ProxyNode[];
   trafficNodeRegex?: string;

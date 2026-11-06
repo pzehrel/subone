@@ -4,6 +4,8 @@ export type { SubscriptionInfo } from '../../../shared/subscription-info';
 export interface ProxyNode {
   id: string;
   name: string;
+  originalName?: string;
+  enabled?: boolean;
   type: string;
   server: string;
   port: number;
@@ -24,6 +26,17 @@ export interface SourceFilterConfig {
   excludeRegex?: string;      // 排除正则/关键词
 }
 
+export type SourceFormat = 'mihomo' | 'singbox' | 'quantumultx' | 'uri' | 'base64';
+export interface SourceRawRecord {
+  content: string;
+  fetchedAt: string;
+  contentType?: string;
+  format?: SourceFormat;
+  parseStatus: 'success' | 'failed';
+  error?: string;
+  lastSuccessfulUpdate?: string;
+}
+
 export interface SubscriptionSource {
   id: string;
   name: string;
@@ -31,6 +44,8 @@ export interface SubscriptionSource {
   enabled: boolean;
   type?: 'remote' | 'manual' | 'auto' | 'base64' | 'clash' | 'singbox' | 'quantumultx' | 'custom' | string;
   lastUpdated?: string;
+  detectedFormat?: SourceFormat;
+  lastUpdateError?: string;
   nodeCount?: number;
   nodes?: ProxyNode[];
   trafficNodeRegex?: string;

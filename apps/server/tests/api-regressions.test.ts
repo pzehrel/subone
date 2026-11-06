@@ -334,7 +334,7 @@ test('info rules immediately reclassify cached nodes and filter every subscripti
   assert.deepEqual(context.getAppConfig().sources[0], beforeFailure);
   const refresh = await post('/api/sources/airport/refresh', {});
   assert.equal(refresh.status, 500);
-  assert.deepEqual(context.getAppConfig().sources[0], beforeFailure);
+  assert.deepEqual(context.getAppConfig().sources[0], { ...beforeFailure, lastUpdateError: refresh.body.message });
 
   const restored = await update({ trafficNodeRegex: '', expiryNodeRegex: '' });
   assert.equal(restored.body.data.nodeCount, 3);

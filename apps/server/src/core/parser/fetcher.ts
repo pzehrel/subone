@@ -4,6 +4,7 @@ import { parseClashYaml } from './clash-parser';
 import { parseSingboxJson } from './singbox-parser';
 import { applySubscriptionInfo } from './subscription-info';
 import { isQuantumultXContent, parseQuantumultX } from './quantumultx-parser';
+import { parseSourceContent, ContentParseError } from './source-content';
 
 function isQuantumultXHint(hint?: string): boolean {
   return ['quantumultx', 'quanx', 'qx'].includes(hint?.toLowerCase() || '');
@@ -62,8 +63,18 @@ export async function fetchAndParseSource(
     }
 
     const text = await response.text();
-    const nodes = parseRawContent(text, source.id, source.name, source.type, countryPatterns);
-    return applySubscriptionInfo(source, nodes, response.headers.get('subscription-userinfo'));
+    const fetchedAt = new Date().toISOString();
+    try {
+      const parsed = parseSourceContent(text, source.id, source.name, countryPatterns);
+      source.rawSubscription = { content: text, fetchedAt, format: parsed.format, contentType: response.headers.get('content-type') || undefined, parseStatus: 'success' };
+      source.detectedFormat = parsed.format;
+      source.parsedConfig = parsed.document;
+      source.lastUpdated = fetchedAt;
+      source.lastUpdateError = undefined;
+      return applySubscriptionInfo(source, parsed.nodes, response.headers.get('subscription-userinfo'));
+    } catch (error) {
+      throw new SourceParseError(error instanceof Error ? error.message : '订阅解析失败', text, fetchedAt, response.headers.get('content-type') || undefined, error instanceof ContentParseError ? error.format : undefined);
+    }
   } catch (err: any) {
     console.error(`Failed to fetch source [${source.name}] (${url}):`, err.message || err);
     throw err;
@@ -164,4 +175,9 @@ export function parseRawContent(
   }
 
   return [];
+}
+
+/** A complete response is available for diagnosis even though its result cannot be applied. */
+export class SourceParseError extends Error {
+  constructor(message: string, public content: string, public fetchedAt: string, public contentType?: string, public format?: import('../../types').SourceFormat) { super(message); }
 }

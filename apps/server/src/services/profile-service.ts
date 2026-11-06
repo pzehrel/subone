@@ -10,30 +10,16 @@ import {
 import { ClientType } from '../core/parser/ua-detector';
 import { formatSourceGroupTag, cleanSourceOrGroupName } from '../core/generators/common';
 import { applyExtractionRules } from '../core/filter/extractor';
-import { fetchAndParseSource } from '../core/parser/fetcher';
-import { saveConfig } from '../storage/db';
+import { refreshSource } from './source-service';
 import { selectSubscriptionSources } from '../../../../shared/subscription-info';
 import {
   getAppConfig,
-  saveAppConfig,
   getGlobalNodesCache,
   setGlobalNodesCache,
 } from '../context';
 
-export function ensureCustomSource(config: AppConfig): SubscriptionSource | undefined {
-  if (!config.sources || config.sources.length === 0) {
-    const defaultManual: SubscriptionSource = {
-      id: `manual-${Date.now()}`,
-      name: '自建节点',
-      type: 'manual',
-      enabled: true,
-      nodeCount: 0,
-      nodes: [],
-    };
-    config.sources = [defaultManual];
-    return defaultManual;
-  }
-  return config.sources.find(s => s.type === 'manual' || s.id === 'custom');
+export function ensureCustomSource(_config: AppConfig): SubscriptionSource | undefined {
+  return undefined;
 }
 
 export function collectNodesFromSources(config: AppConfig): ProxyNode[] {
@@ -58,37 +44,25 @@ export function ensureAllSourceProxyGroups(_config: AppConfig): boolean {
   return false;
 }
 
-export async function refreshAllSources(config: AppConfig): Promise<ProxyNode[]> {
-  const allNodes: ProxyNode[] = [];
-  const enabledSources = config.sources.filter(s => s.enabled);
+export interface SourceRefreshResult {
+  sourceId: string;
+  success: boolean;
+  nodeCount?: number;
+  message?: string;
+}
 
-  for (const source of enabledSources) {
-    if (source.type === 'custom' || !source.url || !source.url.startsWith('http')) {
-      if (source.nodes && source.nodes.length > 0) {
-        allNodes.push(...source.nodes);
-      }
-      continue;
-    }
-
+export async function refreshAllSources(config: AppConfig): Promise<{ nodes: ProxyNode[]; results: SourceRefreshResult[] }> {
+  const results: SourceRefreshResult[] = [];
+  const ids = config.sources.filter(source => source.enabled && /^https?:\/\//.test(source.url || '')).map(source => source.id);
+  for (const id of ids) {
     try {
-      console.log(`[Fetcher] Refreshing source: ${source.name} (${source.url})`);
-      const nodes = await fetchAndParseSource(source, config.countryRules);
-      source.lastUpdated = new Date().toISOString();
-      source.nodeCount = nodes.length;
-      source.nodes = nodes;
-      allNodes.push(...nodes);
-      console.log(`[Fetcher] Successfully fetched ${nodes.length} nodes from ${source.name}`);
-    } catch (err: any) {
-      console.error(`[Fetcher] Error fetching source ${source.name}:`, err.message || err);
-      if (source.nodes && source.nodes.length > 0) {
-        allNodes.push(...source.nodes);
-      }
+      const source = await refreshSource(id);
+      results.push({ sourceId: id, success: true, nodeCount: source.nodeCount });
+    } catch (error) {
+      results.push({ sourceId: id, success: false, message: error instanceof Error ? error.message : '上游更新失败' });
     }
   }
-
-  saveConfig(config);
-  setGlobalNodesCache(allNodes);
-  return allNodes;
+  return { nodes: collectNodesFromSources(getAppConfig()), results };
 }
 
 export async function getEffectiveNodes(): Promise<ProxyNode[]> {
