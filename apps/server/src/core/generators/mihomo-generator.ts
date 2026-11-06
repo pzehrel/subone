@@ -289,6 +289,9 @@ export interface MihomoGeneratorOptions {
   expandNodes?: boolean;
   baseUrl?: string;
   subToken?: string;
+  ordinaryNodeIds?: ReadonlySet<string>;
+  dependencyGroupIds?: ReadonlySet<string>;
+  ordinaryGroupIds?: ReadonlySet<string>;
 }
 
 export function generateMihomoConfig(
@@ -336,10 +339,10 @@ export function generateMihomoConfig(
       : allCandidateNodes;
   } else {
     // 订阅化模式：由 proxy-providers 接管自建源
-    nodesToWrite = [];
+    nodesToWrite = options?.ordinaryNodeIds ? nodes.filter(node => !options.ordinaryNodeIds!.has(node.id)) : [];
   }
 
-  doc.proxies = nodesToWrite.map(nodeToMihomoProxy);
+  doc.proxies = [...(Array.isArray(doc.proxies) ? doc.proxies : []), ...nodesToWrite.map(nodeToMihomoProxy)];
 
   // 2. Inject Proxy Groups & Unified Rules & Proxy Providers & DNS
   doc = injectUnifiedToMihomo(doc, nodes, proxyGroups, rulesList, sources, options);
@@ -357,7 +360,7 @@ export function injectUnifiedToMihomo(
   proxyGroups: ProxyGroupItem[],
   rulesList: UnifiedRuleItem[],
   sources: SubscriptionSource[] = [],
-  options?: { expandNodes?: boolean; baseUrl?: string; subToken?: string }
+  options?: MihomoGeneratorOptions
 ): any {
 
   if (!doc || typeof doc !== 'object') doc = {};
@@ -388,7 +391,9 @@ export function injectUnifiedToMihomo(
 
       doc['proxy-providers'][providerKey] = {
         type: 'http',
-        url: sourceSubscriptionUrl(s, 'mihomo', options),
+        url: options?.ordinaryNodeIds && options.baseUrl && options.subToken
+          ? `${options.baseUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(options.subToken)}/source/${encodeURIComponent(s.id)}?target=mihomo`
+          : sourceSubscriptionUrl(s, 'mihomo', options),
         interval: 86400,
         path: `./proxy_providers/${safePathName}.yaml`,
         'health-check': {
@@ -457,6 +462,7 @@ export function injectUnifiedToMihomo(
 
   const generatedGroups: any[] = [];
   effectiveGroups.forEach(grp => {
+    const candidates = options?.ordinaryNodeIds && (!options.dependencyGroupIds?.has(grp.id) || options.ordinaryGroupIds?.has(grp.id)) ? nodes.filter(node => options.ordinaryNodeIds!.has(node.id)) : nodes;
     if (grp.type === 'direct') {
       generatedGroups.push({
         name: grp.name,
@@ -505,10 +511,18 @@ export function injectUnifiedToMihomo(
 
     const acceptsNodes = grp.includeAll || Boolean(grp.filter) || groupUses.length > 0 ||
       ['👉 手动选择', '♻️ 自动选择'].includes(grp.name);
-    if (options?.expandNodes && acceptsNodes) {
-      resolveGroupNodes(grp, nodes, sources).forEach(n => combinedProxies.add(n.name));
+    if (!options?.dependencyGroupIds?.has(grp.id) && acceptsNodes && !grp.proxies?.length && !resolveGroupNodes(grp, candidates, sources).length) {
+      grpObj.proxies = ['REJECT'];
+      generatedGroups.push(grpObj);
+      return;
+    }
+    if ((options?.expandNodes || options?.dependencyGroupIds?.has(grp.id) && !options.ordinaryGroupIds?.has(grp.id)) && acceptsNodes) {
+      const groupSources = options?.dependencyGroupIds?.has(grp.id)
+        ? [...sources, ...candidates.filter(node => node.sourceId && !sources.some(source => source.id === node.sourceId)).map(node => ({ id: node.sourceId!, name: node.sourceName || node.sourceId!, enabled: true, nodes: [] } as unknown as SubscriptionSource))]
+        : sources;
+      resolveGroupNodes(grp, candidates, groupSources).forEach(n => combinedProxies.add(n.name));
       grpObj.proxies = Array.from(combinedProxies).filter(p => p !== grp.name);
-      if (!grpObj.proxies.length) grpObj.proxies = ['REJECT'];
+      if (!grpObj.proxies.length && !options?.dependencyGroupIds?.has(grp.id)) grpObj.proxies = ['REJECT'];
       generatedGroups.push(grpObj);
       return;
     }
@@ -592,7 +606,7 @@ export function injectUnifiedToMihomo(
     const filteredProxies = Array.from(combinedProxies).filter(p => {
       if (!p || p.trim() === grp.name) return false;
       const t = p.trim();
-      return validGroupNames.has(t) || validNodeNames.has(t) || isBuiltinClashProxy(t);
+      return options?.dependencyGroupIds?.has(grp.id) || validGroupNames.has(t) || validNodeNames.has(t) || isBuiltinClashProxy(t);
     });
 
     if (filteredProxies.length > 0) {
@@ -600,13 +614,13 @@ export function injectUnifiedToMihomo(
     }
 
     if ((!grpObj.proxies || grpObj.proxies.length === 0) && (!grpObj.use || grpObj.use.length === 0)) {
-      grpObj.proxies = ['DIRECT'];
+      grpObj.proxies = options?.dependencyGroupIds?.has(grp.id) ? [] : ['DIRECT'];
     }
 
     generatedGroups.push(grpObj);
   });
 
-  doc['proxy-groups'] = generatedGroups.length > 0 ? generatedGroups : doc['proxy-groups'];
+  doc['proxy-groups'] = [...(Array.isArray(doc['proxy-groups']) ? doc['proxy-groups'] : []), ...generatedGroups];
 
   // 2. Build Remote Rule Providers
   const activeRules = rulesList.filter(r => r.enabled);
@@ -636,7 +650,7 @@ export function injectUnifiedToMihomo(
 
   const generatedRules: string[] = [];
   activeRules.forEach((r, idx) => {
-    const safeOutbound = resolveSafeOutbound(r.outbound, availableGroupNames, fallbackGroup);
+    const safeOutbound = resolveSafeOutbound(r.outbound === '🎯 本地直连' ? 'DIRECT' : r.outbound, availableGroupNames, fallbackGroup);
     if (r.type === 'FINAL') return; // final rule at the end
     const suffix = r.noResolve ? ',no-resolve' : '';
     if (r.kind === 'remote') {
@@ -655,7 +669,7 @@ export function injectUnifiedToMihomo(
 
   const finalRule = activeRules.find(r => r.type === 'FINAL');
   const finalMatch = finalRule
-    ? `MATCH,${resolveSafeOutbound(finalRule.outbound, availableGroupNames, fallbackGroup)}`
+    ? `MATCH,${resolveSafeOutbound(finalRule.outbound === '🎯 本地直连' ? 'DIRECT' : finalRule.outbound, availableGroupNames, fallbackGroup)}`
     : existingMatch || (availableGroupNames.has('🐟 漏网之鱼') ? 'MATCH,🐟 漏网之鱼' : `MATCH,${fallbackGroup}`);
 
   const postRules = Array.isArray(doc.post_rules)

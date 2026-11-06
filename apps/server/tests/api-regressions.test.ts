@@ -147,29 +147,6 @@ test('administration remains accessible when no password is configured', async (
   assert.equal((await post('/api/auth/login', {})).status, 200);
 });
 
-test('node routes preserve query selection, encoded IDs and update/delete aliases', async () => {
-  const config = fixture();
-  const node: ProxyNode = { id: 'node phone', name: 'Phone', type: 'ss', server: 'example.test', port: 443 };
-  config.sources = [
-    { id: 'manual phone', name: 'Phone', type: 'manual', enabled: true, nodes: [node] },
-    { id: 'manual laptop', name: 'Laptop', type: 'manual', enabled: true, nodes: [] },
-  ];
-  context.setAppConfig(config);
-
-  const selected = await fetch(`${origin}/api/custom-nodes?sourceId=manual%20phone`);
-  assert.deepEqual((await readApiResponse<ProxyNode[]>(selected)).data, [node]);
-
-  const updated = await fetch(`${origin}/api/nodes/node%20phone`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Updated phone' }),
-  });
-  assert.equal(updated.status, 200);
-  assert.equal((await readApiResponse<ProxyNode>(updated)).data.name, 'Updated phone');
-
-  const deleted = await fetch(`${origin}/api/custom-nodes/node%20phone`, { method: 'DELETE' });
-  assert.equal(deleted.status, 200);
-  assert.deepEqual(context.getAppConfig().sources[0].nodes, []);
-});
-
 test('nested URL-encoded forms remain accepted alongside JSON requests', async () => {
   const response = await fetch(`${origin}/api/profiles`, {
     method: 'POST',
@@ -310,7 +287,7 @@ test('info rules immediately reclassify cached nodes and filter every subscripti
 
   for (const target of ['mihomo', 'singbox', 'loon', 'qx', 'egern', 'shadowrocket']) {
     const response = await fetch(`${origin}/s/info-test/${target}?expand=true`);
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 200, await response.clone().text());
     const output = await response.text();
     assert.ok(output.includes('Hong Kong'));
     assert.ok(!output.includes('剩余流量'));
@@ -318,7 +295,7 @@ test('info rules immediately reclassify cached nodes and filter every subscripti
   }
   for (const target of ['mihomo', 'loon', 'qx', 'egern']) {
     const response = await fetch(`${origin}/s/info-test/${target}`);
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 200, await response.clone().text());
     const output = await response.text();
     assert.ok(output.includes(`${origin}/s/info-test/source/airport?target=`));
     assert.ok(!output.includes('expired-subscription'));
@@ -334,7 +311,7 @@ test('info rules immediately reclassify cached nodes and filter every subscripti
   assert.deepEqual(context.getAppConfig().sources[0], beforeFailure);
   const refresh = await post('/api/sources/airport/refresh', {});
   assert.equal(refresh.status, 500);
-  assert.deepEqual(context.getAppConfig().sources[0], beforeFailure);
+  assert.deepEqual(context.getAppConfig().sources[0], { ...beforeFailure, lastUpdateError: refresh.body.message });
 
   const restored = await update({ trafficNodeRegex: '', expiryNodeRegex: '' });
   assert.equal(restored.body.data.nodeCount, 3);
@@ -358,7 +335,7 @@ test('profile subscriptions aggregate only selected enabled upstreams for every 
 
   for (const target of ['', '/mihomo', '/singbox', '/loon', '/qx', '/egern', '/shadowrocket', '/shadowrocket?format=base64']) {
     const response = await fetch(`${origin}/s/usage-test${target}`);
-    assert.equal(response.status, 200, target);
+    assert.equal(response.status, 200, `${target}: ${await response.clone().text()}`);
     assert.equal(response.headers.get('subscription-userinfo'), 'upload=2048; download=6144; total=20480; expire=1861920000', target);
     await response.text();
   }
@@ -386,7 +363,7 @@ test('profile subscriptions omit fake traffic when upstream metadata is unavaila
   context.setAppConfig(config);
   for (const target of ['mihomo', 'singbox', 'loon', 'qx', 'egern', 'shadowrocket']) {
     const response = await fetch(`${origin}/s/no-usage/${target}`);
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 200, await response.clone().text());
     assert.equal(response.headers.get('subscription-userinfo'), null);
     await response.text();
   }
@@ -444,24 +421,6 @@ test('preview rejects unsupported relay groups with a client error', async () =>
     assert.equal(result.body.success, false);
     assert.match(result.body.message, /Chain/);
   }
-});
-
-test('custom-node endpoints handle subscriptions without a manual node group', async () => {
-  const config = fixture();
-  config.sources = [{ id: 'airport', name: 'Airport', type: 'remote', enabled: true, url: 'https://airport.example.test/sub' }];
-  context.setAppConfig(config);
-
-  const response = await fetch(`${origin}/api/custom-nodes`);
-  assert.equal(response.status, 200);
-  assert.deepEqual((await readApiResponse<ProxyNode[]>(response)).data, []);
-
-  const imported = await post('/api/custom-nodes/import', { text: '', replaceAll: true });
-  assert.equal(imported.status, 404);
-  assert.equal(imported.body.success, false);
-
-  const added = await post('/api/custom-nodes', { name: 'Node', type: 'ss', server: 'example.test', port: 443 });
-  assert.equal(added.status, 404);
-  assert.equal(added.body.success, false);
 });
 
 test('a new profile receives a generated token and can be retrieved', async () => {

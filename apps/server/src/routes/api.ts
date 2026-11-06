@@ -1,8 +1,9 @@
+import { createGenerationPlan, renderGeneration, GenerationError } from '../services/generation';
 import { Hono, type Handler } from 'hono';
 import type { BodyEnv } from '../middlewares/body';
 import crypto from 'crypto';
 import yaml from 'js-yaml';
-import { appConfig, getBaseUrl, setGlobalNodesCache, getGlobalNodesCache } from '../context';
+import { appConfig, getBaseUrl, setGlobalNodesCache, getGlobalNodesCache, setAppConfig } from '../context';
 import { saveConfig, saveServerConfig, generateRandomSubToken } from '../storage/db';
 import { fetchAndParseSource, parseRawContent } from '../core/parser/fetcher';
 import { applySubscriptionInfo, validateInfoRegex } from '../core/parser/subscription-info';
@@ -35,14 +36,12 @@ import {
   loadSingboxGatewayTemplate,
   loadDefaultRules,
 } from '../storage/default-templates';
-import { generateMihomoConfig, nodeToMihomoProxy } from '../core/generators/mihomo-generator';
-import { generateSingboxConfig } from '../core/generators/singbox-generator';
-import { generateLoonConfig, nodeToLoonProxy } from '../core/generators/loon-generator';
-import { generateQuantumultXConfig, nodeToQuantumultXProxy } from '../core/generators/quantumultx-generator';
-import { generateEgernConfig, nodeToEgernProxy } from '../core/generators/egern-generator';
-import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../core/generators/shadowrocket-generator';
-import { detectClientType, ClientType } from '../core/parser/ua-detector';
+import { ClientType } from '../core/parser/ua-detector';
 import { applyExtractionRules } from '../core/filter/extractor';
+import { normalizeGroupReferences, prepareTemplateReferences, removeGroupReferences, removeNodeReferences } from '../services/node-references';
+import { prepareSourceNodes } from '../services/node-identity';
+import { bindSourceDoh } from '../core/parser/source-doh';
+import { commitConfig, commitSource, refreshSource, SourceUpdateError } from '../services/source-service';
 import { UnsupportedProxyGroupError } from '../core/generators/errors';
 import {
   ensureCustomSource,
@@ -51,10 +50,6 @@ import {
   collectNodesFromSources,
   refreshAllSources,
   getEffectiveNodes,
-  getEffectiveNodesForProfile,
-  getEffectiveGroupsForProfile,
-  getEffectiveSourcesForProfile,
-  getEffectiveRulesForProfile,
   getEffectiveTemplateForProfile,
 } from '../services/profile-service';
 
@@ -62,7 +57,6 @@ export const apiRouter = new Hono<BodyEnv>({ strict: false });
 
 // 1. Config & Settings
 apiRouter.get('/config', (c) => {
-  ensureCustomSource(appConfig);
   return c.json({ success: true, data: appConfig });
 });
 
@@ -80,482 +74,146 @@ apiRouter.post('/config/settings', (c) => {
   return c.json({ success: true, data: appConfig.settings, proxyGroups: appConfig.proxyGroups });
 });
 
-// 2. Custom Nodes Management (独立节点组专区)
-apiRouter.get('/custom-nodes', (c) => {
-  const sourceId = c.req.query('sourceId') as string | undefined;
-  if (sourceId) {
-    const target = appConfig.sources.find(s => s.id === sourceId && (s.type === 'custom' || s.type === 'manual' || s.id === 'custom' || !s.url));
-    return c.json({ success: true, count: target?.nodes?.length || 0, data: target?.nodes || [] });
+// Parsed nodes only have local display and enable settings.
+apiRouter.put('/nodes/:id', (c) => {
+  const body = c.get('body') || {};
+  if (Object.keys(body).some(key => !['name', 'enabled'].includes(key)) ||
+      ('name' in body && body.name !== null && typeof body.name !== 'string') ||
+      ('enabled' in body && typeof body.enabled !== 'boolean')) {
+    return c.json({ success: false, message: '仅可设置本地名称和启停' }, 400);
   }
-  const customSrc = ensureCustomSource(appConfig);
-  return c.json({ success: true, count: customSrc?.nodes?.length || 0, data: customSrc?.nodes || [] });
-});
-
-apiRouter.post('/custom-nodes/import', (c) => {
-  const body = c.get('body');
-  const { text, replaceAll, sourceId } = body;
-  if (text === undefined || typeof text !== 'string') {
-    return c.json({ success: false, message: 'Text content required' }, 400);
-  }
-
-  // Find target custom source
-  let targetSrc = sourceId
-    ? appConfig.sources.find(s => s.id === sourceId && (s.type === 'custom' || s.type === 'manual' || s.id === 'custom' || !s.url))
-    : null;
-  if (!targetSrc) {
-    targetSrc = ensureCustomSource(appConfig);
-  }
-  if (!targetSrc) {
-    return c.json({ success: false, message: '请先创建一个独立节点组' }, 404);
-  }
-
-  if (replaceAll && !text.trim()) {
-    targetSrc.nodes = [];
-    targetSrc.nodeCount = 0;
-    targetSrc.lastUpdated = new Date().toISOString();
-    ensureCustomProxyGroup(appConfig);
-    saveConfig(appConfig);
-    setGlobalNodesCache(collectNodesFromSources(appConfig));
-
-    return c.json({
-      success: true,
-      count: 0,
-      added: 0,
-      data: [],
-      sourceId: targetSrc.id,
-      proxyGroups: appConfig.proxyGroups,
-    });
-  }
-
-  const parsedNodes: ProxyNode[] = parseRawContent(text, targetSrc.id, targetSrc.name, undefined, appConfig.countryRules);
-
-  if (parsedNodes.length === 0) {
-    return c.json({ success: false, message: '未能从粘贴文本中识别到有效节点 (支持 URI 链接, Clash YAML, Singbox JSON, Base64)' }, 400);
-  }
-
-  if (replaceAll) {
-    targetSrc.nodes = parsedNodes;
-  } else {
-    const existingIds = new Set((targetSrc.nodes || []).map(n => `${n.server}:${n.port}:${n.name}`));
-    const newOnes = parsedNodes.filter(n => !existingIds.has(`${n.server}:${n.port}:${n.name}`));
-    targetSrc.nodes = [...(targetSrc.nodes || []), ...newOnes];
-  }
-
-  targetSrc.nodeCount = targetSrc.nodes.length;
-  targetSrc.lastUpdated = new Date().toISOString();
-  ensureCustomProxyGroup(appConfig);
-  saveConfig(appConfig);
-  setGlobalNodesCache(collectNodesFromSources(appConfig));
-
-  return c.json({
-    success: true,
-    count: targetSrc.nodes.length,
-    added: parsedNodes.length,
-    data: targetSrc.nodes,
-    sourceId: targetSrc.id,
-    proxyGroups: appConfig.proxyGroups,
-  });
-});
-
-apiRouter.post('/custom-nodes', (c) => {
-  const body = c.get('body');
-  let targetSrc = body.sourceId
-    ? appConfig.sources.find(s => s.id === body.sourceId && (s.type === 'custom' || s.type === 'manual' || s.id === 'custom' || !s.url))
-    : null;
-  if (!targetSrc) {
-    targetSrc = ensureCustomSource(appConfig);
-  }
-  if (!targetSrc) {
-    return c.json({ success: false, message: '请先创建一个独立节点组' }, 404);
-  }
-
-  const newNode: ProxyNode = {
-    id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    sourceId: targetSrc.id,
-    sourceName: targetSrc.name,
-    name: body.name || '独立节点',
-    type: body.type || 'vless',
-    server: body.server || '',
-    port: Number(body.port) || 443,
-    countryCode: body.countryCode || 'OTHER',
-    countryEmoji: body.countryEmoji || '🌐',
-    ...body,
-  };
-  if (!newNode.detour) {
-    delete newNode.detour;
-  }
-
-  targetSrc.nodes = [...(targetSrc.nodes || []), newNode];
-  targetSrc.nodeCount = targetSrc.nodes.length;
-  ensureCustomProxyGroup(appConfig);
-  saveConfig(appConfig);
-  setGlobalNodesCache(collectNodesFromSources(appConfig));
-
-  return c.json({
-    success: true,
-    data: newNode,
-    count: targetSrc.nodes.length,
-    sourceId: targetSrc.id,
-    proxyGroups: appConfig.proxyGroups,
-  });
-});
-
-const updateNodeHandler: Handler<BodyEnv, '/:id'> = (c) => {
-  const body = c.get('body');
-  const { name, text, rawContent, raw, detour, ...directFields } = body || {};
-  const configText = (typeof text === 'string' ? text : typeof rawContent === 'string' ? rawContent : typeof raw === 'string' ? raw : '').trim();
-
-  for (const s of appConfig.sources) {
-    if (s.nodes) {
-      const idx = s.nodes.findIndex(n => n.id === c.req.param('id'));
-      if (idx !== -1) {
-        let updatedNode: ProxyNode = { ...s.nodes[idx], ...directFields };
-
-        // If configText is provided, parse it to extract protocol, server, port, security, etc.
-        if (configText) {
-          try {
-            const parsed = parseRawContent(configText, s.id, s.name, undefined, appConfig.countryRules);
-            if (parsed.length > 0) {
-              const newParsed = parsed[0];
-              updatedNode = {
-                ...s.nodes[idx],
-                ...newParsed,
-                id: c.req.param('id'), // Preserve original unique node ID
-                sourceId: s.id,
-                sourceName: s.name,
-                raw: configText,
-                ...directFields,
-              };
-            } else {
-              updatedNode.raw = configText;
-            }
-          } catch (err: any) {
-            console.warn(`[NodeUpdate] Failed to parse config text for node ${c.req.param('id')}:`, err.message);
-            updatedNode.raw = configText;
-          }
-        }
-
-        // If a new name is explicitly provided
-        if (name && typeof name === 'string' && name.trim()) {
-          updatedNode.name = name.trim();
-        }
-
-        // Explicitly handle detour
-        if ('detour' in body) {
-          const detourVal = typeof detour === 'string' ? detour.trim() : '';
-          if (detourVal) {
-            updatedNode.detour = detourVal;
-            if (typeof updatedNode.raw === 'object' && updatedNode.raw !== null) {
-              updatedNode.raw.detour = detourVal;
-            }
-          } else {
-            delete updatedNode.detour;
-            if (typeof updatedNode.raw === 'object' && updatedNode.raw !== null) {
-              delete updatedNode.raw.detour;
-            }
-          }
-        }
-
-        s.nodes[idx] = updatedNode;
-        saveConfig(appConfig);
-        setGlobalNodesCache(collectNodesFromSources(appConfig));
-        return c.json({ success: true, data: s.nodes[idx] });
-      }
+  const candidate = structuredClone(appConfig);
+  try { candidate.templates = candidate.templates.map(template => prepareTemplateReferences(template, candidate, template)); }
+  catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
+  for (const source of candidate.sources) {
+    const node = [...(source.nodes || []), ...(source.infoNodes || [])].find(node => node.id === c.req.param('id'));
+    if (!node) continue;
+    node.originalName ??= node.name;
+    if ('name' in body) {
+      node.localName = body.name?.trim() || undefined;
+      node.name = node.localName ?? node.originalName;
     }
+    if ('enabled' in body) node.enabled = body.enabled;
+    try { commitConfig(candidate); } catch (error: any) { return c.json({ success: false, message: error.message }, 500); }
+    return c.json({ success: true, data: node });
   }
   return c.json({ success: false, message: 'Node not found' }, 404);
-};
-
-apiRouter.put('/custom-nodes/:id', updateNodeHandler);
-apiRouter.put('/nodes/:id', updateNodeHandler);
-
-const deleteNodeHandler: Handler<BodyEnv, '/:id'> = (c) => {
-  const nodeId = c.req.param('id');
-  let deleted = false;
-  let remainingCount = 0;
-  let affectedNodes: ProxyNode[] = [];
-
-  for (const s of appConfig.sources) {
-    if (s.nodes && s.nodes.length > 0) {
-      const idx = s.nodes.findIndex(n => n.id === nodeId);
-      if (idx !== -1) {
-        s.nodes.splice(idx, 1);
-        s.nodeCount = s.nodes.length;
-        deleted = true;
-        remainingCount = s.nodeCount;
-        affectedNodes = s.nodes;
-        break;
-      }
-    }
-  }
-
-  if (deleted) {
-    saveConfig(appConfig);
-    setGlobalNodesCache(collectNodesFromSources(appConfig));
-    return c.json({ success: true, count: remainingCount, data: affectedNodes, message: 'Node deleted' });
-  }
-
-  return c.json({ success: false, message: 'Node not found' }, 404);
-};
-
-apiRouter.delete('/custom-nodes/:id', deleteNodeHandler);
-apiRouter.delete('/nodes/:id', deleteNodeHandler);
-
-apiRouter.post('/sources/:id/clear-nodes', (c) => {
-  const source = appConfig.sources.find(s => s.id === c.req.param('id'));
-  if (!source) {
-    return c.json({ success: false, message: 'Source not found' }, 404);
-  }
-  source.nodes = [];
-  source.nodeCount = 0;
-  source.lastUpdated = new Date().toISOString();
-  saveConfig(appConfig);
-  setGlobalNodesCache(collectNodesFromSources(appConfig));
-  return c.json({ success: true, message: 'Nodes cleared' });
 });
 
 // 3. Network Sources Management (网络订阅源与自建节点组)
-apiRouter.get('/sources', (c) => {
-  ensureCustomSource(appConfig);
-  return c.json({ success: true, data: appConfig.sources });
+apiRouter.get('/sources', (c) => c.json({ success: true, data: appConfig.sources }));
+
+apiRouter.get('/sources/:id/raw', (c) => {
+  const source = appConfig.sources.find(s => s.id === c.req.param('id'));
+  if (!source?.rawSubscription) return c.json({ success: false, message: '订阅原文不存在' }, 404);
+  return c.json({ success: true, data: { ...source.rawSubscription, lastSuccessfulUpdate: source.lastUpdated } });
 });
 
-// Add source: remote network subscription or manual node group
 apiRouter.post('/sources', async (c) => {
   const body = c.get('body');
   try {
-    const sourceName = (body.name || '新节点组').trim();
-    const isManual = body.type === 'manual' || body.type === 'custom';
-
-    // 1. Create manual node group
-    if (isManual) {
-      const newSource: SubscriptionSource = {
-        id: `manual-${Date.now()}`,
-        name: sourceName,
-        url: '',
-        enabled: body.enabled !== false,
-        type: 'manual',
-        nodeCount: 0,
-        nodes: [],
-        lastUpdated: new Date().toISOString(),
-      };
-      appConfig.sources.push(newSource);
-
-      if (body.createGroup) {
-        appConfig.proxyGroups.push({
-          id: `grp-${newSource.id}`,
-          name: newSource.name,
-          type: 'select',
-          sources: [newSource.name],
-        });
-      }
-
-      saveConfig(appConfig);
-      setGlobalNodesCache(collectNodesFromSources(appConfig));
-      return c.json({ success: true, count: 0, data: newSource });
-    }
-
-    // 2. Create remote network subscription
-    const sourceUrl = (body.url || '').trim();
-    if (!sourceUrl) {
-      return c.json({ success: false, message: '订阅链接不能为空' }, 400);
-    }
-
-    try {
-      validateInfoRegex(body);
-    } catch (err: any) {
-      return c.json({ success: false, message: err.message }, 400);
-    }
-
-    const newSource: SubscriptionSource = {
-      id: `src-${Date.now()}`,
-      name: sourceName,
-      url: sourceUrl,
-      enabled: body.enabled !== false,
-      type: 'remote',
-      trafficNodeRegex: body.trafficNodeRegex?.trim(),
-      expiryNodeRegex: body.expiryNodeRegex?.trim(),
-      nodeCount: 0,
-      nodes: [],
+    if (['manual', 'custom'].includes(body.type)) return c.json({ success: false, message: '节点必须来自上游订阅' }, 400);
+    const url = typeof body.url === 'string' ? body.url.trim() : '';
+    if (!/^https?:\/\//.test(url)) return c.json({ success: false, message: '请填写 HTTP 订阅链接' }, 400);
+    try { validateInfoRegex(body); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
+    const source: SubscriptionSource = {
+      id: `src-${crypto.randomUUID()}`, name: (body.name || '新订阅').trim(), url,
+      enabled: body.enabled !== false, type: body.type || 'auto',
+      trafficNodeRegex: body.trafficNodeRegex?.trim(), expiryNodeRegex: body.expiryNodeRegex?.trim(),
     };
-
-    if (sourceUrl.startsWith('http://') || sourceUrl.startsWith('https://')) {
-      try {
-        console.log(`[Fetcher] Fetching nodes for [${sourceName}]: ${sourceUrl}`);
-        const nodes = await fetchAndParseSource(newSource, appConfig.countryRules);
-        newSource.nodes = nodes;
-        newSource.nodeCount = nodes.length;
-        newSource.lastUpdated = new Date().toISOString();
-        console.log(`[Fetcher] Successfully fetched ${nodes.length} nodes from [${sourceName}]`);
-      } catch (err: any) {
-        console.error(`[Fetcher] Failed initial fetch for [${sourceName}]:`, err.message || err);
-      }
-    }
-
-    appConfig.sources.push(newSource);
-
-    if (body.createGroup) {
-      appConfig.proxyGroups.push({
-        id: `grp-${newSource.id}`,
-        name: newSource.name,
-        type: 'urltest',
-        sources: [newSource.name],
-        tolerance: 50,
-        interval: 300,
-        url: 'https://www.google.com/generate_204',
-      });
-    }
-
-    saveConfig(appConfig);
-    setGlobalNodesCache(collectNodesFromSources(appConfig));
-
-    return c.json({ success: true, count: newSource.nodeCount, data: newSource });
-  } catch (err: any) {
-    return c.json({ success: false, message: err.message || 'Failed to add subscription source' }, 500);
-  }
+    try {
+      source.nodes = await fetchAndParseSource(source, appConfig.countryRules);
+    } catch (error: any) { return c.json({ success: false, message: error.message || '上游更新失败' }, 422); }
+    prepareSourceNodes(source);
+    bindSourceDoh(source);
+    source.nodeCount = source.nodes.length;
+    const candidate = structuredClone(appConfig);
+    candidate.sources.push(source);
+    if (body.createGroup) candidate.proxyGroups.push({
+      id: `grp-${source.id}`, name: source.name, type: 'urltest', sources: [source.id],
+      tolerance: 50, interval: 300, url: 'https://www.google.com/generate_204',
+    });
+    saveConfig(candidate);
+    setAppConfig(candidate);
+    setGlobalNodesCache(collectNodesFromSources(candidate));
+    return c.json({ success: true, count: source.nodeCount, data: source });
+  } catch (error: any) { return c.json({ success: false, message: error.message || '保存失败' }, 500); }
 });
 
 apiRouter.put('/sources/:id', async (c) => {
   const body = c.get('body');
-  const index = appConfig.sources.findIndex(s => s.id === c.req.param('id'));
-  if (index === -1) {
-    return c.json({ success: false, message: 'Source not found' }, 404);
-  }
-  const oldSource = appConfig.sources[index];
+  const current = appConfig.sources.find(s => s.id === c.req.param('id'));
+  if (!current) return c.json({ success: false, message: 'Source not found' }, 404);
+  try { validateInfoRegex(body); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
+  if (['manual', 'custom'].includes(body.type)) return c.json({ success: false, message: '节点必须来自上游订阅' }, 400);
+  if (body.url !== undefined && (typeof body.url !== 'string' || !/^https?:\/\//.test(body.url.trim()))) return c.json({ success: false, message: '请填写 HTTP 订阅链接' }, 400);
+  const candidate = structuredClone(current);
+  if (typeof body.name === 'string' && body.name.trim()) candidate.name = cleanSourceOrGroupName(body.name.trim());
+  if (typeof body.url === 'string') candidate.url = body.url.trim();
+  if (typeof body.type === 'string') candidate.type = body.type;
+  if (typeof body.enabled === 'boolean') candidate.enabled = body.enabled;
+  if (typeof body.customUserAgent === 'string') candidate.customUserAgent = body.customUserAgent.trim();
+  if (typeof body.trafficNodeRegex === 'string') candidate.trafficNodeRegex = body.trafficNodeRegex.trim();
+  if (typeof body.expiryNodeRegex === 'string') candidate.expiryNodeRegex = body.expiryNodeRegex.trim();
   try {
-    validateInfoRegex(body);
-  } catch (err: any) {
-    return c.json({ success: false, message: err.message }, 400);
-  }
-  const oldName = cleanSourceOrGroupName(oldSource.name || '');
-  const newName = body.name ? cleanSourceOrGroupName(body.name) : oldName;
-
-  // If source name changed, update nodes and references in proxyGroups
-  if (newName && newName !== oldName) {
-    if (oldSource.nodes) {
-      oldSource.nodes.forEach(n => {
-        n.sourceName = newName;
-      });
+    let updated: SubscriptionSource;
+    if (candidate.url !== current.url || candidate.type !== current.type || candidate.customUserAgent !== current.customUserAgent) {
+      updated = await refreshSource(current.id, candidate);
+    } else {
+      candidate.nodes = applySubscriptionInfo(candidate, [...(candidate.nodes || []), ...(candidate.infoNodes || [])]);
+      candidate.nodeCount = candidate.nodes.length;
+      [...candidate.nodes, ...(candidate.infoNodes || [])].forEach(node => { node.sourceName = candidate.name; });
+      commitSource(candidate);
+      updated = candidate;
     }
-
-    if (appConfig.proxyGroups) {
-      appConfig.proxyGroups.forEach(grp => {
-        if (grp.sources) {
-          grp.sources = grp.sources.map(s => cleanSourceOrGroupName(s).toLowerCase() === oldName.toLowerCase() ? newName : s);
-        }
-        if (grp.use) {
-          grp.use = grp.use.map(u => cleanSourceOrGroupName(u).toLowerCase() === oldName.toLowerCase() ? newName : u);
-        }
-      });
-    }
+    return c.json({ success: true, data: updated, proxyGroups: appConfig.proxyGroups });
+  } catch (error: any) {
+    return c.json({ success: false, message: error.message || '保存失败' }, error instanceof SourceUpdateError ? error.status : 500);
   }
-
-  // Re-fetch when the URL or parser changes so cached nodes use the selected format.
-  const urlChanged = body.url && body.url.trim() !== oldSource.url;
-  const formatChanged = typeof body.type === 'string' && body.type !== oldSource.type;
-  if ((urlChanged || formatChanged) && oldSource.type !== 'manual' && oldSource.type !== 'custom') {
-    const updatedUrl = (body.url ? body.url.trim() : oldSource.url) || '';
-    if (updatedUrl.startsWith('http://') || updatedUrl.startsWith('https://')) {
-      try {
-        console.log(`[Fetcher] Fetching nodes for updated source [${newName || oldSource.name}]`);
-        const tempSource = { ...oldSource, ...body, name: newName || oldSource.name, url: updatedUrl };
-        const nodes = await fetchAndParseSource(tempSource, appConfig.countryRules);
-        body.nodes = nodes;
-        body.nodeCount = nodes.length;
-        body.lastUpdated = new Date().toISOString();
-        body.infoNodes = tempSource.infoNodes;
-        body.subscriptionUserinfo = tempSource.subscriptionUserinfo;
-        body.subscriptionInfo = tempSource.subscriptionInfo;
-      } catch (err: any) {
-        console.error(`[Fetcher] Failed to fetch updated source URL:`, err.message || err);
-      }
-    }
-  }
-
-  appConfig.sources[index] = { ...appConfig.sources[index], ...body };
-  const updatedSource = appConfig.sources[index];
-  if (updatedSource.type !== 'manual' && updatedSource.type !== 'custom') {
-    updatedSource.nodes = applySubscriptionInfo(updatedSource, [
-      ...(updatedSource.nodes || []),
-      ...(updatedSource.infoNodes || []),
-    ]);
-    updatedSource.nodeCount = updatedSource.nodes.length;
-  }
-  saveConfig(appConfig);
-  setGlobalNodesCache(collectNodesFromSources(appConfig));
-  return c.json({ success: true, data: appConfig.sources[index], proxyGroups: appConfig.proxyGroups });
 });
 
 apiRouter.delete('/sources/:id', (c) => {
-  if (c.req.param('id') === 'custom') {
-    return c.json({ success: false, message: '默认独立节点组不能删除，可清空组内节点' }, 400);
+  const candidate = structuredClone(appConfig);
+  const source = candidate.sources.find(source => source.id === c.req.param('id'));
+  if (!source) return c.json({ success: false, message: 'Source not found' }, 404);
+  const removed = new Set([...(source.nodes || []), ...(source.infoNodes || [])].map(node => node.id));
+  removeNodeReferences(candidate, removed);
+  const ownedGroup = candidate.proxyGroups.find(group => group.id === `grp-${source.id}`);
+  if (ownedGroup) removeGroupReferences(candidate, ownedGroup);
+  candidate.sources = candidate.sources.filter(item => item.id !== source.id);
+  candidate.proxyGroups = candidate.proxyGroups.filter(group => group.id !== `grp-${source.id}`);
+  for (const group of candidate.proxyGroups) {
+    const mounts = group.sources ?? group.use;
+    if (!mounts) continue;
+    const kept = mounts.filter(id => id !== source.id);
+    group.sources = kept;
+    group.use = [...kept];
+    if (mounts.length && !kept.length && !group.proxies?.length) group.proxies = [`unresolved:${source.name}`];
   }
-  const deletedSource = appConfig.sources.find(s => s.id === c.req.param('id'));
-  appConfig.sources = appConfig.sources.filter(s => s.id !== c.req.param('id'));
-
-  if (deletedSource) {
-    const sClean = cleanSourceOrGroupName(deletedSource.name).toLowerCase();
-    const sId = (deletedSource.id || '').trim().toLowerCase();
-    const sRaw = (deletedSource.name || '').trim().toLowerCase();
-
-    const matchesSource = (target: string) => {
-      if (!target) return false;
-      const t = target.trim().toLowerCase();
-      const tClean = cleanSourceOrGroupName(target).toLowerCase();
-      return t === sId || t === sRaw || tClean === sClean || tClean === sId;
-    };
-
-    appConfig.proxyGroups = (appConfig.proxyGroups || []).filter(g => 
-      g.id !== `grp-src-${deletedSource.id}` && !matchesSource(g.name)
-    );
-    appConfig.proxyGroups.forEach(grp => {
-      if (grp.use) grp.use = grp.use.filter(u => !matchesSource(u));
-      if (grp.sources) grp.sources = grp.sources.filter(s => !matchesSource(s));
-      if (grp.proxies) grp.proxies = grp.proxies.filter(p => !matchesSource(p));
-    });
-
-    // Clean up sourceIds references in profiles
-    (appConfig.profiles || []).forEach(p => {
-      if (p.nodeFilter?.sourceIds) {
-        p.nodeFilter.sourceIds = p.nodeFilter.sourceIds.filter(id => id !== c.req.param('id') && !matchesSource(id));
-      }
-    });
+  for (const profile of candidate.profiles || []) {
+    if (!profile.nodeFilter?.sourceIds?.includes(source.id)) continue;
+    profile.nodeFilter.sourceIds = profile.nodeFilter.sourceIds.filter(id => id !== source.id);
+    if (!profile.nodeFilter.sourceIds.length) { profile.nodeFilter.mode = 'manual'; profile.nodeFilter.selectedNodeIds = []; }
   }
-
-  saveConfig(appConfig);
-  setGlobalNodesCache(collectNodesFromSources(appConfig));
+  try { commitConfig(candidate); } catch (error: any) { return c.json({ success: false, message: error.message }, 500); }
   return c.json({ success: true, message: 'Source deleted' });
 });
 
 apiRouter.post('/sources/:id/refresh', async (c) => {
-  const source = appConfig.sources.find(s => s.id === c.req.param('id'));
-  if (!source) {
-    return c.json({ success: false, message: 'Source not found' }, 404);
-  }
-  const url = (source.url || '').trim();
-  if (source.type === 'manual' || source.type === 'custom' || !url || !url.startsWith('http')) {
-    setGlobalNodesCache(collectNodesFromSources(appConfig));
-    saveConfig(appConfig);
-    return c.json({ success: true, nodeCount: source.nodes?.length || 0, data: source.nodes || [] });
-  }
+  if (!appConfig.sources.some(s => s.id === c.req.param('id'))) return c.json({ success: false, message: 'Source not found' }, 404);
   try {
-    const nodes = await fetchAndParseSource(source, appConfig.countryRules);
-    source.nodes = nodes;
-    source.nodeCount = nodes.length;
-    source.lastUpdated = new Date().toISOString();
-    saveConfig(appConfig);
-    setGlobalNodesCache(collectNodesFromSources(appConfig));
-    return c.json({ success: true, nodeCount: nodes.length, data: nodes });
-  } catch (err: any) {
-    return c.json({ success: false, message: err.message || 'Fetch failed' }, 500);
+    const source = await refreshSource(c.req.param('id'));
+    return c.json({ success: true, nodeCount: source.nodeCount, data: source.nodes, source });
+  } catch (error: any) {
+    return c.json({ success: false, message: error.message || 'Fetch failed' }, error instanceof SourceUpdateError ? error.status : 500);
   }
 });
 
 apiRouter.post('/sources/refresh-all', async (c) => {
   try {
-    const all = await refreshAllSources(appConfig);
+    const { nodes: all, results } = await refreshAllSources(appConfig);
     const effective = applyExtractionRules(all, appConfig.rules);
-    return c.json({ success: true, totalNodes: all.length, effectiveNodes: effective.length });
+    return c.json({ success: results.every(result => result.success), results, totalNodes: all.length, effectiveNodes: effective.length });
   } catch (err: any) {
     return c.json({ success: false, message: err.message || 'Refresh all failed' }, 500);
   }
@@ -651,64 +309,44 @@ apiRouter.get('/nodes', async (c) => {
   }
 });
 
-export function sanitizeProxyGroups(appConfig: AppConfig): boolean {
-  let changed = false;
-  const validSourceSet = new Set<string>();
-  (appConfig.sources || []).forEach(s => {
-    if (s.id) validSourceSet.add(s.id.trim().toLowerCase());
-    if (s.name) {
-      validSourceSet.add(s.name.trim().toLowerCase());
-      validSourceSet.add(cleanSourceOrGroupName(s.name).toLowerCase());
-    }
-  });
+export function sanitizeProxyGroups(_config: AppConfig): boolean { return false; }
 
-  (appConfig.proxyGroups || []).forEach(g => {
-    if (Array.isArray(g.sources) && g.sources.length > 0) {
-      const filtered = g.sources.filter(s => {
-        const raw = (s || '').trim().toLowerCase();
-        const clean = cleanSourceOrGroupName(s).toLowerCase();
-        return validSourceSet.has(raw) || validSourceSet.has(clean);
-      });
-      if (filtered.length !== g.sources.length) {
-        g.sources = filtered;
-        changed = true;
-      }
-    }
-    if (Array.isArray(g.use) && g.use.length > 0) {
-      const filtered = g.use.filter(u => {
-        const raw = (u || '').trim().toLowerCase();
-        const clean = cleanSourceOrGroupName(u).toLowerCase();
-        return validSourceSet.has(raw) || validSourceSet.has(clean);
-      });
-      if (filtered.length !== g.use.length) {
-        g.use = filtered;
-        changed = true;
-      }
-    }
-  });
+// Reads preserve unavailable references so users can repair them.
+apiRouter.get('/groups', (c) => c.json({ success: true, data: appConfig.proxyGroups }));
 
-  return changed;
+function validateGroup(value: unknown, partial = false): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('策略组必须为对象');
+  const group = value as Record<string, unknown>;
+  if ('id' in group && (typeof group.id !== 'string' || !group.id.trim())) throw new Error('策略组 ID 无效');
+  if ((!partial || 'name' in group) && (typeof group.name !== 'string' || !group.name.trim())) throw new Error('请填写策略组名称');
+  if ('type' in group && !['select', 'urltest', 'fallback', 'load-balance', 'relay', 'direct', 'reject'].includes(group.type as string)) throw new Error('策略类型无效');
+  for (const field of ['proxies', 'sources', 'use']) {
+    if (field in group && group[field] !== undefined && (!Array.isArray(group[field]) || !(group[field] as unknown[]).every(item => typeof item === 'string' && item.trim()))) throw new Error(`${field} 必须为字符串列表`);
+  }
+  for (const field of ['filter', 'url', 'icon']) {
+    if (field in group && group[field] !== undefined && typeof group[field] !== 'string') throw new Error(`${field} 必须为文本`);
+  }
+  if (group.filter) {
+    try { new RegExp((group.filter as string).replace(/\(\?i\)/g, ''), 'i'); } catch { throw new Error('节点过滤正则无效'); }
+  }
+  for (const field of ['tolerance', 'interval']) {
+    if (field in group && group[field] !== undefined && (typeof group[field] !== 'number' || !Number.isFinite(group[field]) || (group[field] as number) < 0)) throw new Error(`${field} 必须为非负数`);
+  }
+  for (const field of ['includeAll', 'lazy', 'hidden', 'isCountryGroup']) {
+    if (field in group && group[field] !== undefined && typeof group[field] !== 'boolean') throw new Error(`${field} 必须为布尔值`);
+  }
+  if (group.strategy !== undefined && !['consistent-hashing', 'round-robin', 'sticky-sessions'].includes(group.strategy as string)) throw new Error('负载均衡策略无效');
 }
-
-// 5. Proxy Groups Management (出口策略分组)
-apiRouter.get('/groups', (c) => {
-  let needSave = ensureCustomProxyGroup(appConfig);
-  if (sanitizeProxyGroups(appConfig)) {
-    needSave = true;
-  }
-  if (needSave) {
-    saveConfig(appConfig);
-  }
-  return c.json({ success: true, data: appConfig.proxyGroups });
-});
 
 apiRouter.post('/groups', (c) => {
   const body = c.get('body');
+  try { validateGroup(body); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
   const newGroup: ProxyGroupItem = {
-    id: `grp-${Date.now()}`,
+    id: `grp-${crypto.randomUUID()}`,
     name: body.name || '新分组',
     type: body.type || 'select',
     proxies: body.proxies || [],
+    sources: body.sources,
     use: body.use,
     filter: body.filter,
     tolerance: body.tolerance,
@@ -719,10 +357,15 @@ apiRouter.post('/groups', (c) => {
     lazy: body.lazy,
     hidden: body.hidden,
     icon: body.icon,
+    isCountryGroup: body.isCountryGroup,
   };
-  appConfig.proxyGroups.push(newGroup);
-  saveConfig(appConfig);
-  return c.json({ success: true, data: newGroup });
+  try {
+    const candidate = structuredClone(appConfig);
+    const normalized = normalizeGroupReferences(newGroup, candidate);
+    candidate.proxyGroups.push(normalized);
+    try { commitConfig(candidate); } catch (error: any) { return c.json({ success: false, message: error.message }, 500); }
+    return c.json({ success: true, data: normalized });
+  } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });
 
 apiRouter.post('/groups/batch-import', (c) => {
@@ -731,25 +374,35 @@ apiRouter.post('/groups/batch-import', (c) => {
   if (!text || typeof text !== 'string') {
     return c.json({ success: false, message: 'Text required' }, 400);
   }
-  const parsed = parseProxyGroupsText(text);
-  if (parsed.length === 0) {
-    return c.json({ success: false, message: '未能从粘贴内容中识别到策略组' }, 400);
-  }
-
-  if (replaceAll) {
-    appConfig.proxyGroups = parsed;
-  } else {
-    // Merge by unique name
-    const existingNames = new Set(appConfig.proxyGroups.map(g => g.name));
-    parsed.forEach(p => {
-      if (!existingNames.has(p.name)) {
-        appConfig.proxyGroups.push(p);
+  try {
+    const parsed = parseProxyGroupsText(text);
+    if (parsed.length === 0) {
+      const document = yaml.load(text) as any;
+      const list = Array.isArray(document) ? document : document?.['proxy-groups'] ?? document?.outbounds;
+      if (!replaceAll || !Array.isArray(list) || list.length !== 0) return c.json({ success: false, message: '未能从粘贴内容中识别到策略组' }, 400);
+    }
+    parsed.forEach(group => validateGroup(group));
+    const candidate = structuredClone(appConfig);
+    candidate.templates = candidate.templates.map(template => prepareTemplateReferences(template, candidate, template));
+    candidate.proxyGroups = candidate.proxyGroups.map(group => normalizeGroupReferences(group, candidate));
+    const previousGroups = candidate.proxyGroups;
+    const names = new Set(replaceAll ? [] : candidate.proxyGroups.map(group => group.name));
+    const additions = parsed.filter(group => !names.has(group.name));
+    if (replaceAll) candidate.proxyGroups = additions;
+    else candidate.proxyGroups.push(...additions);
+    if (new Set(candidate.proxyGroups.map(group => group.id)).size !== candidate.proxyGroups.length) throw new Error('策略组 ID 重复');
+    const renamedGroups = new Map<string, string>();
+    for (const previous of previousGroups) {
+      const updated = candidate.proxyGroups.find(group => group.id === previous.id);
+      if (updated && previous.name !== updated.name && previousGroups.filter(group => group.name === previous.name).length === 1) {
+        renamedGroups.set(previous.name, updated.name);
       }
-    });
-  }
-
-  saveConfig(appConfig);
-  return c.json({ success: true, count: parsed.length, data: appConfig.proxyGroups });
+    }
+    for (const rule of candidate.rulesList) rule.outbound = renamedGroups.get(rule.outbound) ?? rule.outbound;
+    candidate.proxyGroups = candidate.proxyGroups.map(group => normalizeGroupReferences(group, candidate));
+    try { commitConfig(candidate); } catch (error: any) { return c.json({ success: false, message: error.message }, 500); }
+    return c.json({ success: true, count: parsed.length, data: candidate.proxyGroups });
+  } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });
 
 apiRouter.post('/groups/generate-country-presets', (c) => {
@@ -806,25 +459,15 @@ apiRouter.put('/groups/:id', (c) => {
   const body = c.get('body');
   const idx = appConfig.proxyGroups.findIndex(g => g.id === c.req.param('id'));
   if (idx === -1) return c.json({ success: false, message: 'Group not found' }, 404);
+  try { validateGroup(body, true); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
   
   const current = appConfig.proxyGroups[idx];
-  const updated = { ...current, ...body };
+  const updated = { ...current, ...body, id: current.id };
 
-  // Explicitly handle clearing fields if provided
-  if ('proxies' in body) {
-    if (Array.isArray(body.proxies) && body.proxies.length > 0) {
-      updated.proxies = body.proxies;
-    } else {
-      delete updated.proxies;
-    }
-  }
-
-  if ('use' in body) {
-    if (Array.isArray(body.use) && body.use.length > 0) {
-      updated.use = body.use;
-    } else {
-      delete updated.use;
-    }
+  // Both names represent one mount list, including an explicit empty list.
+  if ('sources' in body || 'use' in body) {
+    updated.sources = 'sources' in body ? body.sources : body.use;
+    updated.use = updated.sources;
   }
 
   if ('filter' in body) {
@@ -835,15 +478,30 @@ apiRouter.put('/groups/:id', (c) => {
     }
   }
 
-  appConfig.proxyGroups[idx] = updated;
-  saveConfig(appConfig);
-  return c.json({ success: true, data: appConfig.proxyGroups[idx] });
+  try {
+    const candidate = structuredClone(appConfig);
+    candidate.templates = candidate.templates.map(template => prepareTemplateReferences(template, candidate, template));
+    candidate.proxyGroups = candidate.proxyGroups.map(group => normalizeGroupReferences(group, candidate));
+    const previousGroup = candidate.proxyGroups[idx];
+    if (previousGroup.name !== updated.name && candidate.proxyGroups.filter(group => group.name === previousGroup.name).length === 1) {
+      for (const rule of candidate.rulesList) if (rule.outbound === previousGroup.name) rule.outbound = updated.name;
+    }
+    candidate.proxyGroups[idx] = normalizeGroupReferences(updated, candidate);
+    try { commitConfig(candidate); } catch (error: any) { return c.json({ success: false, message: error.message }, 500); }
+    return c.json({ success: true, data: candidate.proxyGroups[idx] });
+  } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });
 
 apiRouter.delete('/groups/:id', (c) => {
-  appConfig.proxyGroups = appConfig.proxyGroups.filter(g => g.id !== c.req.param('id'));
-  saveConfig(appConfig);
-  return c.json({ success: true, message: 'Group deleted' });
+  const candidate = structuredClone(appConfig);
+  const group = candidate.proxyGroups.find(group => group.id === c.req.param('id'));
+  if (!group) return c.json({ success: false, message: 'Group not found' }, 404);
+  try {
+    removeGroupReferences(candidate, group);
+    candidate.proxyGroups = candidate.proxyGroups.filter(item => item.id !== group.id);
+    try { commitConfig(candidate); } catch (error: any) { return c.json({ success: false, message: error.message }, 500); }
+    return c.json({ success: true, message: 'Group deleted' });
+  } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });
 
 
@@ -1019,14 +677,14 @@ apiRouter.post('/templates', (c) => {
     description: body.description || '',
     isDefault: Boolean(body.isDefault),
   };
-  if (newTemplate.isDefault) {
-    appConfig.templates.forEach(t => {
-      if (t.type === newTemplate.type) t.isDefault = false;
-    });
-  }
-  appConfig.templates.push(newTemplate);
-  saveConfig(appConfig);
-  return c.json({ success: true, data: newTemplate });
+  try {
+    const candidate = structuredClone(appConfig);
+    const prepared = prepareTemplateReferences(newTemplate, candidate);
+    if (prepared.isDefault) candidate.templates.forEach(template => { if (template.type === prepared.type) template.isDefault = false; });
+    candidate.templates.push(prepared);
+    commitConfig(candidate);
+    return c.json({ success: true, data: prepared });
+  } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });
 
 apiRouter.put('/templates/:id', (c) => {
@@ -1035,15 +693,15 @@ apiRouter.put('/templates/:id', (c) => {
   if (index === -1) {
     return c.json({ success: false, message: 'Template not found' }, 404);
   }
-  const updated = { ...appConfig.templates[index], ...body };
-  if (updated.isDefault) {
-    appConfig.templates.forEach(t => {
-      if (t.type === updated.type && t.id !== updated.id) t.isDefault = false;
-    });
-  }
-  appConfig.templates[index] = updated;
-  saveConfig(appConfig);
-  return c.json({ success: true, data: updated });
+  try {
+    const candidate = structuredClone(appConfig);
+    const previous = candidate.templates[index];
+    const updated = prepareTemplateReferences({ ...previous, ...body }, candidate, previous);
+    if (updated.isDefault) candidate.templates.forEach(template => { if (template.type === updated.type && template.id !== updated.id) template.isDefault = false; });
+    candidate.templates[index] = updated;
+    commitConfig(candidate);
+    return c.json({ success: true, data: updated });
+  } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });
 
 apiRouter.post('/templates/:id/reset', (c) => {
@@ -1051,15 +709,18 @@ apiRouter.post('/templates/:id/reset', (c) => {
   if (index === -1) {
     return c.json({ success: false, message: '模版未找到' }, 404);
   }
-  const tpl = appConfig.templates[index];
+  const candidate = structuredClone(appConfig);
+  const tpl = candidate.templates[index];
   if (tpl.id === 'tpl-singbox-gateway' || tpl.name.includes('旁路由') || tpl.name.includes('网关')) {
     tpl.content = loadSingboxGatewayTemplate();
   } else {
     tpl.content = loadDefaultTemplate(tpl.type);
   }
-  appConfig.templates[index] = tpl;
-  saveConfig(appConfig);
-  return c.json({ success: true, data: tpl });
+  try {
+    candidate.templates[index] = prepareTemplateReferences(tpl, candidate);
+    commitConfig(candidate);
+    return c.json({ success: true, data: candidate.templates[index] });
+  } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });
 
 apiRouter.delete('/templates/:id', (c) => {
@@ -1167,18 +828,6 @@ apiRouter.post('/generate/preview', async (c) => {
       targetProfile = previewProfile;
     }
 
-    const nodes = targetProfile
-      ? await getEffectiveNodesForProfile(targetProfile)
-      : await getEffectiveNodes();
-
-    const groups = targetProfile
-      ? getEffectiveGroupsForProfile(targetProfile, nodes)
-      : appConfig.proxyGroups;
-
-    const rules = targetProfile
-      ? getEffectiveRulesForProfile(targetProfile)
-      : appConfig.rulesList;
-
     let targetType: ClientType = customType || 'singbox';
     let templateContent = customTemplate;
 
@@ -1198,55 +847,16 @@ apiRouter.post('/generate/preview', async (c) => {
       templateContent = defaultTpl?.content || '';
     }
 
-    const effectiveSources = targetProfile
-      ? getEffectiveSourcesForProfile(targetProfile, nodes)
-      : appConfig.sources;
-
-    let output = '';
-    const baseUrl = getBaseUrl(c.req);
-    const subToken = targetProfile?.token || 'preview-token';
-    const expand = Boolean(body?.expandNodes || c.req.query('expand') === 'true' || c.req.query('expand') === '1');
-
-    if (targetType === 'mihomo') {
-      output = generateMihomoConfig(templateContent, nodes, groups, rules, effectiveSources, {
-        expandNodes: expand,
-        baseUrl,
-        subToken
-      });
-    } else if (targetType === 'singbox') {
-      output = generateSingboxConfig(templateContent, nodes, groups, rules, effectiveSources);
-    } else if (targetType === 'loon') {
-      output = generateLoonConfig(templateContent, nodes, groups, rules, effectiveSources, {
-        expandNodes: expand,
-        baseUrl,
-        subToken
-      });
-    } else if (targetType === 'quantumultx') {
-      output = generateQuantumultXConfig(templateContent, nodes, groups, rules, effectiveSources, {
-        expandNodes: expand,
-        baseUrl,
-        subToken
-      });
-    } else if (targetType === 'egern') {
-      output = generateEgernConfig(templateContent, nodes, groups, rules, effectiveSources, {
-        expandNodes: expand,
-        baseUrl,
-        subToken
-      });
-    } else if (targetType === 'shadowrocket') {
-      const isBase64 = body?.format === 'base64' || c.req.query('format') === 'base64';
-      if (isBase64) {
-        output = generateShadowrocketBase64(nodes);
-      } else {
-        const expandRocket = body?.expandNodes !== false;
-        output = generateShadowrocketConfig(templateContent, nodes, groups, rules, effectiveSources, { expandNodes: expandRocket });
-      }
-    }
-
-    return c.json({ success: true, nodeCount: nodes.length, data: output });
+    const plan = await createGenerationPlan({
+      target: targetType, profile: targetProfile, templateContent, templateId,
+      expandNodes: typeof body.expandNodes === 'boolean' ? body.expandNodes : (c.req.query('expand') === 'true' || c.req.query('expand') === '1' ? true : undefined),
+      format: body.format || c.req.query('format'), baseUrl: getBaseUrl(c.req),
+    });
+    const result = renderGeneration(plan);
+    return c.json({ success: true, nodeCount: result.generation.nodeCount, data: result.output, generation: result.generation });
   } catch (err) {
-    const status = err instanceof UnsupportedProxyGroupError ? 422 : 500;
+    const status = err instanceof UnsupportedProxyGroupError || err instanceof GenerationError ? 422 : 500;
     const message = err instanceof Error ? err.message : 'Generation failed';
-    return c.json({ success: false, message }, status);
+    return c.json({ success: false, message, ...(err instanceof GenerationError ? { generation: err.generation } : {}) }, status);
   }
 });

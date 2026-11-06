@@ -4,8 +4,6 @@
  * (e.g. accessing SubOne via VPS IP http://<IP>:3456 or LAN IP).
  */
 export async function copyToClipboard(text: string): Promise<boolean> {
-  if (!text) return false;
-
   // 1. Try modern navigator.clipboard if available and in secure context
   if (typeof navigator !== 'undefined' && navigator.clipboard && window.isSecureContext) {
     try {

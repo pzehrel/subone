@@ -90,10 +90,11 @@ export function applySubscriptionInfo(
   const infoNodes: ProxyNode[] = [];
   const available: ProxyNode[] = [];
   for (const node of nodes) {
-    const traffic = trafficRegex?.test(node.name);
-    const expiry = expiryRegex?.test(node.name);
-    if (traffic) trafficNames.push(node.name);
-    if (expiry) expiryNames.push(node.name);
+    const originalName = node.originalName ?? node.name;
+    const traffic = trafficRegex?.test(originalName);
+    const expiry = expiryRegex?.test(originalName);
+    if (traffic) trafficNames.push(originalName);
+    if (expiry) expiryNames.push(originalName);
     if (traffic || expiry) infoNodes.push(node);
     else available.push(node);
   }

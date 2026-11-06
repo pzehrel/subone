@@ -1,5 +1,6 @@
 import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
 import { adaptRulesetForLoon, formatRuleTag } from './ruleset-adapter';
+import { resolveGroupNodes } from './group-nodes';
 import { sourceSubscriptionUrl, resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag } from './common';
 
 function formatServer(server: string): string {
@@ -10,7 +11,7 @@ function formatServer(server: string): string {
   return trimmed;
 }
 
-export function nodeToLoonProxy(node: ProxyNode): string {
+function formatLoonProxy(node: ProxyNode): string {
   const name = node.name.replace(/[=,]/g, '_');
   const server = formatServer(node.server);
 
@@ -182,10 +183,20 @@ export function nodeToLoonProxy(node: ProxyNode): string {
   return `# Unsupported node: ${name}`;
 }
 
+/** Native node DNS is appended after protocol formatting, for full and provider output alike. */
+export function nodeToLoonProxy(node: ProxyNode, serverDns?: readonly string[]): string {
+  const line = formatLoonProxy(node);
+  return serverDns?.length && !line.startsWith('#') ? `${line},server-dns="${serverDns.join(',')}"` : line;
+}
+
 export interface LoonGeneratorOptions {
   expandNodes?: boolean;
   baseUrl?: string;
   subToken?: string;
+  nodeServerDns?: ReadonlyMap<string, readonly string[]>;
+  ordinaryNodeIds?: ReadonlySet<string>;
+  dependencyGroupIds?: ReadonlySet<string>;
+  runtimeSources?: SubscriptionSource[];
 }
 
 export function generateLoonConfig(
@@ -228,12 +239,11 @@ export function generateLoonConfig(
     nodesToWrite = allCandidateNodes.filter(n => !n.sourceId || n.sourceId === 'custom' || n.sourceId.startsWith('custom') || !networkSourceIds.has(n.sourceId));
   } else {
     // 订阅化模式：自建节点已挂载到 [Remote Proxy]，无需写入静态 [Proxy]
-    nodesToWrite = [];
+    nodesToWrite = allCandidateNodes.filter(node => options?.ordinaryNodeIds && !options.ordinaryNodeIds.has(node.id));
   }
 
-  const generatedProxyLines = nodesToWrite.map(nodeToLoonProxy);
+  const generatedProxyLines = nodesToWrite.map(node => nodeToLoonProxy(node, options?.nodeServerDns?.get(node.id)));
 
-  let inProxySection = false;
   let hasHandledProxy = false;
 
   for (let i = 0; i < lines.length; i++) {
@@ -241,7 +251,6 @@ export function generateLoonConfig(
     const trimmed = line.trim();
 
     if (trimmed === '[Proxy]') {
-      inProxySection = true;
       hasHandledProxy = true;
       resultLines.push(line);
       if (generatedProxyLines.length > 0) {
@@ -250,11 +259,6 @@ export function generateLoonConfig(
       continue;
     }
 
-    if (inProxySection && trimmed.startsWith('[')) {
-      inProxySection = false;
-    }
-
-    if (inProxySection) continue;
     resultLines.push(line);
   }
 
@@ -275,10 +279,20 @@ export function injectUnifiedToLoon(
   proxyGroups: ProxyGroupItem[],
   rulesList: UnifiedRuleItem[],
   sources: SubscriptionSource[] = [],
-  options?: { expandNodes?: boolean; baseUrl?: string; subToken?: string }
+  options?: LoonGeneratorOptions
 ): string {
   const expandNodes = Boolean(options?.expandNodes);
+  const runtimeNodes = nodes;
+  nodes = nodes.filter(node => !options?.ordinaryNodeIds || options.ordinaryNodeIds.has(node.id));
   const lines = templateMcf.split('\n');
+  const nativeGroups = new Set<string>(); const nativeNodes = new Set<string>(); let nativeSection = '';
+  for (const line of lines) {
+    const header = /^\s*\[([^\]]+)\]/.exec(line);
+    if (header) { nativeSection = header[1].toLowerCase(); continue; }
+    const entry = /^\s*([^#;=]+?)\s*=/.exec(line);
+    if (entry && nativeSection === 'proxy group') nativeGroups.add(entry[1]);
+    if (entry && ['proxy', 'remote proxy', 'remote filter'].includes(nativeSection)) nativeNodes.add(entry[1]);
+  }
   const activeRules = rulesList.filter(r => r.enabled);
   const remoteRules = activeRules.filter(r => r.kind === 'remote');
   const localRules = activeRules.filter(r => r.kind === 'local' && r.type !== 'FINAL');
@@ -354,7 +368,8 @@ export function injectUnifiedToLoon(
     // 外部机场订阅：保持原样直连链接
     networkSources.forEach(s => {
       const tag = s.name.replace(/[=,]/g, '_').trim();
-      remoteProxyLines.push(`${tag} = ${sourceSubscriptionUrl(s, 'loon', options)}, udp=true, fast-open=default, skip-cert-verify=true, enabled=true`);
+      const url = options?.baseUrl && options?.subToken ? `${options.baseUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(options.subToken)}/source/${encodeURIComponent(s.id)}?target=loon` : sourceSubscriptionUrl(s, 'loon', options);
+      remoteProxyLines.push(`${tag} = ${url}, udp=true, fast-open=default, skip-cert-verify=true, enabled=true`);
       allActiveRemoteSources.push(s);
     });
 
@@ -431,6 +446,17 @@ export function injectUnifiedToLoon(
   const groupLines: string[] = [];
 
   effectiveGroups.forEach(grp => {
+    if (options?.dependencyGroupIds?.has(grp.id) && !['direct', 'reject'].includes(grp.type)) {
+      const members = [...(grp.proxies || [])];
+      if (grp.type !== 'relay' && ((grp.sources ?? grp.use)?.length || grp.filter || !members.length)) {
+        for (const node of resolveGroupNodes(grp, nodes, options.runtimeSources || sources)) if (!members.includes(node.name)) members.push(node.name);
+      }
+      if (!members.length && !(grp.sources ?? grp.use)?.length && !grp.proxies?.length) members.push('DIRECT');
+      const type = grp.type === 'urltest' ? 'url-test' : grp.type;
+      const extra = ['url-test', 'fallback', 'load-balance'].includes(type) ? `, url=${grp.url || 'https://www.google.com/generate_204'}, interval=${grp.interval || 300}${type === 'url-test' ? `, tolerance=${grp.tolerance || 50}` : ''}` : '';
+      groupLines.push(`${grp.name} = ${type}${members.length ? ', ' + members.join(', ') : ''}${extra}`);
+      return;
+    }
     if (grp.type === 'direct') {
       groupLines.push(`${grp.name} = select, DIRECT`);
       return;
@@ -608,8 +634,8 @@ export function injectUnifiedToLoon(
     }
 
     // Prune dangling references in Loon
-    const validGroupNames = new Set(effectiveGroups.map(g => g.name));
-    const validNodeNames = new Set(nodes.map(n => n.name.replace(/[=,]/g, '_')));
+    const validGroupNames = new Set([...effectiveGroups.map(g => g.name), ...nativeGroups]);
+    const validNodeNames = new Set([...runtimeNodes.map(n => n.name.replace(/[=,]/g, '_')), ...nativeNodes]);
     sources.forEach(s => {
       if (Array.isArray(s.nodes)) {
         s.nodes.forEach(n => validNodeNames.add(n.name.replace(/[=,]/g, '_')));
@@ -665,7 +691,7 @@ export function injectUnifiedToLoon(
   }
 
   // 4. Build [Rule]
-  const availableGroupNames = new Set(proxyGroups.map(g => g.name));
+  const availableGroupNames = new Set([...proxyGroups.map(g => g.name), ...nativeGroups, ...nativeNodes]);
   const fallbackGroup = proxyGroups.find(g => g.name === '🚀 节点选择')?.name || proxyGroups[0]?.name || 'DIRECT';
 
   const localRuleLines = localRules.flatMap(r => {
@@ -684,7 +710,8 @@ export function injectUnifiedToLoon(
     ? resolveSafeOutbound(finalRule.outbound, availableGroupNames, fallbackGroup)
     : (availableGroupNames.has('🐟 漏网之鱼') ? '🐟 漏网之鱼' : fallbackGroup);
 
-  localRuleLines.push(`FINAL,${finalOutbound}`);
+  const templateFinal = lines.find(line => /^\s*FINAL\s*,/i.test(line));
+  const finalRuleLine = finalRule ? `FINAL,${finalOutbound}` : templateFinal || `FINAL,${finalOutbound}`;
 
   // 5. Build [Remote Rule]
   const seenLoonRemoteUrls = new Set<string>();
@@ -706,10 +733,15 @@ export function injectUnifiedToLoon(
   let hasHandledRule = false;
   let hasHandledRemoteRule = false;
 
-  let inSkippedSection = false;
+  let inRuleSection = false;
 
   for (const line of lines) {
     const trimmed = line.trim();
+
+    if (inRuleSection && trimmed.startsWith('[')) {
+      result.push(finalRuleLine);
+      inRuleSection = false;
+    }
 
     // Ignore legacy or incorrect [Proxy Provider] header
     if (trimmed === '[Proxy Provider]') {
@@ -718,18 +750,6 @@ export function injectUnifiedToLoon(
 
     // Ignore hardcoded FINAL lines from template to prevent duplicate or misplaced FINAL entries
     if (trimmed.startsWith('FINAL,') || trimmed.startsWith('final,') || trimmed === 'FINAL' || trimmed === 'final') {
-      continue;
-    }
-
-    // If expandNodes is true, do not retain existing lines in [Remote Proxy] or [Remote Filter]
-    if (expandNodes && (trimmed === '[Remote Proxy]' || trimmed === '[Remote Filter]')) {
-      inSkippedSection = true;
-      continue;
-    }
-    if (inSkippedSection && trimmed.startsWith('[')) {
-      inSkippedSection = false;
-    }
-    if (inSkippedSection) {
       continue;
     }
 
@@ -772,6 +792,7 @@ export function injectUnifiedToLoon(
 
     if (trimmed === '[Rule]') {
       hasHandledRule = true;
+      inRuleSection = true;
       result.push(line);
       result.push(...localRuleLines);
       continue;
@@ -786,6 +807,8 @@ export function injectUnifiedToLoon(
 
     result.push(line);
   }
+
+  if (inRuleSection) result.push(finalRuleLine);
 
   if (!expandNodes) {
     if (!hasHandledRemoteProxy && remoteProxyLines.length > 0) {
@@ -803,7 +826,7 @@ export function injectUnifiedToLoon(
   }
   if (!hasHandledRule && localRuleLines.length > 0) {
     result.push('\n[Rule]');
-    result.push(...localRuleLines);
+    result.push(...localRuleLines, finalRuleLine);
   }
   if (!hasHandledRemoteRule && remoteRuleLines.length > 0) {
     result.push('\n[Remote Rule]');

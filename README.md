@@ -2,29 +2,15 @@
 
 本项目 fork 自 [cfm019/subone](https://github.com/cfm019/subone)。感谢原作者 [cfm019](https://github.com/cfm019) 及所有贡献者的工作。当前仓库为 [pzehrel/subone](https://github.com/pzehrel/subone)。
 
-> 📚 **上游在线文档**：[https://cfm019.github.io/subone-doc/](https://cfm019.github.io/subone-doc/)
-> 包含系统安装部署指南、控制台图文使用手册、各客户端配置教程及按源解耦机制详解。
+原项目文档：[cfm019/subone-doc](https://cfm019.github.io/subone-doc/)。本仓库的来源模型与客户端支持范围见下文及[客户端支持与验证](docs/client-support.md)。
 
-多节点多源聚合与配置生成。支持汇聚多个上游机场订阅与自建独立节点，分 Profile 定制策略组、分流规则及模版，生成组合后的聚合订阅配置。
+SubOne 管理上游订阅，保存实际订阅原文，将解析节点、策略组、分流规则和模板组合为下游订阅。所有节点均来自上游；本地设置支持改名与禁用。
 
-目标格式支持 Sing-box、Mihomo、Loon、Quantumult X、Egern 与 Shadowrocket。
-
-## 更新记录
-
-### 2026-10
-- **支持链式代理（Relay）**：策略组新增 `relay` 类型，支持有序串联多个节点/策略组实现多级流量中转，全平台客户端（Sing-box、Mihomo、Loon、Quantumult X、Egern、Shadowrocket）均已适配。
-
-### 2026-09
-- **自建与独立节点组支持按源订阅解耦**：
-  - 针对 Loon、Mihomo (Clash)、Quantumult X、Egern 等客户端，外部机场订阅保持原链接，自建与独立节点组自动转换为 Subone 独立按源订阅端点（`/s/:token/source/:sourceId`）。
-  - 主配置文件中的静态实体节点区留空，策略组直接绑定订阅源 Tag 或名称。节点变动时仅需在客户端刷新对应订阅源，无需重新覆盖主配置。
-  - Sing-box 客户端保持既有全局内联 outbounds 逻辑不变。
+支持生成 sing-box、Mihomo、Loon、Quantumult X、Egern 和 Shadowrocket 六类完整配置，以及 Base64 编码的纯节点 URI 列表。输入格式与客户端能力分别说明，见[客户端支持与验证](docs/client-support.md)。
 
 ---
 
 ## 快速开始
-
-> 💡 图文安装指引、Docker 容器编排与客户端配置手册，请参阅 [SubOne 在线文档](https://cfm019.github.io/subone-doc/)。
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/pzehrel/subone/main/install.sh)
@@ -80,30 +66,12 @@ Docker 配置保存在 `data/server-config.json`。重建容器时，请保留 `
 
 ## 主要特性
 
-- **多 Profile**：
-  - 在 subone 中管理多个 Profile，如手机、笔记本、台机、旁路由，可能使用不同的客户端，相应使用不同的配置，每个 Profile 各自使用一个 Token 链接；
-  - 每个 Profile 可按需勾选不同源节点、自选策略组、分流规则及各自的模版；
-  - 订阅卡片和客户端订阅会汇总所选且已启用上游的用量、总额度与剩余流量，到期时间取最早值。未选择分组时汇总全部已启用上游；未提供的信息保持未知；
-- **独立节点与上游机场订阅源聚合**：
-  - 支持导入各类上游机场订阅，提取节点并按地区或关键字筛选分组；
-  - 添加或编辑网络订阅源时，可用正则分别匹配流量、到期时间提示项，并预览匹配结果。匹配项会从可用节点和导出节点中移除，信息显示在订阅卡片上；
-  - 流量与到期时间优先采用机场响应头中的信息，缺失时使用匹配项。修改规则立即作用于已有节点，清空规则可恢复提示项，无需重新拉取订阅；
-  - 支持添加自建独立节点，支持单条/批量 URI、Clash YAML、Sing-box JSON、QuanX 节点格式录入与解析；
-- **协议与传输支持**：
-  - **支持导入解析**：VLESS (Reality/Vision/gRPC/WS)、VMess、Shadowsocks (SS 2022/AEAD)、Trojan、Hysteria 2、TUIC v5、AnyTLS、WireGuard、Snell (v1~v4)、SOCKS5、HTTP、v2rayn 等协议；
-  - **支持输入格式**：URI 链接列表、Base64 订阅、Clash/Mihomo YAML、Sing-box JSON、QuanX 原生节点列表及完整配置中的本地节点；
-  - QuanX 订阅可自动识别，也可在“格式解析模式”中选择“QuanX (Quantumult X)”。支持 Base64 包装，切换解析模式后会重新拉取节点；
-- **策略组与分流规则**：
-  - 策略组支持 select、url-test、fallback、relay（链式代理）等类型，支持节点按正则过滤与多级嵌套；
-  - 本地规则：CIDR、DOMAIN、DOMAIN-SUFFIX、DOMAIN-KEYWORD 等；
-  - 远程规则集：GeoSite / GeoIP / SRS / MRS 统一管理与去向分流；
-- **模版与客户端分发**：
-  - 支持 **Sing-box**、**Mihomo (Clash)**、**Loon**、**Quantumult X**、**Egern**、**Shadowrocket** 等客户端；
-  - 默认提供各客户端规范模版，支持自定义模版扩展；
-  - 根据客户端 User-Agent 自识别分发，亦可通过路径或参数显式获取对应格式或 Base64 纯节点列表。
-
-
-
+- **上游与原文**：保存最近一次完整取回的订阅正文，支持查看、复制和下载。节点与上游 DoH 按单次成功更新整体生效；失败保留上次生效结果，批量更新按来源分别处理。
+- **解析节点**：按上游来源分组，支持查看连接信息、本地改名与禁用。来源内连接身份唯一且未变时，改名或调序保留本地设置；不同来源分别保留。
+- **订阅信息**：支持用节点名称正则匹配用量与到期提示。匹配项不进入可用节点或输出；响应头信息优先，缺失项使用匹配结果。修改规则可按缓存重新分类。
+- **策略组与规则**：保留来源挂载、显式出站、节点正则、Relay 顺序、测速参数、YAML 编辑和分流规则管理。具体策略、协议、传输及规则能否输出，由目标适配器检查并报告。
+- **下游订阅**：每份配置有独立 Token，可选择节点、策略组、规则和模板，生成六类客户端配置或纯节点列表。用量汇总所选普通来源，不计入仅为连接补齐的依赖来源；未知信息保持未知。
+- **来源 DoH**：上游 DoH 自动绑定该来源全部解析节点。生成预览显示实际映射、降级、未生效项和必要依赖；无上游 DoH 时保留模板 DNS。详细能力与验证范围见[客户端支持与验证](docs/client-support.md)。
 
 ## 源码编译部署
 ## 1. 环境要求
@@ -231,24 +199,25 @@ caddy reload
 
 每个订阅配置（Profile）拥有独立的访问 Token，可通过下列路径或请求头获取对应格式：
 
-| 客户端 / 场景 | 专用订阅路径 | 输出格式与说明 |
+| 客户端 / 场景 | 专用订阅路径 | 输出 |
 | :--- | :--- | :--- |
-| **自识别分发** | `/s/:token` | 根据请求头 `User-Agent` 自动识别客户端并分发匹配格式 |
-| **Sing-box** | `/s/:token/singbox` | JSON 配置 (包含 DNS、Tun、入站、出站及路由分流) |
-| **Mihomo (Clash)** | `/s/:token/mihomo` | YAML 配置 (包含 proxies、proxy-groups、rules) |
-| **Loon** | `/s/:token/loon` | CONF 配置 (包含 [Proxy]、[Proxy Group]、[Rule]) |
-| **Quantumult X** | `/s/:token/qx` 或 `/s/:token/quantumultx` | CONF 配置 (包含 [server_local]、[policy]、[filter_local]) |
-| **Egern** | `/s/:token/egern` | YAML 配置 (包含 proxies、proxy-groups、rules) |
-| **Shadowrocket** | `/s/:token/shadowrocket` 或 `/s/:token/rocket` | CONF 配置 (包含 [Proxy]、[Proxy Group]、[Rule]) |
-| **纯节点列表** | `/s/:token/shadowrocket?format=base64` | Base64 编码的节点 URI 列表 |
-| **独立源订阅** | `/s/:token/source/:sourceId` | 单独获取指定源节点列表，支持通过 `?target=` 或请求头输出对应客户端格式 |
+| 自动识别 | `/s/:token` | 根据 `User-Agent` 选择目标格式 |
+| sing-box | `/s/:token/singbox` | JSON 完整配置；入站与 TUN 等由模板决定 |
+| Mihomo | `/s/:token/mihomo` | YAML：`proxies`、`proxy-groups`、`rules` |
+| Loon | `/s/:token/loon` | CONF：`[Proxy]`、`[Proxy Group]`、`[Rule]` |
+| Quantumult X | `/s/:token/qx` 或 `/s/:token/quantumultx` | CONF：`[server_local]`、`[policy]`、`[filter_local]` |
+| Egern | `/s/:token/egern` | 原生 YAML：typed `proxies`、`policy_groups`、`rules` |
+| Shadowrocket | `/s/:token/shadowrocket` 或 `/s/:token/rocket` | CONF 完整配置 |
+| 纯节点列表 | `/s/:token/shadowrocket?format=base64` | Base64 编码的节点 URI 列表，不承载 DoH、DNS 规则或完整模板 |
+| 来源节点/provider | `/s/:token/source/:sourceId?target=xxx` | 只输出本份订阅普通选择中属于该来源的节点；格式随目标适配器确定 |
 
-> 提示：亦可在任意订阅路径后附加 `?target=xxx` 显式覆盖客户端类型（例如 `?target=mihomo`、`?target=qx`、`?target=egern`）。
+自动识别入口与来源节点入口可使用 `?target=xxx` 指定目标，例如 `mihomo`、`qx`、`egern`。固定客户端路径使用路径指定的目标。
 
+来源节点/provider 复用完整计划的节点命名与筛选，不转发原始上游链接。必要连接依赖与普通候选分开处理；纯节点输出不收集未使用的 DNS 依赖。能力及验证范围见[客户端支持与验证](docs/client-support.md)。
 
 ## 模版示例与参考
 
-Subone 支持为各个客户端自定义基础模版。所有模版文件统一维护在根目录 `templates/` 下，系统启动与新建模版时直接从该目录读取对应文件，支持开箱即用与热修改：
+客户端基础模板位于根目录 `templates/`。系统启动与新建模板时读取对应文件，可按需编辑；使用前应核对目标版本、生成诊断及本机网络配置。
 
 | 模版文件 | 目标客户端 / 模块 | 适用场景与特征 |
 | :--- | :--- | :--- |
@@ -257,8 +226,8 @@ Subone 支持为各个客户端自定义基础模版。所有模版文件统一�
 | [templates/mihomo.yaml](templates/mihomo.yaml) | Mihomo / Clash | 标准 YAML 基础模版，Fake-IP DNS 设置与出站占位 |
 | [templates/loon.conf](templates/loon.conf) | Loon | 标准 CONF 基础模版，包含 [Proxy]、[Proxy Group]、[Rule] 占位 |
 | [templates/quantumultx.conf](templates/quantumultx.conf) | Quantumult X | 标准 CONF 基础模版，包含 [server_local]、[policy]、[filter_local] 占位 |
-| [templates/egern.yaml](templates/egern.yaml) | Egern | 标准 YAML 基础模版，支持 Hysteria 2、VLESS Reality 等协议 |
-| [templates/shadowrocket.conf](templates/shadowrocket.conf) | Shadowrocket | 标准 CONF 基础模版，支持全协议单行定义与规则集注入 |
+| [templates/egern.yaml](templates/egern.yaml) | Egern | 原生 YAML 基础模板，使用 `proxies`、`policy_groups` 和 typed `rules` |
+| [templates/shadowrocket.conf](templates/shadowrocket.conf) | Shadowrocket | CONF 基础模板；协议与规则能力以生成诊断为准 |
 | [templates/rules.json](templates/rules.json) | 分流规则 (JSON) | 默认统一分流规则定义（结构化字段，包含广告拦截、AI、YouTube、Telegram 等本地/远程规则） |
 | [templates/rules.yaml](templates/rules.yaml) | 分流规则 (YAML) | 默认统一分流规则定义（YAML 列表文本格式，带清晰注释分类，方便文本直接修改） |
 | [templates/proxy-groups.json](templates/proxy-groups.json) | 策略组模版 | 默认内置策略组（节点选择、AI 服务、国外域名、国内服务、自动测速等） |

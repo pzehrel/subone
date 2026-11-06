@@ -21,6 +21,10 @@ export type ProxyType =
 export interface ProxyNode {
   id: string;
   name: string;
+  originalName?: string;
+  localName?: string;
+  enabled?: boolean;
+  detourRef?: string;
   type: ProxyType;
   server: string;
   port: number;
@@ -119,6 +123,49 @@ export interface ProxyNode {
 }
 
 export type SourceType = 'remote' | 'manual';
+export type SourceFormat = 'mihomo' | 'singbox' | 'quantumultx' | 'uri' | 'base64';
+export interface SourceRawRecord {
+  content: string;
+  fetchedAt: string;
+  contentType?: string;
+  format?: SourceFormat;
+  encoding?: 'base64';
+  parseStatus: 'success' | 'failed';
+  error?: string;
+}
+
+export interface SourceDohReference {
+  kind: 'direct' | 'source-node' | 'source-group' | 'unresolved' | 'ambiguous' | 'routing';
+  name?: string;
+  nodeId?: string;
+  outboundId?: string;
+  candidates?: string[];
+}
+
+export interface SourceDohService {
+  id: string;
+  path: string;
+  url: string;
+  raw: unknown;
+  outbound?: SourceDohReference;
+}
+
+export interface SourceDohOutbound {
+  id: string;
+  name: string;
+  raw: Record<string, unknown>;
+  references: SourceDohReference[];
+}
+
+export interface SourceDohResult {
+  sourceId: string;
+  batchId: string;
+  updatedAt: string;
+  format: SourceFormat;
+  services: SourceDohService[];
+  outbounds: SourceDohOutbound[];
+}
+
 
 export interface SubscriptionSource {
   id: string;
@@ -128,6 +175,11 @@ export interface SubscriptionSource {
   enabled: boolean;
   customUserAgent?: string;
   lastUpdated?: string;
+  detectedFormat?: SourceFormat;
+  rawSubscription?: SourceRawRecord;
+  parsedConfig?: Record<string, unknown>;
+  doh?: SourceDohResult;
+  lastUpdateError?: string;
   nodeCount?: number;
   nodes?: ProxyNode[];
   trafficNodeRegex?: string;
@@ -157,6 +209,13 @@ export interface ExtractionRule {
 
 export type ClientType = 'singbox' | 'mihomo' | 'loon' | 'quantumultx' | 'egern' | 'shadowrocket';
 
+export interface TemplateConnectionReference {
+  /** Owner tag/name and known connection field, independent of unrelated array entries. */
+  slot: string;
+  literal: string;
+  target: string;
+}
+
 export interface ConfigTemplate {
   id: string;
   name: string;
@@ -164,6 +223,7 @@ export interface ConfigTemplate {
   content: string;
   isDefault?: boolean;
   description?: string;
+  connectionReferences?: TemplateConnectionReference[];
 }
 
 export interface ProxyGroupItem {

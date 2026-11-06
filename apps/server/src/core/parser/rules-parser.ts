@@ -1,4 +1,5 @@
 import yaml from 'js-yaml';
+import { randomUUID } from 'node:crypto';
 import { ProxyGroupItem, UnifiedRuleItem, RuleType } from '../../types/index';
 
 export function parseProxyGroupsText(text: string): ProxyGroupItem[] {
@@ -13,87 +14,52 @@ export function parseProxyGroupsText(text: string): ProxyGroupItem[] {
     if (!cleanName || groupNames.has(cleanName)) return;
     groupNames.add(cleanName);
     groups.push({
-      id: `group-${Date.now()}-${groups.length}`,
+      id: `group-${randomUUID()}`,
       name: cleanName,
       type,
       ...extra,
     });
   };
 
-  // 1. Try JSON
-  if (content.startsWith('{') || content.startsWith('[')) {
-    try {
-      const parsed = JSON.parse(content);
-      const list = Array.isArray(parsed) ? parsed : (parsed.outbounds || parsed['proxy-groups'] || []);
-      if (Array.isArray(list)) {
-        list.forEach(item => {
-          const name = item.tag || item.name;
-          let type: any = 'select';
-          if (item.type === 'urltest' || item.type === 'url-test') type = 'urltest';
-          if (item.type === 'fallback') type = 'fallback';
-          if (item.type === 'relay') type = 'relay';
-          if (item.type === 'load-balance') type = 'load-balance';
-          if (item.type === 'direct') type = 'direct';
-          if (item.type === 'reject') type = 'reject';
-          if (name) {
-            const rawProxies = item.outbounds || item.proxies;
-            const rawUse = item.use;
-            addGroup(name, type, {
-              proxies: Array.isArray(rawProxies) ? rawProxies : undefined,
-              use: Array.isArray(rawUse) ? rawUse : (typeof rawUse === 'string' ? [rawUse] : undefined),
-              filter: item.filter,
-              url: item.url,
-              tolerance: item.tolerance,
-              interval: item.interval,
-              includeAll: item.includeAll ?? item['include-all'],
-              strategy: item.strategy,
-              lazy: item.lazy,
-              hidden: item.hidden,
-              icon: item.icon,
-            });
-          }
-        });
-        if (groups.length > 0) return groups;
-      }
-    } catch (e) {}
-  }
+  const readStructured = (document: unknown): ProxyGroupItem[] => {
+    const record = document && typeof document === 'object' ? document as Record<string, unknown> : undefined;
+    const list = Array.isArray(document) ? document : record?.['proxy-groups'] ?? record?.outbounds;
+    if (!Array.isArray(list)) throw new Error('策略组必须为列表');
+    for (const item of list) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('策略组必须为对象');
+      const name = item.name ?? item.tag;
+      if (typeof name !== 'string' || !name.trim()) throw new Error('请填写策略组名称');
+      if (groupNames.has(name.trim())) throw new Error(`策略组名称重复：${name.trim()}`);
+      const type = item.type === 'url-test' ? 'urltest' : item.type === undefined ? 'select' : item.type;
+      if (!['select', 'urltest', 'fallback', 'load-balance', 'relay', 'direct', 'reject'].includes(type)) throw new Error('策略类型无效');
+      addGroup(name, type, {
+        ...(item.id === undefined ? {} : { id: item.id }),
+        proxies: item.proxies === undefined ? item.outbounds : item.proxies,
+        sources: item.sources,
+        use: typeof item.use === 'string' ? [item.use] : item.use,
+        filter: item.filter,
+        url: item.url,
+        tolerance: item.tolerance,
+        interval: item.interval,
+        includeAll: item.includeAll === undefined ? item['include-all'] : item.includeAll,
+        strategy: item.strategy,
+        lazy: item.lazy,
+        hidden: item.hidden,
+        icon: item.icon,
+        isCountryGroup: item.isCountryGroup,
+      });
+    }
+    return groups;
+  };
 
-  // 2. Try YAML
-  if (content.includes('proxy-groups:') || content.includes('name:') || content.includes('type:')) {
-    try {
-      const doc = yaml.load(content) as any;
-      const list = Array.isArray(doc) ? doc : (doc['proxy-groups'] || doc.outbounds || []);
-      if (Array.isArray(list)) {
-        list.forEach(item => {
-          const name = item.name || item.tag;
-          let type: any = 'select';
-          if (item.type === 'url-test' || item.type === 'urltest') type = 'urltest';
-          if (item.type === 'fallback') type = 'fallback';
-          if (item.type === 'relay') type = 'relay';
-          if (item.type === 'load-balance') type = 'load-balance';
-          if (item.type === 'direct') type = 'direct';
-          if (item.type === 'reject') type = 'reject';
-          if (name) {
-            const rawProxies = item.proxies || item.outbounds;
-            const rawUse = item.use;
-            addGroup(name, type, {
-              proxies: Array.isArray(rawProxies) ? rawProxies : undefined,
-              use: Array.isArray(rawUse) ? rawUse : (typeof rawUse === 'string' ? [rawUse] : undefined),
-              filter: item.filter,
-              url: item.url,
-              tolerance: item.tolerance,
-              interval: item.interval,
-              includeAll: item.includeAll ?? item['include-all'],
-              strategy: item.strategy,
-              lazy: item.lazy,
-              hidden: item.hidden,
-              icon: item.icon,
-            });
-          }
-        });
-        if (groups.length > 0) return groups;
-      }
-    } catch (e) {}
+  // Structured input never falls back to the line-list importer, even when empty.
+  if (content.startsWith('{') || (content.startsWith('[') && !/^\[[\w -]+\]\s*(?:\r?\n|$)/.test(content))) {
+    try { return readStructured(yaml.load(content)); }
+    catch (error) { throw new Error(`策略组 JSON/YAML 无效：${error instanceof Error ? error.message : String(error)}`); }
+  }
+  if (/^\s*(?:proxy-groups|outbounds):/m.test(content) || /^\s*(?:-\s+|[^\n=]+:(?:\s|$))/m.test(content)) {
+    try { return readStructured(yaml.load(content)); }
+    catch (error) { throw new Error(`策略组 YAML 无效：${error instanceof Error ? error.message : String(error)}`); }
   }
 
   // 3. Line by line parsing (Loon format or simple comma list)

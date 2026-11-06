@@ -200,7 +200,10 @@
     "payload": "https://gh-proxy.com/https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
     "format": "binary",
     "outbound": "🇨🇳 国内服务",
-    "enabled": true
+    "enabled": true,
+    "clientUrls": {
+      "egern": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.json"
+    }
   },
   {
     "id": "r-cn-ip-remote",
@@ -210,6 +213,9 @@
     "payload": "https://gh-proxy.com/https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
     "format": "binary",
     "outbound": "🇨🇳 国内服务",
-    "enabled": true
+    "enabled": true,
+    "clientUrls": {
+      "egern": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.json"
+    }
   }
 ]

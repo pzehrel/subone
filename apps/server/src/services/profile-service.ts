@@ -10,37 +10,24 @@ import {
 import { ClientType } from '../core/parser/ua-detector';
 import { formatSourceGroupTag, cleanSourceOrGroupName } from '../core/generators/common';
 import { applyExtractionRules } from '../core/filter/extractor';
-import { fetchAndParseSource } from '../core/parser/fetcher';
-import { saveConfig } from '../storage/db';
+import { refreshSource } from './source-service';
 import { selectSubscriptionSources } from '../../../../shared/subscription-info';
+import { groupReferenceId } from './node-references';
 import {
   getAppConfig,
-  saveAppConfig,
   getGlobalNodesCache,
   setGlobalNodesCache,
 } from '../context';
 
-export function ensureCustomSource(config: AppConfig): SubscriptionSource | undefined {
-  if (!config.sources || config.sources.length === 0) {
-    const defaultManual: SubscriptionSource = {
-      id: `manual-${Date.now()}`,
-      name: '自建节点',
-      type: 'manual',
-      enabled: true,
-      nodeCount: 0,
-      nodes: [],
-    };
-    config.sources = [defaultManual];
-    return defaultManual;
-  }
-  return config.sources.find(s => s.type === 'manual' || s.id === 'custom');
+export function ensureCustomSource(_config: AppConfig): SubscriptionSource | undefined {
+  return undefined;
 }
 
 export function collectNodesFromSources(config: AppConfig): ProxyNode[] {
   const nodes: ProxyNode[] = [];
   (config.sources || []).forEach(s => {
     if (s.enabled && Array.isArray(s.nodes)) {
-      s.nodes.forEach(n => {
+      s.nodes.filter(node => node.enabled !== false).forEach(n => {
         n.sourceName = s.name;
         n.sourceId = s.id;
         nodes.push(n);
@@ -58,37 +45,25 @@ export function ensureAllSourceProxyGroups(_config: AppConfig): boolean {
   return false;
 }
 
-export async function refreshAllSources(config: AppConfig): Promise<ProxyNode[]> {
-  const allNodes: ProxyNode[] = [];
-  const enabledSources = config.sources.filter(s => s.enabled);
+export interface SourceRefreshResult {
+  sourceId: string;
+  success: boolean;
+  nodeCount?: number;
+  message?: string;
+}
 
-  for (const source of enabledSources) {
-    if (source.type === 'custom' || !source.url || !source.url.startsWith('http')) {
-      if (source.nodes && source.nodes.length > 0) {
-        allNodes.push(...source.nodes);
-      }
-      continue;
-    }
-
+export async function refreshAllSources(config: AppConfig): Promise<{ nodes: ProxyNode[]; results: SourceRefreshResult[] }> {
+  const results: SourceRefreshResult[] = [];
+  const ids = config.sources.filter(source => source.enabled && /^https?:\/\//.test(source.url || '')).map(source => source.id);
+  for (const id of ids) {
     try {
-      console.log(`[Fetcher] Refreshing source: ${source.name} (${source.url})`);
-      const nodes = await fetchAndParseSource(source, config.countryRules);
-      source.lastUpdated = new Date().toISOString();
-      source.nodeCount = nodes.length;
-      source.nodes = nodes;
-      allNodes.push(...nodes);
-      console.log(`[Fetcher] Successfully fetched ${nodes.length} nodes from ${source.name}`);
-    } catch (err: any) {
-      console.error(`[Fetcher] Error fetching source ${source.name}:`, err.message || err);
-      if (source.nodes && source.nodes.length > 0) {
-        allNodes.push(...source.nodes);
-      }
+      const source = await refreshSource(id);
+      results.push({ sourceId: id, success: true, nodeCount: source.nodeCount });
+    } catch (error) {
+      results.push({ sourceId: id, success: false, message: error instanceof Error ? error.message : '上游更新失败' });
     }
   }
-
-  saveConfig(config);
-  setGlobalNodesCache(allNodes);
-  return allNodes;
+  return { nodes: collectNodesFromSources(getAppConfig()), results };
 }
 
 export async function getEffectiveNodes(): Promise<ProxyNode[]> {
@@ -106,6 +81,7 @@ export async function getEffectiveNodesForProfile(profile: SubscriptionProfile):
   const allNodes = await getEffectiveNodes();
   const filter = profile.nodeFilter || { mode: 'all' };
 
+  if (filter.mode === 'manual' && (!filter.selectedNodeIds || filter.selectedNodeIds.length === 0)) return [];
   let filtered: ProxyNode[] = [];
 
   // 1. Group / Source selection (Primary mode)
@@ -115,7 +91,7 @@ export async function getEffectiveNodesForProfile(profile: SubscriptionProfile):
     const seenKeys = new Set<string>();
     appConfig.sources.forEach(s => {
       if (selectedSourceIds.has(s.id) && s.enabled && s.nodes) {
-        s.nodes.forEach(n => {
+        s.nodes.filter(node => node.enabled !== false).forEach(n => {
           const key = n.id ? `${n.id}#${n.name}` : `${n.server}:${n.port}:${n.name}`;
           if (!seenKeys.has(key)) {
             seenKeys.add(key);
@@ -183,26 +159,26 @@ export function getEffectiveGroupsForProfile(profile: SubscriptionProfile, _effe
     groups = (appConfig.proxyGroups || []).filter(g => set.has(g.id));
 
     // Recursively ensure any groups referenced by selected groups in proxies list are also included
-    const includedGroupNames = new Set(groups.map(g => g.name));
+    const includedGroupIds = new Set(groups.map(g => g.id));
     let added = true;
     while (added) {
       added = false;
-      const referencedGroupNames = new Set<string>();
+      const referencedGroupIds = new Set<string>();
       groups.forEach(g => {
         if (g.proxies) {
           g.proxies.forEach(p => {
-            if (!includedGroupNames.has(p)) {
-              referencedGroupNames.add(p);
-            }
+            const id = groupReferenceId(p);
+            const target = id ? appConfig.proxyGroups.find(group => group.id === id) : appConfig.proxyGroups.find(group => group.name === p);
+            if (target && !includedGroupIds.has(target.id)) referencedGroupIds.add(target.id);
           });
         }
       });
 
-      if (referencedGroupNames.size > 0) {
-        const additionalGroups = (appConfig.proxyGroups || []).filter(g => referencedGroupNames.has(g.name));
+      if (referencedGroupIds.size > 0) {
+        const additionalGroups = (appConfig.proxyGroups || []).filter(g => referencedGroupIds.has(g.id));
         additionalGroups.forEach(ag => {
-          if (!includedGroupNames.has(ag.name)) {
-            includedGroupNames.add(ag.name);
+          if (!includedGroupIds.has(ag.id)) {
+            includedGroupIds.add(ag.id);
             groups.push(ag);
             added = true;
           }

@@ -4,6 +4,8 @@ export type { SubscriptionInfo } from '../../../shared/subscription-info';
 export interface ProxyNode {
   id: string;
   name: string;
+  originalName?: string;
+  enabled?: boolean;
   type: string;
   server: string;
   port: number;
@@ -24,6 +26,18 @@ export interface SourceFilterConfig {
   excludeRegex?: string;      // 排除正则/关键词
 }
 
+export type SourceFormat = 'mihomo' | 'singbox' | 'quantumultx' | 'uri' | 'base64';
+export interface SourceRawRecord {
+  content: string;
+  fetchedAt: string;
+  contentType?: string;
+  format?: SourceFormat;
+  encoding?: 'base64';
+  parseStatus: 'success' | 'failed';
+  error?: string;
+  lastSuccessfulUpdate?: string;
+}
+
 export interface SubscriptionSource {
   id: string;
   name: string;
@@ -31,6 +45,8 @@ export interface SubscriptionSource {
   enabled: boolean;
   type?: 'remote' | 'manual' | 'auto' | 'base64' | 'clash' | 'singbox' | 'quantumultx' | 'custom' | string;
   lastUpdated?: string;
+  detectedFormat?: SourceFormat;
+  lastUpdateError?: string;
   nodeCount?: number;
   nodes?: ProxyNode[];
   trafficNodeRegex?: string;
@@ -59,6 +75,44 @@ export interface ExtractionRule {
 
 export type ClientType = 'singbox' | 'mihomo' | 'loon' | 'quantumultx' | 'egern' | 'shadowrocket';
 
+export interface GenerationDiagnostic {
+  code: string;
+  severity: 'warning' | 'error';
+  message: string;
+  sourceId?: string;
+  serviceId?: string;
+}
+
+export interface GenerationBinding {
+  sourceId: string;
+  sourceName: string;
+  batchId?: string;
+  updatedAt?: string;
+  nodeIds: string[];
+  services: { id: string; url: string }[];
+  status: 'applied' | 'degraded' | 'unapplied' | 'template' | 'ignored';
+  method: string;
+  appliedServiceIds: string[];
+  diagnostics: GenerationDiagnostic[];
+}
+
+export interface GenerationMetadata {
+  target: { type: ClientType; version?: string; mode: 'complete' | 'nodes' };
+  nodeCount: number;
+  dependencyNodeCount: number;
+  dependencyNodes: { id: string; name: string; sourceId?: string; sourceName?: string; bindingSourceId?: string; reason: string[] }[];
+  bindings: GenerationBinding[];
+  diagnostics: GenerationDiagnostic[];
+}
+
+export interface GenerationPreviewResult {
+  success: boolean;
+  nodeCount: number;
+  data: string;
+  message?: string;
+  generation?: GenerationMetadata;
+}
+
 export interface ConfigTemplate {
   id: string;
   name: string;
@@ -81,6 +135,10 @@ export interface ProxyGroupItem {
   interval?: number;
   isCountryGroup?: boolean;
   icon?: string;
+  includeAll?: boolean;
+  strategy?: 'consistent-hashing' | 'round-robin' | 'sticky-sessions';
+  lazy?: boolean;
+  hidden?: boolean;
 }
 
 
