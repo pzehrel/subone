@@ -120,6 +120,7 @@ async function handleSourceSubRequest(c: Context, forcedTarget?: ClientType) {
     return c.body(result.output);
 
   } catch (err: any) {
+    if (err instanceof GenerationError) return c.json({ success: false, message: err.message, generation: err.generation }, 422);
     console.error('Source subscription generation error:', err);
     return c.html(`Generation error: ${err.message || err}`, 500);
   }

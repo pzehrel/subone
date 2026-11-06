@@ -178,6 +178,8 @@ apiRouter.delete('/sources/:id', (c) => {
   if (!source) return c.json({ success: false, message: 'Source not found' }, 404);
   const removed = new Set([...(source.nodes || []), ...(source.infoNodes || [])].map(node => node.id));
   removeNodeReferences(candidate, removed);
+  const ownedGroup = candidate.proxyGroups.find(group => group.id === `grp-${source.id}`);
+  if (ownedGroup) removeGroupReferences(candidate, ownedGroup);
   candidate.sources = candidate.sources.filter(item => item.id !== source.id);
   candidate.proxyGroups = candidate.proxyGroups.filter(group => group.id !== `grp-${source.id}`);
   for (const group of candidate.proxyGroups) {

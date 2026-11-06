@@ -57,8 +57,9 @@ async function addSource(path: string, document: unknown) {
 }
 async function profileFor(nodes: any[], content: unknown = template) {
   const group = (await api('/groups', 'POST', { name: `Ordinary-${Math.random()}`, type: 'select', includeAll: true })).data;
+  const rule = (await api('/rules/unified', 'POST', { name: 'Isolated completion rule', kind: 'local', type: 'DOMAIN', payload: 'completion.example', outbound: 'template-direct', enabled: true })).data;
   const tpl = (await api('/templates', 'POST', { name: 'Completion template', type: 'singbox', content: JSON.stringify(content) })).data;
-  const profile = (await api('/profiles', 'POST', { name: 'Completion profile', nodeFilter: { mode: 'manual', selectedNodeIds: nodes.map(node => node.id) }, selectedGroupIds: [group.id], templates: { singbox: tpl.id } })).data;
+  const profile = (await api('/profiles', 'POST', { name: 'Completion profile', nodeFilter: { mode: 'manual', selectedNodeIds: nodes.map(node => node.id) }, selectedGroupIds: [group.id], selectedRuleIds: [rule.id], templates: { singbox: tpl.id } })).data;
   return { ...profile, group, tpl };
 }
 const preview = (profile: any, customType = 'singbox', extra = {}) => api('/generate/preview', 'POST', { profileId: profile.id, customType, ...extra });
@@ -312,4 +313,41 @@ test('native node detours complete independently of absent source DoH and retain
   assert.equal(choice.type, 'selector');
   assert.deepEqual(choice.outbounds, ['Native chain exit']);
   assert.deepEqual(doc.outbounds.find((entry: any) => entry.tag === profile.group.name).outbounds, ['Native chain ordinary']);
+});
+
+
+test('completed private DoH dependency output passes native sing-box check and bounded startup', { skip: !process.env.SUBONE_SINGBOX_BINARY }, async () => {
+  const added = await addSource('/native-completed', { outbounds: [
+    { type: 'socks', tag: 'Native completed ordinary', server: 'native-completed.example', server_port: 1080 },
+    { type: 'socks', tag: 'Native completed exit', server: '127.0.0.1', server_port: 45432 },
+    { type: 'selector', tag: 'Native completed strategy', outbounds: ['Native completed exit'] },
+  ], dns: { servers: [{ type: 'https', server: '192.0.2.53', detour: 'Native completed strategy' }] } });
+  const profile = await profileFor([added.nodes.find((node: any) => node.server === 'native-completed.example')]);
+  const result = await preview(profile);
+  assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(result.generation.dependencyNodeCount, 1);
+  const path = join(directory, 'native-completed.json');
+  await writeFile(path, result.data);
+  if (process.env.SUBONE_GENERATION_CONFIG21) await writeFile(process.env.SUBONE_GENERATION_CONFIG21, result.data);
+  const check = spawnSync(process.env.SUBONE_SINGBOX_BINARY!, ['check', '-c', path], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(check.status, 0, check.stderr);
+  const startup = spawnSync(process.env.SUBONE_SINGBOX_BINARY!, ['run', '-c', path], { encoding: 'utf8', timeout: 1000 });
+  assert.ok(startup.error && 'code' in startup.error, startup.stderr);
+  assert.equal(startup.error.code, 'ETIMEDOUT', startup.stderr);
+  assert.doesNotMatch(startup.stderr, /FATAL/);
+});
+
+test('deleting a source also clears stable references to its automatically created group', async () => {
+  bodies.set('/automatic-source-group', JSON.stringify({ outbounds: [{ type: 'socks', tag: 'Automatic source exit', server: '192.0.2.121', server_port: 1080 }] }));
+  const egress = (await api('/sources', 'POST', { name: 'Automatic source group', url: upstreamOrigin + '/automatic-source-group', createGroup: true })).data;
+  const group = (await api('/groups')).data.find((entry: any) => entry.id === `grp-${egress.id}`);
+  const ordinary = await addSource('/automatic-group-ordinary', { outbounds: [{ type: 'socks', tag: 'Automatic group ordinary', server: 'automatic-group.example', server_port: 1080 }], dns: { servers: [{ type: 'https', server: 'dns.automatic-group.example' }] } });
+  const content = structuredClone(template); (content.dns.servers[0] as any).detour = `group:${group.id}`;
+  const profile = await profileFor(ordinary.nodes, content);
+  assert.equal((await preview(profile)).success, true);
+  await api(`/sources/${egress.id}`, 'DELETE');
+  assert.equal((await preview(profile)).status, 422);
+  const saved = (await api('/templates')).data.find((entry: any) => entry.id === profile.tpl.id);
+  assert.equal(saved.connectionReferences.some((entry: any) => entry.target === `group:${group.id}`), false);
+  assert.ok(saved.connectionReferences.some((entry: any) => entry.target === 'unresolved:Automatic source group'));
 });
