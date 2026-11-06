@@ -1,6 +1,7 @@
 import yaml from 'js-yaml';
 import type { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
 import { cleanSourceOrGroupName, formatCidr, formatSourceGroupTag } from './common';
+import { egernRuleSource } from './egern-ruleset';
 import { resolveGroupNodes } from './group-nodes';
 
 export class EgernConfigError extends Error {
@@ -137,7 +138,7 @@ export function nodeToEgernProxy(node: ProxyNode): NativeEntry {
       if (node.presharedKey) value.preshared_key = node.presharedKey;
       const addresses = node.localAddress || [node.ip, node.ipv6].filter((address): address is string => !!address);
       const v4 = addresses.filter(address => !address.includes(':')); const v6 = addresses.filter(address => address.includes(':'));
-      if (v4.length > 1 || v6.length > 1 || node.remoteDnsResolve) unsupported('WireGuard address / remote DNS options');
+      if (!addresses.length || v4.length > 1 || v6.length > 1 || node.remoteDnsResolve) unsupported('WireGuard address / remote DNS options');
       if (v4[0]) value.local_ipv4 = v4[0];
       if (v6[0]) value.local_ipv6 = v6[0];
       if (node.reserved) value.reserved = [...node.reserved];
@@ -154,10 +155,11 @@ export interface EgernGeneratorOptions {
   subToken?: string;
   ordinaryNodeIds?: ReadonlySet<string>;
   dependencyGroupIds?: ReadonlySet<string>;
+  inventorySources?: SubscriptionSource[];
 }
 function parseTemplate(text: string): NativeEntry {
   let document: any;
-  try { document = yaml.load(text) ?? {}; } catch { return fail('egern-template-invalid', 'Egern 模板 YAML 无法解析'); }
+  try { document = text.trim() ? yaml.load(text) ?? {} : {}; } catch { return fail('egern-template-invalid', 'Egern 模板 YAML 无法解析'); }
   if (typeof document !== 'object' || Array.isArray(document)) return fail('egern-template-invalid', 'Egern 模板必须是原生配置对象');
   if ('proxy-groups' in document || 'sources' in document || document.dns?.nameservers) return fail('egern-template-schema-unsupported', 'Egern 模板须使用原生 policy_groups、typed proxies/rules 和 dns.bootstrap/upstreams');
   for (const key of ['proxies', 'policy_groups', 'rules']) {
@@ -179,7 +181,7 @@ export function injectUnifiedToEgern(doc: NativeEntry, egernProxies: NativeEntry
   doc.proxies = [...(doc.proxies || []), ...egernProxies];
   const groups = proxyGroups.map(group => ({ ...group }));
   const used = new Set(['DIRECT', 'REJECT', ...doc.proxies.map((entry: NativeEntry) => egernEntry(entry).name), ...(doc.policy_groups || []).map((entry: NativeEntry) => egernEntry(entry).name), ...groups.map(group => group.name)]);
-  for (const source of sources.filter(source => source.enabled)) {
+  for (const source of sources.filter(source => source.enabled && ordinary.some(node => node.sourceId === source.id))) {
     const clean = cleanSourceOrGroupName(source.name).toLowerCase();
     if (groups.some(group => cleanSourceOrGroupName(group.name).toLowerCase() === clean || group.id === `grp-src-${source.id}`)) continue;
     const base = formatSourceGroupTag(source); let name = base; let suffix = 2;
@@ -193,20 +195,22 @@ export function injectUnifiedToEgern(doc: NativeEntry, egernProxies: NativeEntry
     if (group.lazy !== undefined || group.strategy && !(group.type === 'load-balance' && group.strategy === 'round-robin')) return fail('egern-group-options-unsupported', `Egern 策略组「${group.name}」无法无损转换 lazy/strategy`);
     const type = ({ urltest: 'auto_test', 'load-balance': 'load_balance', direct: 'select', reject: 'select' } as Record<string, string>)[group.type] || group.type;
     const value: NativeEntry = { name: group.name };
+    const candidates = options?.dependencyGroupIds?.has(group.id) ? nodes : ordinary;
+    const groupSources = options?.dependencyGroupIds?.has(group.id) ? options.inventorySources || sources : sources;
     if (group.type === 'direct' || group.type === 'reject') value.policies = [group.type === 'direct' ? 'DIRECT' : 'REJECT'];
     else {
       const mounted = (group.sources ?? group.use)?.length || group.filter || group.includeAll || ['♻️ 自动选择', '👉 手动选择'].includes(group.name);
-      const members = [...(group.proxies || []), ...(mounted || !group.proxies?.length ? resolveGroupNodes(group, ordinary, sources).map(node => node.name) : [])];
+      const members = [...(group.proxies || []), ...(mounted || !group.proxies?.length ? resolveGroupNodes(group, candidates, groupSources).map(node => node.name) : [])];
       value.policies = [...new Set(members.map(name => name === '🎯 本地直连' ? 'DIRECT' : name))];
       // Serve the selected plan through SubOne; raw upstream URLs bypass local exclusions.
-      if (!options?.expandNodes && options?.baseUrl && options?.subToken && (mounted || !group.proxies?.length)) {
-        const selected = new Set(resolveGroupNodes(group, ordinary, sources).map(node => node.sourceId));
+      if (!options?.dependencyGroupIds?.has(group.id) && !options?.expandNodes && options?.baseUrl && options?.subToken && (mounted || !group.proxies?.length)) {
+        const selected = new Set(resolveGroupNodes(group, candidates, groupSources).map(node => node.sourceId));
         value.urls = sources.filter(source => source.enabled && selected.has(source.id)).map(source => `${options.baseUrl!.replace(/\/+$/, '')}/s/${encodeURIComponent(options.subToken!)}/source/${encodeURIComponent(source.id)}?target=egern`);
         if (!value.urls.length) delete value.urls;
         if (group.filter && value.urls) value.filter = group.filter;
       }
       if (!value.policies.length) {
-        if (mounted || group.proxies?.length) return fail('egern-group-empty', `Egern 策略组「${group.name}」没有可用成员`);
+        if (options?.dependencyGroupIds?.has(group.id) || group.proxies?.length) return fail('egern-group-empty', `Egern 策略组「${group.name}」没有可用成员`);
         value.policies = ['DIRECT'];
       }
     }
@@ -222,8 +226,9 @@ export function injectUnifiedToEgern(doc: NativeEntry, egernProxies: NativeEntry
   const nativeRuleTypes: Record<string, string> = { DOMAIN: 'domain', 'DOMAIN-SUFFIX': 'domain_suffix', 'DOMAIN-KEYWORD': 'domain_keyword', 'IP-CIDR': 'ip_cidr', 'IP-CIDR6': 'ip_cidr6', GEOIP: 'geoip', FINAL: 'default' };
   const additions = rulesList.filter(rule => rule.enabled).flatMap<NativeEntry>(rule => {
     if (rule.kind === 'remote') {
-      const url = rule.clientUrls?.egern || (/\.ya?ml(?:[?#].*)?$/i.test(rule.payload) ? rule.payload : undefined);
-      if (!url) return fail('egern-ruleset-unsupported', `Egern 规则「${rule.name}」需要原生 YAML rule_set 地址`);
+      const converted = egernRuleSource(rule);
+      const url = converted ? options?.baseUrl && options?.subToken ? `${options.baseUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(options.subToken)}/rules/${encodeURIComponent(rule.id)}/egern` : undefined : rule.clientUrls?.egern;
+      if (!url) return fail('egern-ruleset-unsupported', `Egern 规则「${rule.name}」需要 Egern 原生规则地址或已支持的文本/JSON 来源`);
       return { rule_set: { match: url, policy: rule.outbound, update_interval: 86400 } };
     }
     const type = nativeRuleTypes[rule.type];

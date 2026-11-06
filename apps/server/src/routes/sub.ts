@@ -27,6 +27,18 @@ subRouter.get('/s/:subToken/rules/:ruleId/qx', async (c) => {
   }
 });
 
+subRouter.get('/s/:subToken/rules/:ruleId/egern', async (c) => {
+  const config = getAppConfig();
+  const profile = config.profiles?.find(profile => profile.enabled !== false && profile.token === c.req.param('subToken'));
+  const rule = profile && getEffectiveRulesForProfile(profile).find(rule => rule.id === c.req.param('ruleId') && rule.enabled && rule.kind === 'remote');
+  if (!rule) return c.text('404 Not Found', 404);
+  try {
+    const { getEgernRules } = await import('../services/egern-rules');
+    c.header('Content-Type', 'text/yaml; charset=utf-8');
+    return c.body(await getEgernRules(rule));
+  } catch { return c.text('Rule set unavailable', 502); }
+});
+
 async function handlePrivateSubRequest(c: Context, forcedType?: ClientType) {
   const tokenParam = c.req.param('subToken');
   const appConfig = getAppConfig();

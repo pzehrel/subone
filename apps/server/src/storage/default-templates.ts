@@ -498,6 +498,7 @@ export const FALLBACK_RULES_LIST: UnifiedRuleItem[] = [
     kind: 'remote',
     type: 'RULE-SET',
     payload: 'https://gh-proxy.com/https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs',
+    clientUrls: { egern: 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.json' },
     format: 'binary',
     outbound: '🇨🇳 国内服务',
     enabled: true,
@@ -508,11 +509,18 @@ export const FALLBACK_RULES_LIST: UnifiedRuleItem[] = [
     kind: 'remote',
     type: 'RULE-SET',
     payload: 'https://gh-proxy.com/https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs',
+    clientUrls: { egern: 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.json' },
     format: 'binary',
     outbound: '🇨🇳 国内服务',
     enabled: true,
   },
 ];
+
+function declaredFactoryRuleUrls(rules: UnifiedRuleItem[]): UnifiedRuleItem[] {
+  // These two new Egern defaults deliberately use a declared alternative CN provider.
+  // This is factory configuration, never a rewrite of stored/user-created rule intent.
+  return rules.map(rule => ({ ...rule, clientUrls: rule.clientUrls ?? FALLBACK_RULES_LIST.find(candidate => candidate.payload === rule.payload)?.clientUrls }));
+}
 
 export function loadDefaultRules(): UnifiedRuleItem[] {
   const candidateNames = [
@@ -530,7 +538,7 @@ export function loadDefaultRules(): UnifiedRuleItem[] {
       try {
         const parsed = JSON.parse(content);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((item, idx) => ({
+          return declaredFactoryRuleUrls(parsed.map((item, idx) => ({
             id: item.id || `r-tpl-${idx}`,
             name: item.name || `规则 ${idx + 1}`,
             kind: item.kind || (item.type === 'RULE-SET' || item.payload?.startsWith('http') ? 'remote' : 'local'),
@@ -539,11 +547,13 @@ export function loadDefaultRules(): UnifiedRuleItem[] {
             format: item.format,
             outbound: item.outbound || '🎯 本地直连',
             enabled: item.enabled !== false,
-          }));
+            clientUrls: item.clientUrls,
+            behavior: item.behavior,
+          })));
         } else if (parsed && typeof parsed === 'object') {
           const list = parsed.rules || parsed.rulesList || parsed.route?.rules;
           if (Array.isArray(list) && list.length > 0) {
-            return parseUnifiedRulesText(JSON.stringify(list));
+            return declaredFactoryRuleUrls(parseUnifiedRulesText(JSON.stringify(list)));
           }
         }
       } catch (err) {
@@ -554,7 +564,7 @@ export function loadDefaultRules(): UnifiedRuleItem[] {
       try {
         const parsed = parseUnifiedRulesText(content);
         if (parsed.length > 0) {
-          return parsed;
+          return declaredFactoryRuleUrls(parsed);
         }
       } catch (err) {
         console.error(`[loadDefaultRules] Failed to parse text rules from ${filePath}:`, err);

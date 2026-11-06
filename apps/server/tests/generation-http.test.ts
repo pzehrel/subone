@@ -178,6 +178,9 @@ test('all six complete outputs share preview and dispatch while unsupported adap
   const a = await addSource('/adapters-a', [{ type: 'https', server: 'dns.adapters-a.example' }], 'node.adapters-a.example');
   const b = await addSource('/adapters-b', [{ type: 'https', server: 'dns.adapters-b.example' }], 'node.adapters-b.example');
   const profile = await profileFor([a, b]);
+  // Native templates retain required definitions; each client gets its own schema.
+  const egernTemplate = (await api('/templates', 'POST', { name: 'Egern dispatch template', type: 'egern', content: 'dns:\n  bootstrap: [127.0.0.1]\nproxies:\n  - socks5: {name: template-direct, server: 192.0.2.90, port: 1080}\npolicy_groups: []\nrules: []\n' })).data;
+  await api(`/profiles/${profile.id}`, 'PUT', { templates: { ...profile.templates, egern: egernTemplate.id } });
   for (const target of ['singbox', 'mihomo', 'loon', 'quantumultx', 'egern', 'shadowrocket']) {
     const preview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: target, expandNodes: true });
     assert.equal(preview.success, true, `${target}: ${preview.message}`);

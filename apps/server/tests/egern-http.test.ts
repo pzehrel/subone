@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -35,6 +35,7 @@ async function api(path: string, method = 'GET', value?: unknown) {
 before(async () => {
   directory = await mkdtemp(join(tmpdir(), 'subone-egern-http-'));
   await writeFile(join(directory, 'config.json'), JSON.stringify({ port: 3456, adminPassword: '' }));
+  await cp(join(__dirname, '../../../templates'), join(directory, 'templates'), { recursive: true });
   upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
   const address = upstream.address(); assert.ok(address && typeof address !== 'string');
   upstreamOrigin = `http://127.0.0.1:${address.port}`; await startApp();
@@ -76,6 +77,26 @@ function assertNativeReferences(doc: any) {
   assert.equal(doc['proxy-groups'], undefined); assert.equal(doc.sources, undefined);
   assert.equal(doc.dns?.['proxy-server-nameserver-policy'], undefined);
 }
+
+test('the packaged Egern workflow generates native groups and protected providers for all default remote rules', async () => {
+  await addSource('/default-native', [{ name: 'HK Default', type: 'socks5', server: 'default.native.example', port: 1080 }], []);
+  const profile = (await api('/profiles')).data.find((profile: any) => profile.id === 'prof_default');
+  const result = await preview(profile); assert.equal(result.success, true, result.message);
+  const doc: any = yaml.load(result.data); assertNativeReferences(doc);
+  assert.deepEqual(doc.dns, { bootstrap: ['223.5.5.5', '119.29.29.29'] });
+  const remote = (await api('/rules/unified')).data.filter((rule: any) => rule.enabled && rule.kind === 'remote');
+  const declaredDomain = remote.find((rule: any) => rule.payload.includes('SagerNet/sing-geosite/')); const declaredIp = remote.find((rule: any) => rule.payload.includes('SagerNet/sing-geoip/'));
+  assert.match(declaredDomain.payload, /SagerNet\/sing-geosite/); assert.equal(declaredDomain.clientUrls.egern, 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.json');
+  assert.match(declaredIp.payload, /SagerNet\/sing-geoip/); assert.equal(declaredIp.clientUrls.egern, 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.json');
+  const urls = doc.rules.filter((entry: any) => entry.rule_set).map((entry: any) => entry.rule_set.match);
+  assert.equal(urls.length, remote.length);
+  for (const rule of remote) assert.ok(urls.includes(`${origin}/s/${profile.token}/rules/${rule.id}/egern`));
+  assert.doesNotMatch(result.data, /\.srs|proxy-groups|filter-sources/);
+  if (process.env.SUBONE_GENERATION_CONFIG25) await writeFile(process.env.SUBONE_GENERATION_CONFIG25, result.data);
+  assert.deepEqual(doc.policy_groups.find((entry: any) => entry.auto_test?.name === '🇯🇵 日本节点').auto_test.policies, ['DIRECT']);
+  const actual = await fetch(`${origin}/s/${profile.token}/egern?expand=true`); assert.equal(actual.status, 200); assert.equal(await actual.text(), result.data);
+  if (process.env.SUBONE_EGERN_RULES_VERIFY) for (const url of urls) { const provider = await fetch(url); assert.equal(provider.status, 200, url); const data: any = yaml.load(await provider.text()); assert.ok(Object.keys(data).some(key => key.endsWith('_set')), url); }
+});
 
 test('Egern HTTP output uses native typed nodes, groups and rules while every source DNS intent remains unapplied', async () => {
   const source = await addSource('/native-four', [
@@ -273,6 +294,7 @@ test('unsupported native connection semantics fail consistently instead of inven
     { name: 'SSR native', type: 'ssr', server: 'ssr.native.example', port: 443, cipher: 'aes-128-cfb', password: 'dummy', protocol: 'auth_sha1_v4', obfs: 'http_simple' },
     { name: 'Legacy VMess', type: 'vmess', server: 'legacy.native.example', port: 443, uuid: '11111111-1111-4111-8111-111111111111', alterId: 64, cipher: 'auto' },
     { name: 'Plain gRPC', type: 'vmess', server: 'grpc.native.example', port: 80, uuid: '11111111-1111-4111-8111-111111111111', cipher: 'auto', network: 'grpc', tls: false },
+    { name: 'Unaddressed WireGuard', type: 'wireguard', server: 'wg.missing.example', port: 51820, 'private-key': 'private', 'public-key': 'peer' },
   ]) {
     const next = await addSource(`/unsupported-${node.type}-${node.port}`, [node], []); const saved = await profileFor(next);
     const rejected = await preview(saved.profile); assert.equal(rejected.status, 422); assert.match(rejected.generation.diagnostics.at(-1).code, /^egern-(node-options|protocol)-unsupported$/);
@@ -321,4 +343,95 @@ test('unsupported strategy or schema is rejected explicitly and retained templat
   await api(`/templates/${template.id}`, 'PUT', { content: yaml.dump(broken) });
   result = await preview(profile); assert.equal(result.status, 422); assert.equal(result.generation.diagnostics.at(-1).code, 'egern-reference-missing');
   assert.equal((await api('/templates')).data.find((entry: any) => entry.id === template.id).content, yaml.dump(broken));
+});
+
+test('native prev_hop completes eligible omitted chain nodes without making them ordinary candidates or adopting DNS dependencies', async () => {
+  const source = await addSource('/native-chain', [
+    { name: 'Chain ordinary', type: 'socks5', server: 'ordinary.chain.example', port: 1080, 'dialer-proxy': 'Chain exit' },
+    { name: 'Chain exit', type: 'socks5', server: '192.0.2.120', port: 1081 },
+    { name: 'DNS unused exit', type: 'socks5', server: 'unused.chain.example', port: 1082 },
+  ], ['https://chain.dns.example/query#DNS unused exit']);
+  const { profile, groups } = await profileFor(source, [{ name: 'Chain candidates', type: 'select', includeAll: true }]);
+  await api(`/profiles/${profile.id}`, 'PUT', { nodeFilter: { mode: 'manual', selectedNodeIds: [source.nodes[0].id] } });
+  const result = await preview(profile); assert.equal(result.success, true, result.message);
+  assert.equal(result.generation.nodeCount, 1); assert.equal(result.generation.dependencyNodeCount, 1);
+  assert.equal(result.generation.bindings[0].status, 'unapplied');
+  const doc: any = yaml.load(result.data); assertNativeReferences(doc);
+  const nodes = typedValues(doc.proxies); assert.equal(nodes.find(node => node.server === 'ordinary.chain.example').prev_hop, 'Chain exit');
+  assert.ok(nodes.some(node => node.name === 'Chain exit')); assert.equal(nodes.some(node => node.server === 'unused.chain.example'), false);
+  assert.deepEqual(typedValues(doc.policy_groups).find(group => group.name === groups[0].name).policies, ['Chain ordinary']);
+  const provider: any = yaml.load(await fetch(`${origin}/s/${profile.token}/source/${source.id}?target=egern`).then(response => response.text()));
+  assert.deepEqual(typedValues(provider.proxies).map(node => node.name), ['Chain ordinary']);
+  assert.equal((await api(`/nodes/${source.nodes[1].id}`, 'PUT', { name: 'Chain local exit' })).success, true);
+  let renamed = await preview(profile); assert.equal(renamed.success, true, renamed.message);
+  assert.equal(typedValues((yaml.load(renamed.data) as any).proxies).find(node => node.server === 'ordinary.chain.example').prev_hop, 'Chain local exit');
+  await stopApp(); await startApp(); renamed = await preview(profile); assert.equal(renamed.success, true, renamed.message);
+  assert.equal((await api(`/nodes/${source.nodes[1].id}`, 'PUT', { enabled: false })).success, true);
+  const disabled = await preview(profile); assert.equal(disabled.status, 422); assert.equal(disabled.generation.diagnostics.at(-1).code, 'egern-reference-missing');
+  assert.equal(disabled.generation.dependencyNodeCount, 0);
+  const invalidProvider = await fetch(`${origin}/s/${profile.token}/source/${source.id}?target=egern`); assert.equal(invalidProvider.status, 422);
+});
+
+test('native template chains complete omitted managed groups and mounted nodes without leaking their source or candidates', async () => {
+  userinfo.set('/native-required-egress', 'upload=9000; download=9000; total=99999');
+  const egress = await addSource('/native-required-egress', [
+    { name: 'Required native exit A', type: 'socks5', server: '192.0.2.130', port: 1080 },
+    { name: 'Required native exit B', type: 'socks5', server: '192.0.2.131', port: 1081 },
+  ], []);
+  const required = (await api('/groups', 'POST', { name: 'Required native mount', type: 'select', sources: [egress.id] })).data;
+  const ordinary = await addSource('/native-group-ordinary', [{ name: 'Group ordinary', type: 'socks5', server: 'ordinary.group.example', port: 1080 }], []);
+  const content: any = { ...nativeTemplate, proxies: [{ socks5: { name: 'Template chain leaf', server: '192.0.2.132', port: 1082, prev_hop: `group:${required.id}` } }] };
+  content.policy_groups = [{ select: { name: 'Template group', policies: ['Template chain leaf', 'DIRECT'] } }];
+  const { profile, groups } = await profileFor(ordinary, [{ name: 'Group ordinary candidates', type: 'select', includeAll: true }], content);
+  const result = await preview(profile); assert.equal(result.success, true, result.message);
+  assert.equal(result.generation.nodeCount, 1); assert.equal(result.generation.dependencyNodeCount, 2);
+  assert.ok(result.generation.dependencyNodes.every((entry: any) => entry.sourceId === egress.id && entry.reason.includes('Required native mount')));
+  const doc: any = yaml.load(result.data); assertNativeReferences(doc);
+  assert.deepEqual(typedValues(doc.policy_groups).find(group => group.name === required.name).policies, ['Required native exit A', 'Required native exit B']);
+  assert.deepEqual(typedValues(doc.policy_groups).find(group => group.name === groups[0].name).policies, ['Group ordinary']);
+  assert.equal(typedValues(doc.policy_groups).some(group => group.name.includes('native-required-egress')), false);
+  const actual = await fetch(`${origin}/s/${profile.token}/egern?expand=true`); assert.equal(actual.status, 200); assert.equal(actual.headers.get('subscription-userinfo'), null); assert.equal(await actual.text(), result.data);
+  const provider: any = yaml.load(await fetch(`${origin}/s/${profile.token}/source/${egress.id}?target=egern`).then(response => response.text())); assert.deepEqual(provider, { proxies: [] });
+  await api(`/groups/${required.id}`, 'PUT', { sources: [], use: [], proxies: ['Template chain leaf'] });
+  const cyclic = await preview(profile); assert.equal(cyclic.status, 422); assert.equal(cyclic.generation.diagnostics.at(-1).code, 'egern-reference-cycle');
+});
+
+test('protected Egern rule providers convert selected supported text into native sets and reject unsupported semantics', async () => {
+  const source = await addSource('/rule-provider-native', [{ name: 'Rules candidate', type: 'socks5', server: 'rule.provider.example', port: 1080 }], []);
+  const { profile, rule } = await profileFor(source);
+  bodies.set('/classical-native.list', '# classical fixture\nDOMAIN,exact.example\nDOMAIN-SUFFIX,suffix.example\nDOMAIN-KEYWORD,keyword\nIP-CIDR,192.0.2.0/24\nIP-CIDR6,2001:db8::/32\nGEOIP,CN\n');
+  const remote = (await api('/rules/unified', 'POST', { name: 'Egern text conversion', kind: 'remote', type: 'RULE-SET', payload: `${upstreamOrigin}/classical-native.list`, format: 'text', outbound: 'DIRECT', enabled: true })).data;
+  await api(`/profiles/${profile.id}`, 'PUT', { selectedRuleIds: [rule.id, remote.id] });
+  const result = await preview(profile); assert.equal(result.success, true, result.message);
+  const doc: any = yaml.load(result.data); const url = doc.rules.find((entry: any) => entry.rule_set)?.rule_set.match;
+  assert.equal(url, `${origin}/s/${profile.token}/rules/${remote.id}/egern`);
+  let response = await fetch(url); assert.equal(response.status, 200);
+  assert.deepEqual(yaml.load(await response.text()), { domain_set: ['exact.example'], domain_suffix_set: ['suffix.example'], domain_keyword_set: ['keyword'], ip_cidr_set: ['192.0.2.0/24'], ip_cidr6_set: ['2001:db8::/32'], geoip_set: ['CN'] });
+  assert.equal((await fetch(url.replace(profile.token, 'wrong-token'))).status, 404);
+  await api(`/rules/unified/${remote.id}`, 'PUT', { enabled: false }); assert.equal((await fetch(url)).status, 404);
+  await api(`/rules/unified/${remote.id}`, 'PUT', { enabled: true, payload: `${upstreamOrigin}/unsupported-native.list` });
+  bodies.set('/unsupported-native.list', 'PROCESS-NAME,desktop.exe\n'); response = await fetch(url); assert.equal(response.status, 502);
+  await api(`/profiles/${profile.id}`, 'PUT', { selectedRuleIds: [rule.id] }); assert.equal((await fetch(url)).status, 404);
+});
+
+test('native rule providers preserve flat typed JSON and YAML payload semantics without accepting logical or per-rule resolution changes', async () => {
+  const source = await addSource('/typed-rule-provider', [{ name: 'Typed rule candidate', type: 'socks5', server: 'typed.rules.example', port: 1080 }], []);
+  const { profile, rule } = await profileFor(source);
+  bodies.set('/typed-native.json', JSON.stringify({ version: 2, rules: [{ domain: ['exact.typed.example'], domain_suffix: ['suffix.typed.example'], domain_keyword: ['typed'], domain_regex: ['^ads\\.'] }, { ip_cidr: ['192.0.2.0/24', '2001:db8::/32'] }] }));
+  const remote = (await api('/rules/unified', 'POST', { name: 'Egern typed source', kind: 'remote', type: 'RULE-SET', payload: `${upstreamOrigin}/typed-native.json`, format: 'binary', outbound: 'DIRECT', enabled: true })).data;
+  await api(`/profiles/${profile.id}`, 'PUT', { selectedRuleIds: [rule.id, remote.id] });
+  const result = await preview(profile); assert.equal(result.success, true, result.message);
+  const url = (yaml.load(result.data) as any).rules.find((entry: any) => entry.rule_set).rule_set.match;
+  let response = await fetch(url); assert.equal(response.status, 200);
+  assert.deepEqual(yaml.load(await response.text()), { domain_set: ['exact.typed.example'], domain_suffix_set: ['suffix.typed.example'], domain_keyword_set: ['typed'], domain_regex_set: ['^ads\\.'], ip_cidr_set: ['192.0.2.0/24'], ip_cidr6_set: ['2001:db8::/32'] });
+  bodies.set('/typed-native.yaml', 'payload: ["+.suffix.yaml.example", "exact.yaml.example", "*.wildcard.yaml.example"]\n');
+  await api(`/rules/unified/${remote.id}`, 'PUT', { payload: `${upstreamOrigin}/typed-native.yaml`, format: 'yaml', behavior: 'domain' });
+  response = await fetch(url); assert.equal(response.status, 200);
+  assert.deepEqual(yaml.load(await response.text()), { domain_suffix_set: ['suffix.yaml.example'], domain_set: ['exact.yaml.example'], domain_wildcard_set: ['*.wildcard.yaml.example'] });
+  bodies.set('/logical-native.json', JSON.stringify({ version: 3, rules: [{ type: 'logical', mode: 'and', rules: [{ domain: ['x.example'] }, { ip_cidr: ['192.0.2.0/24'] }] }] }));
+  await api(`/rules/unified/${remote.id}`, 'PUT', { payload: `${upstreamOrigin}/logical-native.json`, format: 'binary' });
+  assert.equal((await fetch(url)).status, 502);
+  bodies.set('/noresolve-native.list', 'IP-CIDR,192.0.2.0/24,no-resolve\n');
+  await api(`/rules/unified/${remote.id}`, 'PUT', { payload: `${upstreamOrigin}/noresolve-native.list`, format: 'text', behavior: 'classical' });
+  assert.equal((await fetch(url)).status, 502);
 });
