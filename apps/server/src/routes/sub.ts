@@ -59,7 +59,7 @@ async function handlePrivateSubRequest(c: Context, forcedType?: ClientType) {
 
     const expandQuery = c.req.query('expand');
     const plan = await createGenerationPlan({
-      target: detectedType, profile, templateContent: tpl?.content || '',
+      target: detectedType, profile, templateContent: tpl?.content || '', templateId: tpl?.id,
       expandNodes: expandQuery === 'false' || expandQuery === '0' ? false : expandQuery === 'true' || expandQuery === '1' || c.req.query('node_list') === 'true' ? true : undefined,
       format: c.req.query('format'), baseUrl: getBaseUrl(c.req), subToken: tokenParam,
     });

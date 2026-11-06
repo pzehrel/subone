@@ -7,7 +7,8 @@ import { generateQuantumultXConfig, nodeToQuantumultXProxy } from '../core/gener
 import { generateEgernConfig, nodeToEgernProxy } from '../core/generators/egern-generator';
 import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../core/generators/shadowrocket-generator';
 import { getEffectiveNodes, getEffectiveNodesForProfile, getEffectiveGroupsForProfile, getEffectiveRulesForProfile, getEffectiveSourcesForProfile } from './profile-service';
-import { requiresExpandedNodes, resolveOutputReferences } from './node-references';
+import { requiresExpandedNodes, resolveOutputReferences, prepareTemplateReferences, resolveTemplateReferences, templateOutboundNames } from './node-references';
+import { createRuntimeInventory, validateSingboxRuntime } from './generation/runtime-dependencies';
 import { adaptSingboxDns } from './generation/adapters/singbox';
 import { retainTemplateDns } from './generation/adapters/unsupported';
 import { GenerationError, generationMetadata, type GenerationOptions, type GenerationPlan } from './generation/types';
@@ -20,13 +21,18 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
   const ordinary = options.profile ? await getEffectiveNodesForProfile(options.profile) : await getEffectiveNodes();
   const groups = options.profile ? getEffectiveGroupsForProfile(options.profile, ordinary) : config.proxyGroups;
   const sources = options.profile ? getEffectiveSourcesForProfile(options.profile, ordinary) : config.sources;
-  const resolved = resolveOutputReferences(ordinary, groups, sources, options.target);
+  const savedTemplate = config.templates.find(template => template.id === (options.templateId || options.profile?.templates?.[options.target])) || config.templates.find(template => template.type === options.target && template.content === options.templateContent);
+  const template = prepareTemplateReferences({ ...(savedTemplate || { id: 'unsaved', name: '', type: options.target }), content: options.templateContent }, config, savedTemplate);
+  const resolved = resolveOutputReferences(ordinary, groups, sources, options.target, templateOutboundNames(template));
   const nodeOnly = options.target === 'shadowrocket' && ['base64', 'b64'].includes(options.format || '');
   return {
     target: { type: options.target, ...(options.target === 'singbox' ? { version: '1.14.4' } : {}), mode: nodeOnly ? 'nodes' : 'complete' },
-    templateContent: options.templateContent,
+    templateContent: resolveTemplateReferences(template, resolved.nodes, resolved.groups), template, inventory: createRuntimeInventory(config),
     ordinaryNodes: resolved.nodes, dependencyNodes: [], groups: resolved.groups,
-    rules: options.profile ? getEffectiveRulesForProfile(options.profile) : config.rulesList,
+    rules: (options.profile ? getEffectiveRulesForProfile(options.profile) : config.rulesList).map(rule => {
+      const matches = groups.filter(group => group.name === rule.outbound);
+      return { ...rule, outbound: matches.length === 1 ? resolved.groups.find(group => group.id === matches[0].id)?.name || rule.outbound : rule.outbound };
+    }),
     sources: resolved.sources,
     bindings: resolved.sources.flatMap(source => {
       const nodeIds = resolved.nodes.filter(node => node.sourceId === source.id).map(node => node.id);
@@ -51,8 +57,9 @@ export function renderGeneration(input: GenerationPlan) {
   if (plan.target.mode === 'nodes') {
     output = generateShadowrocketBase64(plan.ordinaryNodes);
   } else if (plan.target.type === 'singbox') {
-    const { document, nodeTags } = generateSingboxDocument(templateContent, nodes, groups, rules, sources);
+    const { document, nodeTags } = generateSingboxDocument(templateContent, nodes, groups, rules, sources, new Set(plan.ordinaryNodes.map(node => node.id)));
     adaptSingboxDns(document, plan, nodeTags);
+    validateSingboxRuntime(document, plan, nodeTags);
     output = JSON.stringify(document, null, 2);
     contentType = 'application/json; charset=utf-8';
   } else {

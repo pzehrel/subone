@@ -22,6 +22,7 @@ const methodNames: Record<string, string> = {
   'singbox-native-domain-resolver': '节点 domain_resolver',
   'template-dns': '模板 DNS',
   'nodes-only': '纯节点',
+  'ip-node-no-dns': 'IP 地址，无需节点解析',
 };
 
 function batchTime(value?: string): string {

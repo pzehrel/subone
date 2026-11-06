@@ -117,8 +117,8 @@ export function extractSourceDoh(format: SourceFormat, document?: Record<string,
     if (typeof value !== 'string' || !looksLikeHttps(value)) return;
     const hash = value.indexOf('#');
     const url = endpoint(hash < 0 ? value : value.slice(0, hash));
-    const suffix = hash < 0 ? undefined : value.slice(hash + 1).split('&').map(part => decodeURIComponent(part)).find(part => part && !part.includes('='));
-    services.push({ id: randomUUID(), path, url: url.href, raw: value, ...(suffix ? { outbound: suffix === 'DIRECT' ? { kind: 'direct' as const, name: suffix } : { kind: suffix === 'RULES' ? 'routing' as const : 'unresolved' as const, name: suffix } } : {}) });
+    const suffix = hash < 0 ? undefined : value.slice(hash + 1).split('&').map(part => decodeURIComponent(part)).filter(part => part && !part.includes('=' )).at(-1);
+    services.push({ id: randomUUID(), path, url: url.href, raw: value, outbound: suffix ? suffix === 'DIRECT' ? { kind: 'direct' as const, name: suffix } : { kind: suffix === 'RULES' ? 'routing' as const : 'unresolved' as const, name: suffix } : defaultMihomoDohEgress(path, document) });
   };
   for (const [key, value] of Object.entries(document.dns)) {
     if (mihomoLists.has(key)) collect(value, `dns.${key}`);
@@ -127,6 +127,12 @@ export function extractSourceDoh(format: SourceFormat, document?: Record<string,
     }
   }
   return services;
+}
+
+/** Mihomo v1.19.33 config.go parseNameServer: only normal/fallback/policy respect routing. */
+export function defaultMihomoDohEgress(path: string, document: Record<string, any>): SourceDohReference {
+  const respectsRules = /^dns\.(nameserver|fallback)(?:\[|$)|^dns\.nameserver-policy\[/.test(path) && document.dns?.['respect-rules'] === true;
+  return { kind: respectsRules ? 'routing' : 'direct' };
 }
 
 export function sourceDohResult(sourceId: string, format: SourceFormat, updatedAt: string, services: SourceDohService[]): SourceDohResult {
@@ -161,6 +167,13 @@ export function bindSourceDoh(source: SubscriptionSource): void {
     if (matchedGroups.length === 1) return { kind: 'source-group', name, outboundId: matchedGroups[0].id };
     return { kind: 'unresolved', name };
   };
+  // Node detours and bootstrap DNS transports share the same source-private namespace.
+  for (const node of nodes) {
+    const label = node.raw && typeof node.raw === 'object' ? node.raw.detour ?? node.raw['dialer-proxy'] : undefined;
+    if (typeof label === 'string') resolve(label);
+  }
+  const servers = (document?.dns as Record<string, any> | undefined)?.servers;
+  if (Array.isArray(servers)) for (const server of servers) if (typeof server?.detour === 'string') resolve(server.detour);
   for (const service of doh.services) {
     if (service.outbound?.name && !['direct', 'routing'].includes(service.outbound.kind)) service.outbound = resolve(service.outbound.name);
   }

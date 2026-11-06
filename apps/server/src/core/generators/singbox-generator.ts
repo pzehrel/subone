@@ -378,7 +378,8 @@ export function generateSingboxDocument(
   nodes: ProxyNode[],
   proxyGroups: ProxyGroupItem[] = [],
   rulesList: UnifiedRuleItem[] = [],
-  sources: any[] = []
+  sources: any[] = [],
+  ordinaryNodeIds?: ReadonlySet<string>
 ): { document: any; nodeTags: Map<string, string[]> } {
   let doc: any;
   try {
@@ -423,7 +424,7 @@ export function generateSingboxDocument(
     return ob;
   }).filter(Boolean);
 
-  doc = injectUnifiedToSingbox(doc, proxyOutbounds, proxyGroups, rulesList, sources);
+  doc = injectUnifiedToSingbox(doc, proxyOutbounds, proxyGroups, rulesList, sources, ordinaryNodeIds);
 
   const nodeTags = new Map<string, string[]>();
   for (const outbound of doc.outbounds || []) {
@@ -438,28 +439,18 @@ export function injectUnifiedToSingbox(
   proxyOutbounds: any[],
   proxyGroups: ProxyGroupItem[],
   rulesList: UnifiedRuleItem[],
-  sources: any[] = []
+  sources: any[] = [],
+  ordinaryNodeIds?: ReadonlySet<string>
 ): any {
   if (!doc.route) doc.route = {};
   if (!doc.outbounds) doc.outbounds = [];
 
   // 1. Build Custom Proxy Groups (Selectors / URLTest)
-  const allNodeTags = proxyOutbounds.map(p => p.tag);
+  const ordinaryOutbounds = proxyOutbounds.filter(outbound => !ordinaryNodeIds || ordinaryNodeIds.has(outbound[sourceNodeId]));
+  const allNodeTags = ordinaryOutbounds.map(p => p.tag);
   const effectiveGroups = proxyGroups;
   const validGroupTags = new Set(effectiveGroups.map(g => g.name));
-  const validNodeTags = new Set(allNodeTags);
-
-  const isBuiltinSingboxOutbound = (t: string) => {
-    const upper = (t || '').trim().toUpperCase();
-    return (
-      upper === 'DIRECT' ||
-      upper === 'REJECT' ||
-      upper === 'BLOCK' ||
-      upper === 'GLOBAL' ||
-      upper === 'DNS-OUT' ||
-      (t || '').trim() === '🎯 本地直连'
-    );
-  };
+  const validNodeTags = new Set(proxyOutbounds.map(outbound => outbound.tag));
 
   const groupOutbounds: any[] = [];
   effectiveGroups.forEach(grp => {
@@ -539,13 +530,13 @@ export function injectUnifiedToSingbox(
     let matchedNodes: any[] = [];
     if (targetSources.length > 0) {
       const targetNormalized = new Set(targetSources.map(s => cleanSourceOrGroupName(s).toLowerCase()));
-      matchedNodes = proxyOutbounds.filter(p => {
+      matchedNodes = ordinaryOutbounds.filter(p => {
         const sName = cleanSourceOrGroupName(p._sourceName || '').toLowerCase();
         const sId = (p._sourceId || '').trim().toLowerCase();
         return targetNormalized.has(sName) || targetNormalized.has(sId);
       });
     } else {
-      matchedNodes = [...proxyOutbounds];
+      matchedNodes = [...ordinaryOutbounds];
     }
 
     if (grp.filter && grp.filter.trim()) {
@@ -568,18 +559,14 @@ export function injectUnifiedToSingbox(
       }
     }
 
-    // Filter out invalid/dangling tags (e.g. unselected source groups like ⚡️ MESL, ⚡️ XMRth, deleted nodes, or self-reference)
-    outboundsList = outboundsList.filter(target => {
-      if (!target || target.trim() === grp.name) return false;
-      const t = target.trim();
-      return validGroupTags.has(t) || validNodeTags.has(t) || isBuiltinSingboxOutbound(t);
-    });
+    // Preserve explicit members so final connection validation can diagnose missing/cyclic paths.
+    outboundsList = outboundsList.filter(target => !!target && !!target.trim());
 
     // Deduplicate while preserving order
     outboundsList = Array.from(new Set(outboundsList));
 
     // ALWAYS ensure outboundsList is not empty to prevent "missing tags" error in Sing-box
-    if (outboundsList.length === 0) {
+    if (outboundsList.length === 0 && !targetSources.length && !grp.filter && !grp.proxies?.length) {
       outboundsList = ['🎯 本地直连'];
     }
 
@@ -649,66 +636,6 @@ export function injectUnifiedToSingbox(
       outbounds: globalOutbounds.length > 0 ? globalOutbounds : ['🎯 本地直连'],
     });
   }
-
-  // Break circular dependencies between group outbounds (prevents Sing-box fatal crashes)
-  const groupOutboundMap = new Map<string, any>();
-  groupOutbounds.forEach(g => {
-    if (Array.isArray(g.outbounds)) {
-      groupOutboundMap.set(g.tag, g);
-    }
-  });
-
-  const visitedNodes = new Set<string>();
-  const activeStack = new Set<string>();
-
-  const sanitizeDependencies = (u: string) => {
-    visitedNodes.add(u);
-    activeStack.add(u);
-
-    const grp = groupOutboundMap.get(u);
-    if (grp && Array.isArray(grp.outbounds)) {
-      const safeOutbounds: string[] = [];
-      for (const v of grp.outbounds) {
-        if (groupOutboundMap.has(v)) {
-          if (activeStack.has(v)) {
-            // Circular dependency detected! Drop the back-edge to break the cycle.
-            console.warn(`[Singbox] Dropped circular outbound dependency: ${u} -> ${v}`);
-            continue;
-          }
-          if (!visitedNodes.has(v)) {
-            sanitizeDependencies(v);
-          }
-        }
-        safeOutbounds.push(v);
-      }
-      grp.outbounds = safeOutbounds.length > 0 ? safeOutbounds : ['🎯 本地直连'];
-    }
-
-    activeStack.delete(u);
-  };
-
-  for (const tag of groupOutboundMap.keys()) {
-    if (!visitedNodes.has(tag)) {
-      sanitizeDependencies(tag);
-    }
-  }
-
-  // Collect all defined outbound tags
-  const allDefinedTags = new Set<string>();
-  groupOutbounds.forEach((g: any) => g.tag && allDefinedTags.add(g.tag));
-  customTemplateOutbounds.forEach((c: any) => c.tag && allDefinedTags.add(c.tag));
-  proxyOutbounds.forEach((p: any) => p.tag && allDefinedTags.add(p.tag));
-
-  // If a node has detour set, but the current template (and groups/nodes) does not define this detour tag,
-  // discard it from the node outbound so it cleanly falls back to the system default route.
-  proxyOutbounds.forEach((p: any) => {
-    if (p.detour && typeof p.detour === 'string') {
-      const trimmed = p.detour.trim();
-      if (!allDefinedTags.has(trimmed)) {
-        delete p.detour;
-      }
-    }
-  });
 
   doc.outbounds = [...groupOutbounds, ...customTemplateOutbounds, ...proxyOutbounds];
   doc.outbounds.forEach((outbound: any) => { delete outbound._sourceId; delete outbound._sourceName; });

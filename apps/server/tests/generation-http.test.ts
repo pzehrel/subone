@@ -202,8 +202,8 @@ test('pure Base64 output ignores DoH and DNS-only dependencies while retaining p
   const profile = await profileFor([source]);
   await api(`/profiles/${profile.id}`, 'PUT', { nodeFilter: { mode: 'manual', selectedNodeIds: [source.nodes[0].id] } });
   const complete = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'singbox' });
-  assert.equal(complete.generation.bindings[0].status, 'unapplied');
-  assert.equal(complete.generation.diagnostics[0].code, 'source-doh-egress-unapplied');
+  assert.equal(complete.status, 422);
+  assert.ok(complete.generation.diagnostics.some((entry: any) => entry.severity === 'error'));
   const preview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'shadowrocket', format: 'base64' });
   assert.equal(preview.success, true, preview.message);
   assert.equal(preview.generation.target.mode, 'nodes');
@@ -233,8 +233,8 @@ test('source route default bootstrap is adopted in its source namespace before t
   const bootstrap = doc.dns.servers.find((entry: any) => entry.tag === doh.domain_resolver.server);
   assert.equal(bootstrap.server, '192.0.2.56');
   assert.equal(doh.domain_resolver.strategy, 'ipv4_only');
-  assert.notEqual(bootstrap.domain_resolver.server, 'root');
-  assert.equal(doc.dns.servers.find((entry: any) => entry.tag === bootstrap.domain_resolver.server).server, '192.0.2.57');
+  assert.equal(bootstrap.domain_resolver, undefined, 'IP bootstrap never performs an unused hostname lookup');
+  assert.equal(doc.dns.servers.some((entry: any) => entry.server === '192.0.2.57'), false);
 });
 
 test('cross-format direct DoH retains URL path and query but does not silently discard credentials or flags', async () => {

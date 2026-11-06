@@ -1,4 +1,5 @@
-import type { ClientType, ProxyGroupItem, ProxyNode, SourceDohService, SubscriptionProfile, SubscriptionSource, UnifiedRuleItem } from '../../types';
+import type { RuntimeInventory, RuntimePathEntry } from './runtime-dependencies';
+import type { ClientType, ConfigTemplate, ProxyGroupItem, ProxyNode, SourceDohService, SubscriptionProfile, SubscriptionSource, UnifiedRuleItem } from '../../types';
 
 export interface GenerationDiagnostic {
   code: string;
@@ -6,6 +7,8 @@ export interface GenerationDiagnostic {
   message: string;
   sourceId?: string;
   serviceId?: string;
+  path?: RuntimePathEntry[];
+  dependencyState?: string;
 }
 export interface GenerationBinding {
   sourceId: string;
@@ -23,6 +26,7 @@ export interface GenerationOptions {
   target: ClientType;
   profile?: SubscriptionProfile;
   templateContent: string;
+  templateId?: string;
   expandNodes?: boolean;
   baseUrl?: string;
   subToken?: string;
@@ -31,6 +35,8 @@ export interface GenerationOptions {
 export interface GenerationPlan {
   target: { type: ClientType; version?: string; mode: 'complete' | 'nodes' };
   templateContent: string;
+  inventory: RuntimeInventory;
+  template?: ConfigTemplate;
   ordinaryNodes: ProxyNode[];
   dependencyNodes: ProxyNode[];
   groups: ProxyGroupItem[];
