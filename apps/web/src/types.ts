@@ -74,6 +74,43 @@ export interface ExtractionRule {
 
 export type ClientType = 'singbox' | 'mihomo' | 'loon' | 'quantumultx' | 'egern' | 'shadowrocket';
 
+export interface GenerationDiagnostic {
+  code: string;
+  severity: 'warning' | 'error';
+  message: string;
+  sourceId?: string;
+  serviceId?: string;
+}
+
+export interface GenerationBinding {
+  sourceId: string;
+  sourceName: string;
+  batchId?: string;
+  updatedAt?: string;
+  nodeIds: string[];
+  services: { id: string; url: string }[];
+  status: 'applied' | 'degraded' | 'unapplied' | 'template' | 'ignored';
+  method: string;
+  appliedServiceIds: string[];
+  diagnostics: GenerationDiagnostic[];
+}
+
+export interface GenerationMetadata {
+  target: { type: ClientType; version?: string; mode: 'complete' | 'nodes' };
+  nodeCount: number;
+  dependencyNodeCount: number;
+  bindings: GenerationBinding[];
+  diagnostics: GenerationDiagnostic[];
+}
+
+export interface GenerationPreviewResult {
+  success: boolean;
+  nodeCount: number;
+  data: string;
+  message?: string;
+  generation?: GenerationMetadata;
+}
+
 export interface ConfigTemplate {
   id: string;
   name: string;

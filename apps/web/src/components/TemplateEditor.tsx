@@ -3,18 +3,22 @@ import { Textarea } from './ui/Textarea';
 import { Select, SelectItem } from './ui/Select';
 import { Field, Label } from './ui/Field';
 import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { GenerationPreview } from './GenerationPreview';
+import { copyToClipboard } from '../utils/clipboard';
 import {
   Check,
   Copy,
   Download,
+  Eye,
   FileCode,
   Plus,
   RotateCcw,
+  RefreshCw,
   Save,
   Trash2,
 } from 'lucide-react';
-import { ConfigTemplate, ClientType } from '../types';
+import { ConfigTemplate, ClientType, GenerationPreviewResult } from '../types';
 
 interface TemplateEditorProps {
   templates: ConfigTemplate[];
@@ -22,7 +26,7 @@ interface TemplateEditorProps {
   onUpdateTemplate: (id: string, updates: Partial<ConfigTemplate>) => Promise<void>;
   onDeleteTemplate: (id: string) => Promise<void>;
   onResetTemplate: (id: string) => Promise<ConfigTemplate>;
-  onPreview?: (templateId?: string, customTemplate?: string, customType?: string) => Promise<{ nodeCount: number; data: string }>;
+  onPreview?: (templateId?: string, customTemplate?: string, customType?: string) => Promise<GenerationPreviewResult>;
 }
 
 export const TemplateEditor: React.FC<TemplateEditorProps> = ({
@@ -31,11 +35,18 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
   onUpdateTemplate,
   onDeleteTemplate,
   onResetTemplate,
+  onPreview,
 }) => {
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(templates[0]?.id || '');
   const [templateContent, setTemplateContent] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [preview, setPreview] = useState<{ name: string; type: ClientType; result: GenerationPreviewResult | null } | null>(null);
+  const [previewCopied, setPreviewCopied] = useState(false);
+  const [wrapPreview, setWrapPreview] = useState(false);
+  const previewRequest = useRef(0);
+  const previewLoading = !!preview && !preview.result;
+  const previewUsable = !!preview?.result?.success && !!preview.result.data.trim();
 
   // New Template Modal state
   const [showNewModal, setShowNewModal] = useState(false);
@@ -114,6 +125,50 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const handlePreview = async () => {
+    if (!currentTemplate || !onPreview) return;
+    const request = ++previewRequest.current;
+    const { name, type } = currentTemplate;
+    setPreviewCopied(false);
+    setPreview({ name, type, result: null });
+    if (!templateContent.trim()) {
+      setPreview({ name, type, result: { success: false, nodeCount: 0, data: '', message: '模版内容为空' } });
+      return;
+    }
+    try {
+      const result = await onPreview(currentTemplate.id, templateContent, type);
+      if (request === previewRequest.current) setPreview({ name, type, result });
+    } catch (err) {
+      if (request === previewRequest.current) {
+        setPreview({ name, type, result: {
+          success: false, nodeCount: 0, data: '',
+          message: `请求失败：${err instanceof Error ? err.message : String(err)}`,
+        } });
+      }
+    }
+  };
+
+  const handleCopyPreview = async () => {
+    if (!previewUsable || !preview?.result) return;
+    if (await copyToClipboard(preview.result.data)) {
+      setPreviewCopied(true);
+      setTimeout(() => setPreviewCopied(false), 2000);
+    } else {
+      window.prompt('请手动复制：', preview.result.data);
+    }
+  };
+
+  const handleDownloadPreview = () => {
+    if (!previewUsable || !preview?.result) return;
+    const ext = preview.type === 'singbox' ? 'json' : preview.type === 'mihomo' || preview.type === 'egern' ? 'yaml' : 'conf';
+    const url = URL.createObjectURL(new Blob([preview.result.data], { type: 'text/plain;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${preview.name}_preview.${ext}`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const getTypeBadge = (type: string) => {
     switch (type) {
       case 'singbox':
@@ -180,7 +235,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {templates.length > 1 && currentTemplate && (
             <button
               onClick={() => onDeleteTemplate(currentTemplate.id)}
@@ -200,6 +255,17 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
             <RotateCcw className="w-3.5 h-3.5 text-ui-accent" />
             <span>恢复默认</span>
           </button>
+
+          {onPreview && (
+            <button
+              onClick={handlePreview}
+              disabled={!currentTemplate || previewLoading}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold ui-button-secondary rounded-xl"
+            >
+              <Eye className="w-3.5 h-3.5 text-ui-accent" />
+              <span>预览生成</span>
+            </button>
+          )}
 
           <button
             onClick={handleSave}
@@ -249,6 +315,48 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
           </div>
         </div>
       </div>
+
+      <Modal
+        open={!!preview}
+        title="生成预览"
+        description={preview ? `${preview.name} · 当前编辑内容` : undefined}
+        size="wide"
+        layout="editor"
+        onClose={() => { previewRequest.current++; setPreview(null); }}
+      >
+        {preview && (<>
+          <div className="ui-modal-toolbar justify-between text-xs text-ui-secondary">
+            <span>{previewUsable && preview.result ? `${preview.result.data.split('\n').length} 行 · ${(new Blob([preview.result.data]).size / 1024).toFixed(1)} KB` : previewLoading ? '生成中…' : '无可用输出'}</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <button onClick={() => setWrapPreview(value => !value)} className="ui-button-secondary px-2.5 py-1 text-[11px]">
+                {wrapPreview ? '取消换行' : '自动换行'}
+              </button>
+              <button onClick={handleDownloadPreview} disabled={!previewUsable} className="ui-button-secondary flex items-center gap-1 px-2.5 py-1 text-[11px]">
+                <Download className="w-3 h-3" />下载文件
+              </button>
+              <button onClick={handleCopyPreview} disabled={!previewUsable} className="ui-button-primary flex items-center gap-1 px-2.5 py-1 text-[11px]">
+                {previewCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                {previewCopied ? '已复制' : '复制全文'}
+              </button>
+            </div>
+          </div>
+          <ModalBody>
+            {previewLoading ? (
+              <div className="min-h-[300px] flex flex-1 flex-col items-center justify-center gap-2 text-xs text-ui-muted">
+                <RefreshCw className="w-6 h-6 animate-spin text-ui-accent" />
+                正在生成订阅配置…
+              </div>
+            ) : preview.result && (<>
+              <GenerationPreview result={preview.result} clientType={preview.type} />
+              {previewUsable && (
+                <pre className={`rounded-xl bg-[#181716] p-4 text-[#D8D2C7] font-mono text-xs leading-relaxed overflow-x-auto selection:bg-ui-accent/30 ${wrapPreview ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>
+                  {preview.result.data}
+                </pre>
+              )}
+            </>)}
+          </ModalBody>
+        </>)}
+      </Modal>
 
       {/* New Template Modal */}
       <Modal

@@ -2,6 +2,9 @@ import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '
 import { adaptRulesetForSingbox, formatRuleTag } from './ruleset-adapter';
 import { resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag } from './common';
 
+// Retained by relay object copies and omitted automatically from JSON output.
+const sourceNodeId = Symbol('sourceNodeId');
+
 export function nodeToSingboxOutbound(node: ProxyNode): any {
   if (node.raw && node.raw.type && node.raw.tag) {
     const rawCopy = {
@@ -367,6 +370,16 @@ export function generateSingboxConfig(
   rulesList: UnifiedRuleItem[] = [],
   sources: any[] = []
 ): string {
+  return JSON.stringify(generateSingboxDocument(templateJson, nodes, proxyGroups, rulesList, sources).document, null, 2);
+}
+
+export function generateSingboxDocument(
+  templateJson: string,
+  nodes: ProxyNode[],
+  proxyGroups: ProxyGroupItem[] = [],
+  rulesList: UnifiedRuleItem[] = [],
+  sources: any[] = []
+): { document: any; nodeTags: Map<string, string[]> } {
   let doc: any;
   try {
     doc = JSON.parse(templateJson);
@@ -402,6 +415,7 @@ export function generateSingboxConfig(
   const proxyOutbounds = allCandidateNodes.map(n => {
     const ob: any = nodeToSingboxOutbound(n);
     if (ob) {
+      ob[sourceNodeId] = n.id;
       const src = nodeSourceMap.get(n.id) || nodeSourceMap.get(n.name);
       ob._sourceName = n.sourceName || src?.name || '';
       ob._sourceId = n.sourceId || src?.id || '';
@@ -411,7 +425,12 @@ export function generateSingboxConfig(
 
   doc = injectUnifiedToSingbox(doc, proxyOutbounds, proxyGroups, rulesList, sources);
 
-  return JSON.stringify(doc, null, 2);
+  const nodeTags = new Map<string, string[]>();
+  for (const outbound of doc.outbounds || []) {
+    const id = outbound[sourceNodeId];
+    if (typeof id === 'string') nodeTags.set(id, [...(nodeTags.get(id) || []), outbound.tag]);
+  }
+  return { document: doc, nodeTags };
 }
 
 export function injectUnifiedToSingbox(
@@ -692,6 +711,7 @@ export function injectUnifiedToSingbox(
   });
 
   doc.outbounds = [...groupOutbounds, ...customTemplateOutbounds, ...proxyOutbounds];
+  doc.outbounds.forEach((outbound: any) => { delete outbound._sourceId; delete outbound._sourceName; });
 
   // 2. Build Remote Rule Sets
   const activeRules = rulesList.filter(r => r.enabled);
@@ -735,100 +755,6 @@ export function injectUnifiedToSingbox(
 
   if (!doc.route.default_http_client) {
     doc.route.default_http_client = doc.http_clients[0]?.tag || 'default';
-  }
-
-  if (!doc.route.default_domain_resolver) {
-    const localDnsTag = doc.dns?.servers?.find((s: any) => s.tag === 'alidns' || s.tag === 'local' || s.type === 'udp')?.tag || 'local';
-    doc.route.default_domain_resolver = {
-      server: localDnsTag,
-    };
-  }
-
-  // Sanitize and dynamically build doc.dns.rules to ensure full IPv6 support for direct domains & custom user DNS rules
-  if (doc.dns) {
-    if (!doc.dns.strategy) doc.dns.strategy = 'prefer_ipv4';
-
-    const validRuleSetTags = new Set(ruleSets.map(rs => rs.tag));
-
-    // 1. Gather all direct domain suffixes from local rules (e.g. DDNS, private IPv6, university, NAS, PT trackers)
-    const directDomainSuffixes: string[] = [];
-    localRules.forEach(r => {
-      if (r.outbound === '🎯 本地直连' || r.outbound === 'direct') {
-        if (r.type === 'DOMAIN-SUFFIX' || r.type === 'DOMAIN') {
-          const items = r.payload.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
-          directDomainSuffixes.push(...items);
-        }
-      }
-    });
-
-    // 2. Gather domestic geosite rule_sets (must be domain-based geosite, NOT ip-based geoip)
-    const domesticRuleSets = remoteRules
-      .map((r, idx) => adaptRulesetForSingbox(r, idx))
-      .filter(ad => {
-        const isDomestic = ad.tag.includes('cn') || ad.tag.includes('direct') || ad.url.includes('cn');
-        return isDomestic && ad.behavior === 'domain';
-      })
-      .map(ad => ad.tag)
-      .filter(tag => validRuleSetTags.has(tag));
-
-    // 3. Gather overseas proxy geosite rule_sets (must be domain-based geosite, NOT ip-based geoip)
-    const proxyRuleSets = remoteRules
-      .map((r, idx) => adaptRulesetForSingbox(r, idx))
-      .filter(ad => {
-        const isDomestic = ad.tag.includes('cn') || ad.tag.includes('direct') || ad.url.includes('cn');
-        return !isDomestic && ad.behavior === 'domain';
-      })
-      .map(ad => ad.tag)
-      .filter(tag => validRuleSetTags.has(tag));
-
-    // If template already defines dns.rules, respect user template and avoid overriding
-    if (doc.dns && Array.isArray(doc.dns.rules) && doc.dns.rules.length > 0) {
-      // Keep template rules intact
-    } else {
-      const dnsRules: any[] = [];
-
-
-      // Step A: Direct local domains -> alidns (resolves both IPv4 and full IPv6 without being rejected)
-      const uniqueDirectSuffixes = Array.from(new Set([
-        'local',
-        'arpa',
-        'in-addr.arpa',
-        'ip6.arpa',
-        ...directDomainSuffixes,
-      ]));
-      dnsRules.push({
-        domain_suffix: uniqueDirectSuffixes,
-        server: 'alidns',
-      });
-
-      // Step B: Domestic GeoSite rule-sets -> alidns (allows full dual-stack IPv4/IPv6 for domestic services)
-      if (domesticRuleSets.length > 0) {
-        dnsRules.push({
-          rule_set: domesticRuleSets,
-          server: 'alidns',
-        });
-      }
-
-      // Step C: Reject AAAA for overseas / proxy traffic (prevents proxy IPv6 leaks & broken overseas IPv6 routes)
-      dnsRules.push({
-        query_type: 'AAAA',
-        action: 'reject',
-      });
-
-      // Step D: Proxy GeoSite rule-sets -> fakeip
-      if (proxyRuleSets.length > 0) {
-        dnsRules.push({
-          rule_set: proxyRuleSets,
-          server: 'fakeip',
-        });
-      }
-
-      // Step E: Clash API controls
-      dnsRules.push({ clash_mode: 'Direct', server: 'alidns' });
-      dnsRules.push({ clash_mode: 'Global', server: 'remote' });
-
-      doc.dns.rules = dnsRules;
-    }
   }
 
   // 3. Build Route Rules

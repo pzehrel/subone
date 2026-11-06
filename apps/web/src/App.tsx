@@ -20,7 +20,9 @@ import {
   ProxyGroupItem,
   UnifiedRuleItem,
   SubscriptionProfile,
+  GenerationPreviewResult,
 } from './types';
+import { readGenerationPreview } from './api';
 
 const API_BASE = '/api';
 
@@ -532,15 +534,13 @@ export function App() {
     return json.data;
   };
 
-  const handlePreview = async (templateId?: string, customTemplate?: string, customType?: string) => {
+  const handlePreview = async (templateId?: string, customTemplate?: string, customType?: string): Promise<GenerationPreviewResult> => {
     const res = await apiFetch(`${API_BASE}/generate/preview`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ templateId, customTemplate, customType }),
     });
-    if (!res.ok) throw new Error('Preview failed');
-    const json = await res.json();
-    return { nodeCount: json.nodeCount, data: json.data };
+    return readGenerationPreview(res);
   };
 
   // Settings handlers

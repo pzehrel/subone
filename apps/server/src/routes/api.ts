@@ -1,3 +1,4 @@
+import { createGenerationPlan, renderGeneration, GenerationError } from '../services/generation';
 import { Hono, type Handler } from 'hono';
 import type { BodyEnv } from '../middlewares/body';
 import crypto from 'crypto';
@@ -35,15 +36,9 @@ import {
   loadSingboxGatewayTemplate,
   loadDefaultRules,
 } from '../storage/default-templates';
-import { generateMihomoConfig, nodeToMihomoProxy } from '../core/generators/mihomo-generator';
-import { generateSingboxConfig } from '../core/generators/singbox-generator';
-import { generateLoonConfig, nodeToLoonProxy } from '../core/generators/loon-generator';
-import { generateQuantumultXConfig, nodeToQuantumultXProxy } from '../core/generators/quantumultx-generator';
-import { generateEgernConfig, nodeToEgernProxy } from '../core/generators/egern-generator';
-import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../core/generators/shadowrocket-generator';
-import { detectClientType, ClientType } from '../core/parser/ua-detector';
+import { ClientType } from '../core/parser/ua-detector';
 import { applyExtractionRules } from '../core/filter/extractor';
-import { normalizeGroupReferences, resolveOutputReferences, removeNodeReferences, requiresExpandedNodes } from '../services/node-references';
+import { normalizeGroupReferences, removeNodeReferences } from '../services/node-references';
 import { prepareSourceNodes } from '../services/node-identity';
 import { bindSourceDoh } from '../core/parser/source-doh';
 import { commitConfig, commitSource, refreshSource, SourceUpdateError } from '../services/source-service';
@@ -55,10 +50,6 @@ import {
   collectNodesFromSources,
   refreshAllSources,
   getEffectiveNodes,
-  getEffectiveNodesForProfile,
-  getEffectiveGroupsForProfile,
-  getEffectiveSourcesForProfile,
-  getEffectiveRulesForProfile,
   getEffectiveTemplateForProfile,
 } from '../services/profile-service';
 
@@ -788,18 +779,6 @@ apiRouter.post('/generate/preview', async (c) => {
       targetProfile = previewProfile;
     }
 
-    let nodes = targetProfile
-      ? await getEffectiveNodesForProfile(targetProfile)
-      : await getEffectiveNodes();
-
-    let groups = targetProfile
-      ? getEffectiveGroupsForProfile(targetProfile, nodes)
-      : appConfig.proxyGroups;
-
-    const rules = targetProfile
-      ? getEffectiveRulesForProfile(targetProfile)
-      : appConfig.rulesList;
-
     let targetType: ClientType = customType || 'singbox';
     let templateContent = customTemplate;
 
@@ -819,57 +798,16 @@ apiRouter.post('/generate/preview', async (c) => {
       templateContent = defaultTpl?.content || '';
     }
 
-    let effectiveSources = targetProfile
-      ? getEffectiveSourcesForProfile(targetProfile, nodes)
-      : appConfig.sources;
-
-    const explicitNodeReferences = requiresExpandedNodes(groups);
-    ({ nodes, groups, sources: effectiveSources } = resolveOutputReferences(nodes, groups, effectiveSources, targetType));
-    let output = '';
-    const baseUrl = getBaseUrl(c.req);
-    const subToken = targetProfile?.token || 'preview-token';
-    const expand = explicitNodeReferences || Boolean(body?.expandNodes || c.req.query('expand') === 'true' || c.req.query('expand') === '1');
-
-    if (targetType === 'mihomo') {
-      output = generateMihomoConfig(templateContent, nodes, groups, rules, effectiveSources, {
-        expandNodes: expand,
-        baseUrl,
-        subToken
-      });
-    } else if (targetType === 'singbox') {
-      output = generateSingboxConfig(templateContent, nodes, groups, rules, effectiveSources);
-    } else if (targetType === 'loon') {
-      output = generateLoonConfig(templateContent, nodes, groups, rules, effectiveSources, {
-        expandNodes: expand,
-        baseUrl,
-        subToken
-      });
-    } else if (targetType === 'quantumultx') {
-      output = generateQuantumultXConfig(templateContent, nodes, groups, rules, effectiveSources, {
-        expandNodes: expand,
-        baseUrl,
-        subToken
-      });
-    } else if (targetType === 'egern') {
-      output = generateEgernConfig(templateContent, nodes, groups, rules, effectiveSources, {
-        expandNodes: expand,
-        baseUrl,
-        subToken
-      });
-    } else if (targetType === 'shadowrocket') {
-      const isBase64 = body?.format === 'base64' || c.req.query('format') === 'base64';
-      if (isBase64) {
-        output = generateShadowrocketBase64(nodes);
-      } else {
-        const expandRocket = body?.expandNodes !== false;
-        output = generateShadowrocketConfig(templateContent, nodes, groups, rules, effectiveSources, { expandNodes: expandRocket });
-      }
-    }
-
-    return c.json({ success: true, nodeCount: nodes.length, data: output });
+    const plan = await createGenerationPlan({
+      target: targetType, profile: targetProfile, templateContent,
+      expandNodes: typeof body.expandNodes === 'boolean' ? body.expandNodes : (c.req.query('expand') === 'true' || c.req.query('expand') === '1' ? true : undefined),
+      format: body.format || c.req.query('format'), baseUrl: getBaseUrl(c.req),
+    });
+    const result = renderGeneration(plan);
+    return c.json({ success: true, nodeCount: result.generation.nodeCount, data: result.output, generation: result.generation });
   } catch (err) {
-    const status = err instanceof UnsupportedProxyGroupError ? 422 : 500;
+    const status = err instanceof UnsupportedProxyGroupError || err instanceof GenerationError ? 422 : 500;
     const message = err instanceof Error ? err.message : 'Generation failed';
-    return c.json({ success: false, message }, status);
+    return c.json({ success: false, message, ...(err instanceof GenerationError ? { generation: err.generation } : {}) }, status);
   }
 });

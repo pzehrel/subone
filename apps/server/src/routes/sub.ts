@@ -1,25 +1,13 @@
+import { createGenerationPlan, renderGeneration, renderSourceGeneration, GenerationError } from '../services/generation';
 import { Hono, type Context } from 'hono';
-import yaml from 'js-yaml';
 import { getAppConfig, getBaseUrl } from '../context';
 import { detectClientType, ClientType } from '../core/parser/ua-detector';
-import { ProxyNode, ConfigTemplate } from '../types/index';
-import { applyExtractionRules } from '../core/filter/extractor';
-import { generateMihomoConfig, nodeToMihomoProxy } from '../core/generators/mihomo-generator';
-import { generateSingboxConfig } from '../core/generators/singbox-generator';
-import { generateLoonConfig, nodeToLoonProxy } from '../core/generators/loon-generator';
-import { generateQuantumultXConfig, nodeToQuantumultXProxy } from '../core/generators/quantumultx-generator';
-import { generateEgernConfig, nodeToEgernProxy } from '../core/generators/egern-generator';
-import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../core/generators/shadowrocket-generator';
-import { resolveOutputReferences, requiresExpandedNodes } from '../services/node-references';
+import { ConfigTemplate } from '../types/index';
 import { UnsupportedProxyGroupError } from '../core/generators/errors';
 import { formatSubscriptionUserinfo, parseSubscriptionUserinfo } from '../core/parser/subscription-info';
 import { aggregateSubscriptionInfo } from '../../../../shared/subscription-info';
 import {
-  getEffectiveNodes,
-  getEffectiveNodesForProfile,
-  getEffectiveGroupsForProfile,
   getEffectiveRulesForProfile,
-  getEffectiveSourcesForProfile,
   getEffectiveTemplateForProfile,
 } from '../services/profile-service';
 
@@ -69,84 +57,22 @@ async function handlePrivateSubRequest(c: Context, forcedType?: ClientType) {
       tpl = getEffectiveTemplateForProfile(profile, detectedType);
     }
 
-    const templateContent = tpl?.content || '';
-    let nodes = await getEffectiveNodesForProfile(profile);
-    let groups = getEffectiveGroupsForProfile(profile, nodes);
-    const rules = getEffectiveRulesForProfile(profile);
-    let sources = getEffectiveSourcesForProfile(profile, nodes);
-    const explicitNodeReferences = requiresExpandedNodes(groups);
-    ({ nodes, groups, sources } = resolveOutputReferences(nodes, groups, sources, detectedType));
-    const baseUrl = getBaseUrl(c.req);
-    const userinfo = formatSubscriptionUserinfo(aggregateSubscriptionInfo(sources.map(source => source.subscriptionInfo)));
+    const expandQuery = c.req.query('expand');
+    const plan = await createGenerationPlan({
+      target: detectedType, profile, templateContent: tpl?.content || '',
+      expandNodes: expandQuery === 'false' || expandQuery === '0' ? false : expandQuery === 'true' || expandQuery === '1' || c.req.query('node_list') === 'true' ? true : undefined,
+      format: c.req.query('format'), baseUrl: getBaseUrl(c.req), subToken: tokenParam,
+    });
+    const userinfo = formatSubscriptionUserinfo(aggregateSubscriptionInfo(plan.sources.map(source => source.subscriptionInfo)));
     if (userinfo) c.header('subscription-userinfo', userinfo);
-
-    if (detectedType === 'mihomo') {
-      const expand = explicitNodeReferences || c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
-      const output = generateMihomoConfig(templateContent, nodes, groups, rules, sources, {
-        expandNodes: expand,
-        baseUrl,
-        subToken: tokenParam
-      });
-      c.header('Content-Type', 'text/yaml; charset=utf-8');
-      return c.body(output);
-    }
-
-    if (detectedType === 'singbox') {
-      const output = generateSingboxConfig(templateContent, nodes, groups, rules, sources);
-      c.header('Content-Type', 'application/json; charset=utf-8');
-      return c.body(output);
-    }
-
-    if (detectedType === 'loon') {
-      const expand = explicitNodeReferences || c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
-      const output = generateLoonConfig(templateContent, nodes, groups, rules, sources, {
-        expandNodes: expand,
-        baseUrl,
-        subToken: tokenParam
-      });
-      c.header('Content-Type', 'text/plain; charset=utf-8');
-      return c.body(output);
-    }
-
-    if (detectedType === 'quantumultx') {
-      const expand = explicitNodeReferences || c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
-      const output = generateQuantumultXConfig(templateContent, nodes, groups, rules, sources, {
-        expandNodes: expand,
-        baseUrl,
-        subToken: tokenParam
-      });
-      c.header('Content-Type', 'text/plain; charset=utf-8');
-      return c.body(output);
-    }
-
-    if (detectedType === 'egern') {
-      const expand = explicitNodeReferences || c.req.query('expand') === 'true' || c.req.query('expand') === '1' || c.req.query('node_list') === 'true';
-      const output = generateEgernConfig(templateContent, nodes, groups, rules, sources, {
-        expandNodes: expand,
-        baseUrl,
-        subToken: tokenParam
-      });
-      c.header('Content-Type', 'text/yaml; charset=utf-8');
-      return c.body(output);
-    }
-
-    if (detectedType === 'shadowrocket') {
-      const isBase64 = c.req.query('format') === 'base64' || c.req.query('format') === 'b64';
-      if (isBase64) {
-        const output = generateShadowrocketBase64(nodes);
-        c.header('Content-Type', 'text/plain; charset=utf-8');
-        return c.body(output);
-      }
-      const expand = c.req.query('expand') !== 'false' && c.req.query('expand') !== '0';
-      const output = generateShadowrocketConfig(templateContent, nodes, groups, rules, sources, { expandNodes: expand });
-      c.header('Content-Type', 'text/plain; charset=utf-8');
-      return c.body(output);
-    }
+    const result = renderGeneration(plan);
+    c.header('Content-Type', result.contentType);
+    c.header('X-SubOne-DoH', result.generation.bindings.map(binding => binding.status).join(','));
+    return c.body(result.output);
 
   } catch (err: any) {
-    if (err instanceof UnsupportedProxyGroupError) {
-      return c.text(err.message, 422);
-    }
+    if (err instanceof GenerationError) return c.json({ success: false, message: err.message, generation: err.generation }, 422);
+    if (err instanceof UnsupportedProxyGroupError) return c.text(err.message, 422);
     console.error('Subscription generation error:', err);
     return c.html(`Generation error: ${err.message || err}`, 500);
   }
@@ -183,54 +109,16 @@ async function handleSourceSubRequest(c: Context, forcedTarget?: ClientType) {
   }
 
   try {
-    const profileNodes = await getEffectiveNodesForProfile(profile);
-    let sourceNodes: ProxyNode[] = [];
     const userinfo = Object.entries(parseSubscriptionUserinfo(matchedSource.subscriptionUserinfo))
       .map(([key, value]) => `${key}=${value}`).join('; ');
     if (userinfo) c.header('subscription-userinfo', userinfo);
+    const queryTarget = c.req.query('target') || c.req.query('type') || c.req.param('target');
+    const detectedType = forcedTarget || detectClientType(c.req.header('user-agent'), queryTarget, 'loon');
+    const plan = await createGenerationPlan({ target: detectedType, profile, templateContent: getEffectiveTemplateForProfile(profile, detectedType)?.content || '', baseUrl: getBaseUrl(c.req) });
+    const result = renderSourceGeneration(plan, matchedSource.id);
+    c.header('Content-Type', result.contentType);
+    return c.body(result.output);
 
-    // 应用提取规则
-    // Effective profile selection already applies global extraction and local enable state.
-
-    const queryTarget = (c.req.query('target') as string) || (c.req.query('type') as string) || (c.req.param('target') as string);
-    const userAgent = c.req.header('user-agent');
-    const detectedType = forcedTarget || detectClientType(userAgent, queryTarget, 'loon');
-
-    const profileGroups = getEffectiveGroupsForProfile(profile, profileNodes);
-    const profileSources = getEffectiveSourcesForProfile(profile, profileNodes);
-    sourceNodes = resolveOutputReferences(profileNodes, profileGroups, profileSources, detectedType).nodes.filter(node => node.sourceId === matchedSource.id);
-
-    if (detectedType === 'loon') {
-      const proxyLines = sourceNodes.map(nodeToLoonProxy);
-      const output = ['[Proxy]', ...proxyLines].join('\n');
-      c.header('Content-Type', 'text/plain; charset=utf-8');
-      return c.body(output);
-    }
-
-    if (detectedType === 'mihomo') {
-      const proxies = sourceNodes.map(nodeToMihomoProxy);
-      const output = yaml.dump({ proxies }, { indent: 2, lineWidth: -1, noRefs: true });
-      c.header('Content-Type', 'text/yaml; charset=utf-8');
-      return c.body(output);
-    }
-
-    if (detectedType === 'quantumultx') {
-      const proxyLines = sourceNodes.map(nodeToQuantumultXProxy);
-      const output = proxyLines.join('\n');
-      c.header('Content-Type', 'text/plain; charset=utf-8');
-      return c.body(output);
-    }
-
-    if (detectedType === 'egern') {
-      const proxies = sourceNodes.map(nodeToEgernProxy);
-      const output = yaml.dump({ proxies }, { indent: 2, lineWidth: -1 });
-      c.header('Content-Type', 'text/yaml; charset=utf-8');
-      return c.body(output);
-    }
-
-    const output = generateShadowrocketBase64(sourceNodes);
-    c.header('Content-Type', 'text/plain; charset=utf-8');
-    return c.body(output);
   } catch (err: any) {
     console.error('Source subscription generation error:', err);
     return c.html(`Generation error: ${err.message || err}`, 500);

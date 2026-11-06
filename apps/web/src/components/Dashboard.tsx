@@ -4,8 +4,9 @@ import { Field, Label } from './ui/Field';
 import { Badge } from './ui/Badge';
 import { SourcesIcon, GroupsIcon, RulesIcon } from './ui/module-icons';
 import { HelpTooltip } from './HelpTooltip';
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Modal, ModalBody, ModalFooter } from './Modal';
+import { GenerationPreview } from './GenerationPreview';
 import {
   Check,
   ChevronDown,
@@ -32,8 +33,9 @@ import {
   SubscriptionSource,
   ConfigTemplate,
   ClientType,
+  GenerationPreviewResult,
 } from '../types';
-import { apiFetch, API_BASE } from '../api';
+import { apiFetch, API_BASE, readGenerationPreview } from '../api';
 import { copyToClipboard } from '../utils/clipboard';
 import { formatSubscriptionExpiry, formatSubscriptionTraffic } from '../utils/subscriptionInfo';
 import { aggregateSubscriptionInfo, selectSubscriptionSources } from '../../../../shared/subscription-info';
@@ -45,6 +47,11 @@ export const CLIENT_CONFIG_OPTIONS: { type: ClientType; label: string }[] = [
   { type: 'quantumultx', label: 'Quantumult X' },
   { type: 'egern', label: 'Egern' },
   { type: 'shadowrocket', label: 'Shadowrocket' },
+];
+
+const PREVIEW_CONFIG_OPTIONS: { type: ClientType; label: string; format?: 'base64' }[] = [
+  ...CLIENT_CONFIG_OPTIONS,
+  { type: 'shadowrocket', label: '纯节点', format: 'base64' },
 ];
 
 function generateRandomSubToken(): string {
@@ -98,15 +105,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [loading, setLoading] = useState(false);
 
   // Preview Modal state
-  const [previewData, setPreviewData] = useState<{
+  const [previewData, setPreviewData] = useState<GenerationPreviewResult & {
     profile: SubscriptionProfile;
     profileName: string;
-    clientType: 'singbox' | 'mihomo' | 'loon' | 'quantumultx' | 'egern' | 'shadowrocket';
-    content: string;
-    nodeCount: number;
+    clientType: ClientType;
+    format?: 'base64';
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [wrapPreviewCode, setWrapPreviewCode] = useState(false);
+  const previewRequest = useRef(0);
+  const previewUsable = !previewLoading && !!previewData?.success && !!previewData.data.trim();
 
   // Dropdown state for format selection
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
@@ -284,9 +292,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
   };
 
   // Preview Config
-  const handlePreviewProfile = async (prof: SubscriptionProfile, clientType: 'singbox' | 'mihomo' | 'loon' | 'quantumultx' | 'egern' | 'shadowrocket' = 'singbox') => {
+  const handlePreviewProfile = async (prof: SubscriptionProfile, clientType: ClientType = 'singbox', format?: 'base64') => {
+    const request = ++previewRequest.current;
     setPreviewLoading(true);
-    setPreviewData({ profile: prof, profileName: prof.name, clientType, content: '正在生成配置...', nodeCount: 0 });
+    setPreviewData({ profile: prof, profileName: prof.name, clientType, format, success: false, data: '', nodeCount: 0 });
 
     try {
       const res = await apiFetch(`${API_BASE}/generate/preview`, {
@@ -296,36 +305,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
           profileId: prof.id,
           profile: prof,
           customType: clientType,
+          format,
         }),
       });
-      const data = await res.json();
-      if (data.success) {
+      const result = await readGenerationPreview(res);
+      if (request === previewRequest.current) {
+        setPreviewData({ ...result, profile: prof, profileName: prof.name, clientType, format });
+      }
+    } catch (err) {
+      if (request === previewRequest.current) {
         setPreviewData({
-          profile: prof,
-          profileName: prof.name,
-          clientType,
-          content: data.data,
-          nodeCount: data.nodeCount || 0,
-        });
-      } else {
-        setPreviewData({
-          profile: prof,
-          profileName: prof.name,
-          clientType,
-          content: `生成失败: ${data.message}`,
-          nodeCount: 0,
+          profile: prof, profileName: prof.name, clientType, format,
+          success: false, data: '', nodeCount: 0,
+          message: `请求失败：${err instanceof Error ? err.message : String(err)}`,
         });
       }
-    } catch (err: any) {
-      setPreviewData({
-        profile: prof,
-        profileName: prof.name,
-        clientType,
-        content: `请求失败: ${err.message || err}`,
-        nodeCount: 0,
-      });
     } finally {
-      setPreviewLoading(false);
+      if (request === previewRequest.current) setPreviewLoading(false);
     }
   };
 
@@ -703,22 +699,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
         description={previewData?.profileName}
         size="wide"
         layout="editor"
-        onClose={() => setPreviewData(null)}
+        onClose={() => { previewRequest.current++; setPreviewData(null); setPreviewLoading(false); }}
       >
         {previewData && (<>
           <div className="ui-modal-toolbar"><div className="inline-flex rounded-xl border border-ui-border p-1 bg-ui-surface text-xs shadow-2xs overflow-x-auto max-w-full">
-            {([
-              { type: 'singbox', label: 'Sing-box' },
-              { type: 'mihomo', label: 'Mihomo' },
-              { type: 'loon', label: 'Loon' },
-              { type: 'quantumultx', label: 'Quantumult X' },
-              { type: 'egern', label: 'Egern' },
-              { type: 'shadowrocket', label: '小火箭' },
-            ] as const).map(({ type, label }) => (
+            {PREVIEW_CONFIG_OPTIONS.map(({ type, label, format }) => (
               <button
-                key={type}
-                onClick={() => handlePreviewProfile(previewData.profile, type)}
-                className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${previewData.clientType === type
+                key={`${type}-${format || 'complete'}`}
+                onClick={() => handlePreviewProfile(previewData.profile, type, format)}
+                className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${previewData.clientType === type && previewData.format === format
                   ? 'bg-ui-accent text-white shadow-xs font-semibold'
                   : 'text-ui-secondary hover:text-ui-text hover:bg-ui-subtle'
                   }`}
@@ -727,32 +716,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </button>
             ))}
           </div></div>
-          <div className="ui-modal-toolbar flex flex-wrap items-center justify-between gap-3 text-xs text-ui-secondary"><div className="flex flex-wrap items-center gap-2.5">
-            <span className="inline-flex items-center gap-1.5 font-medium text-ui-text">
-              <span className="w-2 h-2 rounded-full bg-[#5A7A6F]"></span>
-              {previewData.clientType === 'singbox'
-                ? 'Sing-box JSON'
-                : previewData.clientType === 'mihomo'
-                  ? 'Clash / Mihomo YAML'
-                  : previewData.clientType === 'loon'
-                    ? 'Loon CONF'
-                    : previewData.clientType === 'quantumultx'
-                      ? 'Quantumult X CONF'
-                      : previewData.clientType === 'egern'
-                        ? 'Egern YAML'
-                        : previewData.clientType === 'shadowrocket'
-                          ? 'Shadowrocket CONF'
-                          : previewData.clientType}
-            </span>
-            <span>•</span>
-            <span>包含节点：<strong className="text-ui-text">{previewData.nodeCount}</strong> 个</span>
-            <span>•</span>
+          <div className="ui-modal-toolbar flex flex-wrap items-center justify-between gap-3 text-xs text-ui-secondary">
             <span>
-              共 <strong className="text-ui-text">{previewData.content.split('\n').length}</strong> 行 · {(new Blob([previewData.content]).size / 1024).toFixed(1)} KB
+              {previewUsable ? `${previewData.data.split('\n').length} 行 · ${(new Blob([previewData.data]).size / 1024).toFixed(1)} KB` : previewLoading ? '生成中…' : '无可用输出'}
             </span>
-          </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => setWrapPreviewCode(w => !w)}
                 className="px-2.5 py-1 bg-ui-surface border border-ui-border hover:bg-ui-subtle text-[11px] text-ui-secondary rounded-md transition-colors cursor-pointer"
@@ -760,8 +729,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 {wrapPreviewCode ? '取消换行' : '自动换行'}
               </button>
               <button
-                onClick={() => window.open(getSubUrl(previewData.profile.token, previewData.clientType), '_blank')}
-                className="px-2.5 py-1 bg-ui-surface border border-ui-border hover:border-ui-accent/50 text-[11px] font-medium text-ui-secondary hover:text-ui-text rounded-md transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                onClick={() => window.open(`${getSubUrl(previewData.profile.token, previewData.clientType)}${previewData.format ? `?format=${previewData.format}` : ''}`, '_blank')}
+                disabled={!previewUsable}
+                className="px-2.5 py-1 bg-ui-surface border border-ui-border hover:border-ui-accent/50 text-[11px] font-medium text-ui-secondary hover:text-ui-text rounded-md transition-colors flex items-center gap-1 cursor-pointer shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed"
                 title="在浏览器打开此订阅链接"
               >
                 <ExternalLink className="w-3 h-3" />
@@ -769,34 +739,41 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </button>
               <button
                 onClick={() => {
-                  const ext = previewData.clientType === 'singbox'
+                  const ext = previewData.format ? 'txt' : previewData.clientType === 'singbox'
                     ? 'json'
                     : (previewData.clientType === 'mihomo' || previewData.clientType === 'egern' ? 'yaml' : 'conf');
-                  handleDownloadConfig(previewData.content, `${previewData.profileName}_${previewData.clientType}.${ext}`);
+                  handleDownloadConfig(previewData.data, `${previewData.profileName}_${previewData.format ? 'nodes' : previewData.clientType}.${ext}`);
                 }}
-                className="px-2.5 py-1 bg-ui-surface border border-ui-border hover:border-ui-accent/50 text-[11px] font-medium text-ui-secondary hover:text-ui-text rounded-md transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                disabled={!previewUsable}
+                className="px-2.5 py-1 bg-ui-surface border border-ui-border hover:border-ui-accent/50 text-[11px] font-medium text-ui-secondary hover:text-ui-text rounded-md transition-colors flex items-center gap-1 cursor-pointer shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed"
                 title="下载配置文件"
               >
                 <Download className="w-3 h-3" />
                 <span>下载文件</span>
               </button>
               <button
-                onClick={() => handleCopy(previewData.content, 'preview-content')}
-                className="px-2.5 py-1 bg-ui-accent hover:bg-ui-accent-hover text-white text-[11px] font-semibold rounded-md transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                onClick={() => handleCopy(previewData.data, 'preview-content')}
+                disabled={!previewUsable}
+                className="px-2.5 py-1 bg-ui-accent hover:bg-ui-accent-hover text-white text-[11px] font-semibold rounded-md transition-colors flex items-center gap-1 cursor-pointer shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {copiedId === 'preview-content' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                 <span>{copiedId === 'preview-content' ? '已复制' : '复制全文'}</span>
               </button>
             </div></div>
-          <ModalBody className="bg-[#181716] text-[#D8D2C7] font-mono text-xs leading-relaxed">{previewLoading ? (
+          <ModalBody>{previewLoading ? (
             <div className="h-full min-h-[300px] flex flex-col items-center justify-center text-ui-muted gap-2">
               <RefreshCw className="w-6 h-6 animate-spin text-ui-accent" />
               <span className="text-xs font-sans">正在生成订阅配置...</span>
             </div>
           ) : (
-            <pre className={`overflow-x-auto selection:bg-ui-accent/30 ${wrapPreviewCode ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>
-              {previewData.content}
-            </pre>
+            <>
+              <GenerationPreview result={previewData} clientType={previewData.clientType} />
+              {previewUsable && (
+                <pre className={`rounded-xl bg-[#181716] p-4 text-[#D8D2C7] font-mono text-xs leading-relaxed overflow-x-auto selection:bg-ui-accent/30 ${wrapPreviewCode ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>
+                  {previewData.data}
+                </pre>
+              )}
+            </>
           )}</ModalBody>
         </>)}
       </Modal>
