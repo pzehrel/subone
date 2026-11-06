@@ -1,5 +1,6 @@
 import yaml from 'js-yaml';
-import type { CountryPatternRule, ProxyNode, SourceFormat } from '../../types';
+import type { CountryPatternRule, ProxyNode, SourceDohService, SourceFormat } from '../../types';
+import { extractSourceDoh } from './source-doh';
 import { parseClashYaml } from './clash-parser';
 import { parseSingboxJson } from './singbox-parser';
 import { isQuantumultXContent, parseQuantumultX } from './quantumultx-parser';
@@ -9,6 +10,7 @@ export interface ParsedSourceContent {
   nodes: ProxyNode[];
   format: SourceFormat;
   document?: Record<string, unknown>;
+  doh?: SourceDohService[];
 }
 export class ContentParseError extends Error {
   constructor(message: string, public format?: SourceFormat) { super(message); }
@@ -40,7 +42,7 @@ export function parseSourceContent(raw: string, sourceId: string, sourceName: st
       const targets = (document.outbounds || []).filter((item: any) => !['selector', 'urltest', 'direct', 'block', 'dns'].includes(item?.type));
       if (nodes.length !== targets.length) throw new Error('sing-box 节点解析不完整');
       nodes.forEach(validateNode);
-      return { nodes, format: 'singbox', document };
+      return { nodes, format: 'singbox', document, doh: extractSourceDoh('singbox', document) };
     }
     if (/(?:^|\n)\s*(?:proxies|dns|proxy-groups):/.test(content)) {
       format = 'mihomo';
@@ -50,13 +52,13 @@ export function parseSourceContent(raw: string, sourceId: string, sourceName: st
       const nodes = parseClashYaml(content, sourceId, sourceName, countryPatterns);
       if (nodes.length !== (document.proxies || []).length) throw new Error('Mihomo 节点解析不完整');
       nodes.forEach(validateNode);
-      return { nodes, format, document };
+      return { nodes, format, document, doh: extractSourceDoh(format, document) };
     }
-    if (isQuantumultXContent(content) || /^\[dns\]/mi.test(content)) {
+    if (isQuantumultXContent(content) || /^\s*\[\s*dns\s*\]/mi.test(content)) {
       format = 'quantumultx';
       const nodes = parseQuantumultX(content, sourceId, sourceName, countryPatterns);
       let section = '';
-      const hasSections = /^\s*\[[\w-]+\]/m.test(content);
+      const hasSections = /^\s*\[\s*[\w-]+\s*\]/m.test(content);
       const targets = content.split(/[\r\n]+/).filter(rawLine => {
         const line = rawLine.trim();
         if (!line || /^(#|;|\/\/)/.test(line)) return false;
@@ -66,7 +68,7 @@ export function parseSourceContent(raw: string, sourceId: string, sourceName: st
       });
       if (nodes.length !== targets.length) throw new Error('QuanX 节点解析不完整');
       nodes.forEach(validateNode);
-      return { nodes, format };
+      return { nodes, format, doh: extractSourceDoh(format, undefined, raw) };
     }
     const compact = content.replace(/\s/g, '');
     if (/^[A-Za-z0-9+/_-]+={0,2}$/.test(compact)) {

@@ -129,6 +129,38 @@ export interface SourceRawRecord {
   error?: string;
 }
 
+export interface SourceDohReference {
+  kind: 'direct' | 'source-node' | 'source-group' | 'unresolved' | 'ambiguous' | 'routing';
+  name?: string;
+  nodeId?: string;
+  outboundId?: string;
+  candidates?: string[];
+}
+
+export interface SourceDohService {
+  id: string;
+  path: string;
+  url: string;
+  raw: unknown;
+  outbound?: SourceDohReference;
+}
+
+export interface SourceDohOutbound {
+  id: string;
+  name: string;
+  raw: Record<string, unknown>;
+  references: SourceDohReference[];
+}
+
+export interface SourceDohResult {
+  sourceId: string;
+  batchId: string;
+  updatedAt: string;
+  format: SourceFormat;
+  services: SourceDohService[];
+  outbounds: SourceDohOutbound[];
+}
+
 
 export interface SubscriptionSource {
   id: string;
@@ -141,6 +173,7 @@ export interface SubscriptionSource {
   detectedFormat?: SourceFormat;
   rawSubscription?: SourceRawRecord;
   parsedConfig?: Record<string, unknown>;
+  doh?: SourceDohResult;
   lastUpdateError?: string;
   nodeCount?: number;
   nodes?: ProxyNode[];

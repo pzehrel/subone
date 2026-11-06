@@ -5,6 +5,7 @@ import { parseSingboxJson } from './singbox-parser';
 import { applySubscriptionInfo } from './subscription-info';
 import { isQuantumultXContent, parseQuantumultX } from './quantumultx-parser';
 import { parseSourceContent, ContentParseError } from './source-content';
+import { sourceDohResult } from './source-doh';
 
 function isQuantumultXHint(hint?: string): boolean {
   return ['quantumultx', 'quanx', 'qx'].includes(hint?.toLowerCase() || '');
@@ -69,6 +70,7 @@ export async function fetchAndParseSource(
       source.rawSubscription = { content: text, fetchedAt, format: parsed.format, contentType: response.headers.get('content-type') || undefined, parseStatus: 'success' };
       source.detectedFormat = parsed.format;
       source.parsedConfig = parsed.document;
+      source.doh = sourceDohResult(source.id, parsed.format, fetchedAt, parsed.doh || []);
       source.lastUpdated = fetchedAt;
       source.lastUpdateError = undefined;
       return applySubscriptionInfo(source, parsed.nodes, response.headers.get('subscription-userinfo'));
