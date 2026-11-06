@@ -190,3 +190,18 @@ test('Mihomo DNS egress identity survives insertion of an unrelated resolver aft
   assert.deepEqual(emitted.dns.nameserver, ['https://unrelated.identity.example/query#DIRECT', 'https://mihomo.identity.example/query#Mihomo renamed exit']);
   assert.equal((await api('/templates')).data.find((entry: any) => entry.id === tpl.id).content, content);
 });
+
+test('a reserved managed node name receives an unambiguous emitted tag', async () => {
+  const source = (await api('/sources')).data.find((entry: any) => entry.name === 'Replacement source');
+  const node = source.nodes[0];
+  assert.equal((await api(`/nodes/${node.id}`, 'PUT', { name: 'GLOBAL' })).success, true);
+  const group = (await api('/groups', 'POST', { name: 'Reserved node picker', type: 'select', proxies: [`node:${node.id}`] })).data;
+  const tpl = (await api('/templates', 'POST', { name: 'Reserved namespace template', type: 'singbox', content: '{}' })).data;
+  const profile = (await api('/profiles', 'POST', { name: 'Reserved namespace profile', nodeFilter: { mode: 'all', sourceIds: [source.id] }, selectedGroupIds: [group.id], templates: { singbox: tpl.id } })).data;
+  const response = await fetch(`${origin}/s/${profile.token}/singbox`);
+  assert.equal(response.status, 200);
+  const doc = await response.json() as any;
+  assert.equal(doc.outbounds.find((entry: any) => entry.tag === 'GLOBAL').type, 'selector');
+  assert.equal(doc.outbounds.find((entry: any) => entry.server === '192.0.2.20').tag, 'GLOBAL (2)');
+  assert.deepEqual(doc.outbounds.find((entry: any) => entry.tag === 'Reserved node picker').outbounds, ['GLOBAL (2)']);
+});

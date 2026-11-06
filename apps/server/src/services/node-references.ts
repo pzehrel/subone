@@ -38,7 +38,7 @@ export function normalizeGroupReferences(group: ProxyGroupItem, config: AppConfi
 export function resolveOutputReferences(nodes: ProxyNode[], groups: ProxyGroupItem[], sources: SubscriptionSource[], client?: ClientType, reservedNames: Iterable<string> = []): { nodes: ProxyNode[]; groups: ProxyGroupItem[]; sources: SubscriptionSource[] } {
   const enabledSources = new Set(sources.filter(source => source.enabled).map(source => source.id));
   const selected = nodes.filter(node => node.enabled !== false && (!node.sourceId || enabledSources.has(node.sourceId)));
-  const used = new Set([...reservedNames, 'DIRECT', 'REJECT', 'direct', 'reject', 'block']);
+  const used = new Set([...reservedNames, ...['direct', 'reject', 'block', 'pass', 'global', 'reject-drop', 'dns-out', 'compatible'].flatMap(name => [name, name.toUpperCase()])]);
   const names = new Map<string, string>();
   const groupNames = new Map<string, string>();
   for (const group of [...groups].sort((a, b) => a.id.localeCompare(b.id))) {
@@ -48,6 +48,7 @@ export function resolveOutputReferences(nodes: ProxyNode[], groups: ProxyGroupIt
     while (used.has(name)) name = `${base} (${suffix++})`;
     used.add(name); groupNames.set(group.id, name);
   }
+  used.add('🎯 本地直连');
   for (const node of [...selected].sort((a, b) => a.id.localeCompare(b.id))) {
     let base = node.name.trim() || `${node.type.toUpperCase()}-${node.server}`;
     if (client && !['singbox', 'mihomo'].includes(client)) base = base.replace(/[=,\r\n]/g, '_');
