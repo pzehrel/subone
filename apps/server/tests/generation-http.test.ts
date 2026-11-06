@@ -178,6 +178,10 @@ test('all six complete outputs share preview and dispatch while unsupported adap
   const a = await addSource('/adapters-a', [{ type: 'https', server: 'dns.adapters-a.example' }], 'node.adapters-a.example');
   const b = await addSource('/adapters-b', [{ type: 'https', server: 'dns.adapters-b.example' }], 'node.adapters-b.example');
   const profile = await profileFor([a, b]);
+  // Native templates retain required definitions; each client gets its own schema.
+  const egernTemplate = (await api('/templates', 'POST', { name: 'Egern dispatch template', type: 'egern', content: 'dns:\n  bootstrap: [127.0.0.1]\nproxies:\n  - socks5: {name: template-direct, server: 192.0.2.90, port: 1080}\npolicy_groups: []\nrules: []\n' })).data;
+  profile.templates = { ...profile.templates, egern: egernTemplate.id };
+  await api(`/profiles/${profile.id}`, 'PUT', { templates: profile.templates });
   for (const target of ['singbox', 'mihomo', 'loon', 'quantumultx', 'egern', 'shadowrocket']) {
     if (target === 'mihomo') {
       const tpl = (await api('/templates', 'POST', { name: 'Mihomo dispatch', type: 'mihomo', content: JSON.stringify({ dns: { enable: true, nameserver: ['127.0.0.1'], 'default-nameserver': ['127.0.0.1'], 'proxy-server-nameserver': ['127.0.0.1'] } }) })).data;
@@ -189,7 +193,10 @@ test('all six complete outputs share preview and dispatch while unsupported adap
     assert.equal(actual.status, 200, target);
     assert.equal(await actual.text(), preview.data, target);
     assert.equal(preview.generation.bindings.length, 2);
-    if (!['singbox', 'mihomo'].includes(target)) {
+    if (target === 'loon') {
+      assert.deepEqual(preview.generation.bindings.map((binding: any) => binding.status), ['degraded', 'degraded']);
+      assert.ok(preview.generation.diagnostics.every((entry: any) => ['loon-doh-transport-unverified', 'loon-doh-bootstrap-unverified'].includes(entry.code)));
+    } else if (!['singbox', 'mihomo'].includes(target)) {
       assert.deepEqual(preview.generation.bindings.map((binding: any) => binding.status), ['unapplied', 'unapplied']);
       assert.deepEqual(preview.generation.diagnostics.map((entry: any) => entry.sourceId), [a.id, b.id]);
       assert.ok(preview.generation.diagnostics.every((entry: any) => entry.code === 'source-doh-unsupported'));

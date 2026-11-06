@@ -105,7 +105,7 @@ function getFallbackTemplate(type: ClientType): string {
     case 'quantumultx':
       return `[general]\nserver_check_url = http://cp.cloudflare.com/generate_204\n\n[dns]\nserver = 223.5.5.5\nserver = 119.29.29.29\n\n[policy]\n\n[server_remote]\n\n[server_local]\n\n[filter_remote]\n\n[filter_local]\nfinal, 🐟 漏网之鱼\n\n[rewrite_remote]\n\n[rewrite_local]\n\n[mitm]\nhostname =\n`;
     case 'egern':
-      return `general:\n  log-level: notify\n\nproxies: []\nproxy-groups: []\nrules:\n  - MATCH,🐟 漏网之鱼\n`;
+      return `dns:\n  bootstrap: [223.5.5.5, 119.29.29.29]\nproxies: []\npolicy_groups: []\nrules:\n  - default:\n      policy: DIRECT\n`;
     case 'shadowrocket':
       return `[General]\nbypass-system = true\n\n[Proxy]\n\n[Proxy Group]\n\n[Rule]\nFINAL,🐟 漏网之鱼\n`;
     default:
@@ -498,6 +498,7 @@ export const FALLBACK_RULES_LIST: UnifiedRuleItem[] = [
     kind: 'remote',
     type: 'RULE-SET',
     payload: 'https://gh-proxy.com/https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs',
+    clientUrls: { egern: 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.json' },
     format: 'binary',
     outbound: '🇨🇳 国内服务',
     enabled: true,
@@ -508,11 +509,18 @@ export const FALLBACK_RULES_LIST: UnifiedRuleItem[] = [
     kind: 'remote',
     type: 'RULE-SET',
     payload: 'https://gh-proxy.com/https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs',
+    clientUrls: { egern: 'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.json' },
     format: 'binary',
     outbound: '🇨🇳 国内服务',
     enabled: true,
   },
 ];
+
+function declaredFactoryRuleUrls(rules: UnifiedRuleItem[]): UnifiedRuleItem[] {
+  // These two new Egern defaults deliberately use a declared alternative CN provider.
+  // This is factory configuration, never a rewrite of stored/user-created rule intent.
+  return rules.map(rule => ({ ...rule, clientUrls: rule.clientUrls ?? FALLBACK_RULES_LIST.find(candidate => candidate.payload === rule.payload)?.clientUrls }));
+}
 
 export function loadDefaultRules(): UnifiedRuleItem[] {
   const candidateNames = [
@@ -530,7 +538,7 @@ export function loadDefaultRules(): UnifiedRuleItem[] {
       try {
         const parsed = JSON.parse(content);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((item, idx) => ({
+          return declaredFactoryRuleUrls(parsed.map((item, idx) => ({
             id: item.id || `r-tpl-${idx}`,
             name: item.name || `规则 ${idx + 1}`,
             kind: item.kind || (item.type === 'RULE-SET' || item.payload?.startsWith('http') ? 'remote' : 'local'),
@@ -539,11 +547,13 @@ export function loadDefaultRules(): UnifiedRuleItem[] {
             format: item.format,
             outbound: item.outbound || '🎯 本地直连',
             enabled: item.enabled !== false,
-          }));
+            clientUrls: item.clientUrls,
+            behavior: item.behavior,
+          })));
         } else if (parsed && typeof parsed === 'object') {
           const list = parsed.rules || parsed.rulesList || parsed.route?.rules;
           if (Array.isArray(list) && list.length > 0) {
-            return parseUnifiedRulesText(JSON.stringify(list));
+            return declaredFactoryRuleUrls(parseUnifiedRulesText(JSON.stringify(list)));
           }
         }
       } catch (err) {
@@ -554,7 +564,7 @@ export function loadDefaultRules(): UnifiedRuleItem[] {
       try {
         const parsed = parseUnifiedRulesText(content);
         if (parsed.length > 0) {
-          return parsed;
+          return declaredFactoryRuleUrls(parsed);
         }
       } catch (err) {
         console.error(`[loadDefaultRules] Failed to parse text rules from ${filePath}:`, err);

@@ -1,17 +1,10 @@
-# Egern 客户端模版示例
-# 节点、策略组与规则由 Subone 运行时自动注入
-
-general:
-  log-level: notify
-
+# Egern 2.21 原生模板；节点、策略组与规则由 SubOne 注入
 dns:
-  nameservers:
+  bootstrap:
     - 223.5.5.5
     - 119.29.29.29
-
 proxies: []
-
-proxy-groups: []
-
+policy_groups: []
 rules:
-  - MATCH,🐟 漏网之鱼
+  - default:
+      policy: DIRECT

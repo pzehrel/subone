@@ -287,7 +287,7 @@ test('info rules immediately reclassify cached nodes and filter every subscripti
 
   for (const target of ['mihomo', 'singbox', 'loon', 'qx', 'egern', 'shadowrocket']) {
     const response = await fetch(`${origin}/s/info-test/${target}?expand=true`);
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 200, await response.clone().text());
     const output = await response.text();
     assert.ok(output.includes('Hong Kong'));
     assert.ok(!output.includes('剩余流量'));
@@ -295,7 +295,7 @@ test('info rules immediately reclassify cached nodes and filter every subscripti
   }
   for (const target of ['mihomo', 'loon', 'qx', 'egern']) {
     const response = await fetch(`${origin}/s/info-test/${target}`);
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 200, await response.clone().text());
     const output = await response.text();
     assert.ok(output.includes(`${origin}/s/info-test/source/airport?target=`));
     assert.ok(!output.includes('expired-subscription'));
@@ -335,7 +335,7 @@ test('profile subscriptions aggregate only selected enabled upstreams for every 
 
   for (const target of ['', '/mihomo', '/singbox', '/loon', '/qx', '/egern', '/shadowrocket', '/shadowrocket?format=base64']) {
     const response = await fetch(`${origin}/s/usage-test${target}`);
-    assert.equal(response.status, 200, target);
+    assert.equal(response.status, 200, `${target}: ${await response.clone().text()}`);
     assert.equal(response.headers.get('subscription-userinfo'), 'upload=2048; download=6144; total=20480; expire=1861920000', target);
     await response.text();
   }
@@ -363,7 +363,7 @@ test('profile subscriptions omit fake traffic when upstream metadata is unavaila
   context.setAppConfig(config);
   for (const target of ['mihomo', 'singbox', 'loon', 'qx', 'egern', 'shadowrocket']) {
     const response = await fetch(`${origin}/s/no-usage/${target}`);
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 200, await response.clone().text());
     assert.equal(response.headers.get('subscription-userinfo'), null);
     await response.text();
   }

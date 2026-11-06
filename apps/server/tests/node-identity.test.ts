@@ -133,9 +133,19 @@ test('disabled nodes and sources are excluded from every effective, preview, pri
   await api(`/nodes/${stopped.id}`, 'PUT', { enabled: false, name: 'Keep setting' });
   const group = (await api('/groups', 'POST', { name: 'Disabled candidates', type: 'select', sources: [created.id], proxies: [`node:${stopped.id}`] })).data;
   const profile = (await api('/profiles', 'POST', { name: 'Disable profile', nodeFilter: { mode: 'all', sourceIds: [created.id] }, selectedGroupIds: [group.id] })).data;
+  const nativeRule = (await api('/rules/unified', 'POST', { name: 'Node isolation rule', kind: 'local', type: 'DOMAIN', payload: 'isolation.example', outbound: 'DIRECT', enabled: true })).data;
+  await api(`/profiles/${profile.id}`, 'PUT', { selectedRuleIds: [nativeRule.id] });
   assert.equal((await api('/nodes')).data.some((n: any) => n.id === stopped.id), false);
   for (const target of ['mihomo', 'singbox', 'loon', 'quantumultx', 'egern', 'shadowrocket']) {
     const preview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: target, expandNodes: true });
+    if (target === 'egern') {
+      // Native Egern keeps explicit required members as repair intent.
+      assert.equal(preview.status, 422);
+      assert.ok(preview.generation.diagnostics.some((entry: any) => entry.code === 'egern-reference-missing'));
+      assert.equal((await fetch(`${origin}/s/${profile.token}/${target}?expand=true`)).status, 422);
+      assert.equal((await fetch(`${origin}/s/${profile.token}/source/${created.id}/${target}`)).status, 422);
+      continue;
+    }
     assert.equal(preview.success, true, preview.message);
     assert.equal(preview.data.includes('stopped.example'), false, target);
     const actual = await fetch(`${origin}/s/${profile.token}/${target}?expand=true`).then(response => response.text());
