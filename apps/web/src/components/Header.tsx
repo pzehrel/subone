@@ -6,12 +6,13 @@ import {
   LayoutDashboard,
   FileCode,
   BookOpen,
+  Server,
 } from 'lucide-react';
 import { SourcesIcon, GroupsIcon, RulesIcon } from './ui/module-icons';
 
 interface HeaderProps {
-  activeTab: 'dashboard' | 'sources' | 'groups' | 'rules' | 'templates';
-  setActiveTab: (tab: 'dashboard' | 'sources' | 'groups' | 'rules' | 'templates') => void;
+  activeTab: 'dashboard' | 'sources' | 'nodes' | 'groups' | 'rules' | 'templates';
+  setActiveTab: (tab: 'dashboard' | 'sources' | 'nodes' | 'groups' | 'rules' | 'templates') => void;
   onOpenSettings: () => void;
   nodeCount: number;
   hasAuth?: boolean;
@@ -29,6 +30,7 @@ export const Header: React.FC<HeaderProps> = ({
   const tabs = [
     { id: 'dashboard', label: '首页', shortLabel: '首页', icon: LayoutDashboard },
     { id: 'sources', label: '上游订阅', shortLabel: '上游订阅', icon: SourcesIcon },
+    { id: 'nodes', label: '节点', shortLabel: '节点', icon: Server },
     { id: 'groups', label: '策略组', shortLabel: '策略组', icon: GroupsIcon },
     { id: 'rules', label: '分流规则', shortLabel: '分流规则', icon: RulesIcon },
     { id: 'templates', label: '配置模版', shortLabel: '配置模版', icon: FileCode },

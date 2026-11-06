@@ -3,6 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { Dashboard } from './components/Dashboard';
 import { SourcesManager } from './components/SourcesManager';
+import { NodesManager } from './components/NodesManager';
+import { SourceRawModal } from './components/SourceRawModal';
 import { GroupsManager } from './components/GroupsManager';
 import { RulesManager } from './components/RulesManager';
 import { TemplateEditor } from './components/TemplateEditor';
@@ -23,11 +25,13 @@ import {
 const API_BASE = '/api';
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'groups' | 'rules' | 'templates'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'sources' | 'nodes' | 'groups' | 'rules' | 'templates'>('dashboard');
 
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
   const [showSettings, setShowSettings] = useState(false);
+  const [focusedSourceId, setFocusedSourceId] = useState<string | null>(null);
+  const [rawSource, setRawSource] = useState<SubscriptionSource | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Authentication State
@@ -80,18 +84,6 @@ export function App() {
       }
     } catch (e: any) {
       console.error('Failed to reload config:', e);
-    }
-  };
-
-  const fetchNodesOnly = async () => {
-    try {
-      const res = await apiFetch(`${API_BASE}/nodes`);
-      if (res.ok) {
-        const nJson = await res.json();
-        setNodes(nJson.data || []);
-      }
-    } catch (e: any) {
-      console.error('Failed to reload nodes:', e);
     }
   };
 
@@ -178,237 +170,55 @@ export function App() {
     return null;
   };
 
-  // Custom Nodes handlers
-  const handleImportCustomNodes = async (text: string, replaceAll?: boolean, targetSourceId?: string) => {
-    try {
-      const res = await apiFetch(`${API_BASE}/custom-nodes/import`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, replaceAll, sourceId: targetSourceId }),
-      });
-      const json = await res.json().catch(() => null);
-      if (!res.ok || (json && json.success === false)) {
-        const msg = json?.message || `导入独立节点失败 (HTTP ${res.status})`;
-        setErrorMsg(msg);
-        throw new Error(msg);
-      }
-
-      if (json?.data) {
-        const targetId = json.sourceId || targetSourceId || 'custom';
-        setConfig(prev => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            sources: (prev.sources || []).map(s => {
-              if (s.id === targetId) {
-                return {
-                  ...s,
-                  nodes: json.data,
-                  nodeCount: json.count ?? json.data.length,
-                };
-              }
-              return s;
-            }),
-            proxyGroups: json.proxyGroups || prev.proxyGroups,
-          };
-        });
-        // Background sync effective nodes without blocking UI
-        fetchNodesOnly();
-      } else {
-        await fetchData();
-      }
-    } catch (err: any) {
-      console.error('handleImportCustomNodes error:', err);
-      throw err;
-    }
-  };
-
-  const handleDeleteCustomNode = async (id: string) => {
-    const res = await apiFetch(`${API_BASE}/custom-nodes/${id}`, { method: 'DELETE' });
+  const handleUpdateNode = async (id: string, updates: { name?: string; enabled?: boolean }) => {
+    const res = await apiFetch(`${API_BASE}/nodes/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
     const json = await res.json().catch(() => null);
     if (!res.ok || json?.success === false) {
-      throw new Error(json?.message || '删除节点失败，请重试');
+      throw new Error(json?.message || '保存本地设置失败');
     }
-
-    // Remove nodes only after the server confirms deletion.
-    setConfig(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        sources: (prev.sources || []).map(s => {
-          if (s.nodes && s.nodes.some(n => n.id === id)) {
-            const nextNodes = (s.nodes || []).filter(n => n.id !== id);
-            return {
-              ...s,
-              nodes: nextNodes,
-              nodeCount: nextNodes.length,
-            };
-          }
-          return s;
-        }),
-      };
-    });
-    setNodes(prev => (prev || []).filter(n => n.id !== id));
-  };
-
-  const handleUpdateCustomNode = async (id: string, updates: Partial<ProxyNode> & { text?: string }) => {
-    // Optimistic UI update
-    setConfig(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        sources: (prev.sources || []).map(s => {
-          if (s.nodes && s.nodes.some(n => n.id === id)) {
-            const nextNodes = s.nodes.map(n => {
-              if (n.id === id) {
-                const nextNode = { ...n, ...updates };
-                if (updates.detour !== undefined && !updates.detour) {
-                  delete nextNode.detour;
-                }
-                return nextNode;
-              }
-              return n;
-            });
-            return {
-              ...s,
-              nodes: nextNodes,
-            };
-          }
-          return s;
-        }),
-      };
-    });
-    setNodes(prev => (prev || []).map(n => {
-      if (n.id === id) {
-        const nextNode = { ...n, ...updates };
-        if (updates.detour !== undefined && !updates.detour) {
-          delete nextNode.detour;
-        }
-        return nextNode;
-      }
-      return n;
-    }));
-
-    try {
-      const res = await apiFetch(`${API_BASE}/custom-nodes/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates),
-      });
-      if (res.ok) {
-        const json = await res.json().catch(() => null);
-        if (json?.data) {
-          const finalNode: ProxyNode = json.data;
-          setConfig(prev => {
-            if (!prev) return prev;
-            return {
-              ...prev,
-              sources: (prev.sources || []).map(s => {
-                if (s.nodes && s.nodes.some(n => n.id === id)) {
-                  return {
-                    ...s,
-                    nodes: s.nodes.map(n => (n.id === id ? finalNode : n)),
-                  };
-                }
-                return s;
-              }),
-            };
-          });
-          setNodes(prev => (prev || []).map(n => (n.id === id ? finalNode : n)));
-        }
-      } else {
-        await fetchData();
-      }
-    } catch (err) {
-      console.error('handleUpdateCustomNode error:', err);
-      await fetchData();
-    }
-  };
-
-  const handleAddCustomGroup = async (name: string) => {
-    try {
-      setErrorMsg(null);
-      const res = await apiFetch(`${API_BASE}/sources`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, type: 'custom', url: '' }),
-      });
-      const json = await res.json().catch(() => null);
-      if (!res.ok || (json && json.success === false)) {
-        const msg = json?.message || `创建节点组失败 (HTTP ${res.status})`;
-        setErrorMsg(msg);
-        alert(msg);
-        return;
-      }
-      await fetchData();
-    } catch (err: any) {
-      console.error('handleAddCustomGroup error:', err);
-      const msg = `创建节点组发生异常: ${err.message || err}`;
-      setErrorMsg(msg);
-      alert(msg);
-    }
+    await fetchData();
   };
 
   const handleRefreshAllSources = async () => {
-    try {
-      setErrorMsg(null);
-      const res = await apiFetch(`${API_BASE}/sources/refresh-all`, { method: 'POST' });
-      if (res.ok) {
-        await fetchData();
-      }
-    } catch (err: any) {
-      console.error('handleRefreshAllSources error:', err);
-    }
+    setErrorMsg(null);
+    const res = await apiFetch(`${API_BASE}/sources/refresh-all`, { method: 'POST' });
+    const json = await res.json().catch(() => null);
+    await fetchData();
+    if (!res.ok) throw new Error(json?.message || '批量上游更新失败');
+    const failures = (json?.results || []).filter((result: { success: boolean }) => !result.success);
+    if (failures.length) throw new Error(`${failures.length} 个上游更新失败`);
+    if (json?.success === false) throw new Error(json?.message || '批量上游更新失败');
   };
 
   // Sources handlers
-  const handleAddSource = async (source: { name: string; url?: string; type: string; filterConfig?: any; trafficNodeRegex?: string; expiryNodeRegex?: string }) => {
-    try {
-      setErrorMsg(null);
-      const res = await apiFetch(`${API_BASE}/sources`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(source),
-      });
-      const json = await res.json().catch(() => null);
-      if (!res.ok || (json && json.success === false)) {
-        const msg = json?.message || `添加订阅失败 (HTTP ${res.status})`;
-        setErrorMsg(msg);
-        alert(msg);
-        return;
-      }
-      await fetchData();
-      if (json && json.count === 0) {
-        setErrorMsg(`订阅【${source.name}】已添加，但当前未解析到有效节点（可能网络暂不可达或格式不匹配）`);
-      }
-    } catch (err: any) {
-      console.error('handleAddSource error:', err);
-      const msg = `添加订阅发生异常: ${err.message || err}`;
-      setErrorMsg(msg);
-      alert(msg);
+  const handleAddSource = async (source: { name: string; url?: string; type: string; trafficNodeRegex?: string; expiryNodeRegex?: string }) => {
+    setErrorMsg(null);
+    const res = await apiFetch(`${API_BASE}/sources`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(source),
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.success === false) {
+      throw new Error(json?.message || `添加订阅失败 (HTTP ${res.status})`);
     }
+    await fetchData();
   };
 
   const handleUpdateSource = async (id: string, updates: Partial<SubscriptionSource>) => {
-    setConfig(prev => prev ? {
-      ...prev,
-      sources: (prev.sources || []).map(s => s.id === id ? { ...s, ...updates } : s),
-    } : prev);
-
-    try {
-      const res = await apiFetch(`${API_BASE}/sources/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates),
-      });
-      if (res.ok) {
-        await fetchData();
-      } else {
-        await fetchConfigOnly();
-      }
-    } catch (err: any) {
-      console.error('handleUpdateSource error:', err);
-      await fetchConfigOnly();
+    const res = await apiFetch(`${API_BASE}/sources/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    const json = await res.json().catch(() => null);
+    await fetchData();
+    if (!res.ok || json?.success === false) {
+      throw new Error(json?.message || '保存订阅失败');
     }
   };
 
@@ -418,26 +228,16 @@ export function App() {
     if (!res.ok || json?.success === false) {
       throw new Error(json?.message || '删除失败，请重试');
     }
-    setConfig(prev => prev ? {
-      ...prev,
-      sources: (prev.sources || []).filter(s => s.id !== id),
-    } : prev);
+    await fetchData();
   };
 
   const handleRefreshSource = async (id: string) => {
-    try {
-      setErrorMsg(null);
-      const res = await apiFetch(`${API_BASE}/sources/${id}/refresh`, { method: 'POST' });
-      const json = await res.json().catch(() => null);
-      if (!res.ok || (json && json.success === false)) {
-        const msg = json?.message || '刷新订阅失败';
-        setErrorMsg(msg);
-        return;
-      }
-      await fetchData();
-    } catch (err: any) {
-      console.error('handleRefreshSource error:', err);
-      setErrorMsg(`刷新订阅发生异常: ${err.message || err}`);
+    setErrorMsg(null);
+    const res = await apiFetch(`${API_BASE}/sources/${id}/refresh`, { method: 'POST' });
+    const json = await res.json().catch(() => null);
+    await fetchData();
+    if (!res.ok || json?.success === false) {
+      throw new Error(json?.message || '上游更新失败');
     }
   };
 
@@ -779,7 +579,7 @@ export function App() {
     <div className="min-h-screen bg-ui-subtle text-ui-text flex flex-col selection:bg-[#E8D7C7] selection:text-ui-text">
       <Header
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={tab => { setFocusedSourceId(null); setActiveTab(tab); }}
         onOpenSettings={() => setShowSettings(true)}
         nodeCount={nodes.length}
         hasAuth={authRequired}
@@ -806,20 +606,24 @@ export function App() {
         {activeTab === 'sources' && (
           <SourcesManager
             sources={config?.sources || []}
-            nodes={nodes}
-            templates={config?.templates || []}
             onAddSource={handleAddSource}
-            onAddCustomGroup={handleAddCustomGroup}
             onUpdateSource={handleUpdateSource}
             onDeleteSource={handleDeleteSource}
             onRefreshSource={handleRefreshSource}
             onRefreshAllSources={handleRefreshAllSources}
-            onImportCustomNodes={handleImportCustomNodes}
-            onUpdateCustomNode={handleUpdateCustomNode}
-            onDeleteCustomNode={handleDeleteCustomNode}
+            onOpenNodes={sourceId => { setFocusedSourceId(sourceId); setActiveTab('nodes'); }}
+            onViewRaw={setRawSource}
           />
         )}
 
+
+        {activeTab === 'nodes' && <NodesManager
+          key={focusedSourceId || 'nodes'}
+          sources={config?.sources || []}
+          focusSourceId={focusedSourceId}
+          onUpdateNode={handleUpdateNode}
+          onRefreshSource={handleRefreshSource}
+        />}
 
         {activeTab === 'groups' && config && (
           <GroupsManager
@@ -862,6 +666,8 @@ export function App() {
         )}
 
       </main>
+
+      <SourceRawModal source={rawSource} onClose={() => setRawSource(null)} />
 
       <Modal
         open={showSettings && !!config}
