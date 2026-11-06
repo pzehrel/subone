@@ -131,7 +131,7 @@ async function handleSourceSubRequest(c: Context, forcedTarget?: ClientType) {
     if (userinfo && plan.ordinaryNodes.some(node => node.sourceId === matchedSource.id)) c.header('subscription-userinfo', userinfo);
     const result = renderSourceGeneration(plan, matchedSource.id);
     c.header('Content-Type', result.contentType);
-    c.header('X-SubOne-Mode', plan.target.mode);
+    c.header('X-SubOne-Mode', 'nodes');
     if (result.generation) {
       c.header('X-SubOne-DoH', result.generation.bindings.map(binding => binding.status).join(','));
       c.header('X-SubOne-Diagnostics', result.generation.diagnostics.map(diagnostic => diagnostic.code).join(','));
