@@ -3,7 +3,6 @@ import { getAppConfig } from '../context';
 import { generateMihomoConfig } from '../core/generators/mihomo-generator';
 import { generateSingboxDocument } from '../core/generators/singbox-generator';
 import { generateLoonConfig, nodeToLoonProxy } from '../core/generators/loon-generator';
-import { generateQuantumultXConfig, nodeToQuantumultXProxy } from '../core/generators/quantumultx-generator';
 import { generateEgernConfig, nodeToEgernProxy } from '../core/generators/egern-generator';
 import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../core/generators/shadowrocket-generator';
 import { getEffectiveNodes, getEffectiveNodesForProfile, getEffectiveGroupsForProfile, getEffectiveRulesForProfile, getEffectiveSourcesForProfile } from './profile-service';
@@ -11,6 +10,7 @@ import { requiresExpandedNodes, resolveOutputReferences, prepareTemplateReferenc
 import { createRuntimeInventory, collectRuntimeDependencies, validateSingboxRuntime } from './generation/runtime-dependencies';
 import { adaptSingboxDns } from './generation/adapters/singbox';
 import { adaptMihomoDns, renderMihomoSource, validateMihomoRuntime } from './generation/adapters/mihomo';
+import { renderQuantumultX, renderQuantumultXSource } from './generation/adapters/quantumultx';
 import { retainTemplateDns } from './generation/adapters/unsupported';
 import { GenerationError, generationMetadata, type GenerationOptions, type GenerationPlan } from './generation/types';
 export { GenerationError } from './generation/types';
@@ -27,7 +27,7 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
   const stableTemplate = (nodes: typeof ordinary, selectedGroups: typeof groups) => resolveTemplateReferences(template, nodes.map(node => ({ ...node, name: nodeReference(node.id) })), selectedGroups.map(group => ({ ...group, name: groupReference(group.id) })));
   const nodeOnly = options.target === 'shadowrocket' && ['base64', 'b64'].includes(options.format || '');
   const plan: GenerationPlan = {
-    target: { type: options.target, ...(options.target === 'singbox' ? { version: '1.14.4' } : options.target === 'mihomo' ? { version: '1.19.33' } : {}), mode: nodeOnly ? 'nodes' : 'complete' },
+    target: { type: options.target, ...(options.target === 'singbox' ? { version: '1.14.4' } : options.target === 'mihomo' ? { version: '1.19.33' } : options.target === 'quantumultx' ? { version: '1.8.1' } : {}), mode: nodeOnly ? 'nodes' : 'complete' },
     templateContent: stableTemplate(ordinary, groups), template, inventory: createRuntimeInventory(config),
     ordinaryNodes: structuredClone(ordinary), dependencyNodes: [], dependencyGroupIds: [], dependencyReasons: [], groups: structuredClone(groups),
     rules: structuredClone(options.profile ? getEffectiveRulesForProfile(options.profile) : config.rulesList),
@@ -106,11 +106,12 @@ export function renderGeneration(input: GenerationPlan) {
     validateMihomoRuntime(document, plan);
     output = yaml.dump(document, { indent: 2, lineWidth: -1, noRefs: true });
     contentType = 'text/yaml; charset=utf-8';
+  } else if (plan.target.type === 'quantumultx') {
+    output = renderQuantumultX(plan);
   } else {
     retainTemplateDns(plan);
     switch (plan.target.type) {
       case 'loon': output = generateLoonConfig(templateContent, nodes, groups, rules, sources, options); break;
-      case 'quantumultx': output = generateQuantumultXConfig(templateContent, nodes, groups, rules, sources, options); break;
       case 'egern': output = generateEgernConfig(templateContent, nodes, groups, rules, sources, options); contentType = 'text/yaml; charset=utf-8'; break;
       case 'shadowrocket': output = generateShadowrocketConfig(templateContent, nodes, groups, rules, sources, options); break;
     }
@@ -126,7 +127,7 @@ export function renderSourceGeneration(plan: GenerationPlan, sourceId: string) {
   switch (plan.target.type) {
     case 'mihomo': return renderMihomoSource(plan, sourceId);
     case 'loon': return { output: ['[Proxy]', ...nodes.map(nodeToLoonProxy)].join('\n'), contentType: 'text/plain; charset=utf-8' };
-    case 'quantumultx': return { output: nodes.map(nodeToQuantumultXProxy).join('\n'), contentType: 'text/plain; charset=utf-8' };
+    case 'quantumultx': return renderQuantumultXSource(plan, sourceId);
     case 'egern': return { output: yaml.dump({ proxies: nodes.map(nodeToEgernProxy) }, { indent: 2, lineWidth: -1 }), contentType: 'text/yaml; charset=utf-8' };
     default: return { output: generateShadowrocketBase64(nodes), contentType: 'text/plain; charset=utf-8' };
   }

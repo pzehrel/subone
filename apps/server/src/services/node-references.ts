@@ -1,4 +1,5 @@
 import yaml from 'js-yaml';
+import { quantumultXOwnedNames, quantumultXReferences } from '../core/quantumultx-config';
 import { mihomoDnsFragment, withMihomoDnsRoute } from '../core/mihomo-dns';
 import type { AppConfig, ClientType, ConfigTemplate, ProxyGroupItem, ProxyNode, SubscriptionSource, TemplateConnectionReference } from '../types';
 
@@ -93,12 +94,14 @@ const stableJson = (value: any): string => JSON.stringify(value, (_key, item) =>
 function templateDocument(template: ConfigTemplate): any {
   try {
     if (template.type === 'singbox') return JSON.parse(template.content);
+    if (template.type === 'quantumultx') return { quantumultxLines: template.content.split('\n') };
     if (['mihomo', 'egern'].includes(template.type)) return yaml.load(template.content);
   } catch { /* Editing an incomplete template must remain possible. */ }
   return undefined;
 }
 
 function ownedOutboundNames(document: any, type: ClientType): Set<string> {
+  if (type === 'quantumultx' && document) return quantumultXOwnedNames(document);
   const entries = type === 'singbox' ? templateArray(document?.outbounds) : [...templateArray(document?.proxies), ...templateArray(document?.['proxy-groups'])];
   return new Set(entries.map((entry: any) => type === 'singbox' ? entry?.tag : entry?.name).filter((name: unknown): name is string => typeof name === 'string'));
 }
@@ -116,6 +119,7 @@ function templateSlots(document: any, type: ClientType): TemplateSlot[] {
   };
   const ownerKey = (entry: any, index: number, name: string) => typeof entry?.[name] === 'string' ? entry[name] : `#${index}`;
   if (!document || typeof document !== 'object') return slots;
+  if (type === 'quantumultx') return quantumultXReferences(document);
   if (type === 'singbox') {
     for (const [index, server] of templateArray(document.dns?.servers).entries()) add(['dns', ownerKey(server, index, 'tag')], server, 'detour');
     for (const [index, outbound] of templateArray(document.outbounds).entries()) {
@@ -206,6 +210,7 @@ export function resolveTemplateReferences(template: ConfigTemplate, nodes: Proxy
     if (name) slot.write(name);
     else if (nodeId || groupId || reference.target.startsWith('unresolved:')) slot.write(reference.target);
   }
+  if (template.type === 'quantumultx') return document.quantumultxLines.join('\n');
   return template.type === 'singbox' ? JSON.stringify(document) : yaml.dump(document, { lineWidth: -1, noRefs: true });
 }
 

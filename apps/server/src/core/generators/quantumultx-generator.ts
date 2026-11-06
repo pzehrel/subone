@@ -1,3 +1,4 @@
+import { quantumultXOwnedNames, quantumultXEntries } from '../quantumultx-config';
 import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
 import { resolveGroupNodes } from './group-nodes';
 import { UnsupportedProxyGroupError } from './errors';
@@ -220,9 +221,7 @@ export function generateQuantumultXConfig(
       inServerLocal = false;
     }
 
-    if (!inServerLocal) {
-      resultLines.push(rawLine);
-    }
+    resultLines.push(rawLine);
   }
 
   if (!serverLocalWritten && generatedProxyLines.length > 0) {
@@ -239,7 +238,7 @@ export function isSupportedByQuantumultX(node: ProxyNode): boolean {
   if (node.type === 'anytls') return true;
   if (node.type === 'vless') return true;
   if (node.type === 'trojan') return true;
-  if (node.type === 'ss') return true;
+  if (node.type === 'ss' || node.type === 'ssr') return true;
   if (node.type === 'vmess') return true;
   if (node.type === 'socks5') return true;
   if (node.type === 'http') return true;
@@ -321,7 +320,10 @@ export function injectUnifiedToQuantumultX(
     networkSources.forEach(s => {
       const tag = s.name.replace(/[=,]/g, '_').trim();
       const iconUrl = resolveGroupIcon(s.name) || `${DEFAULT_QX_ICON_BASE}/Airport.png`;
-      serverRemoteLines.push(`${sourceSubscriptionUrl(s, 'quantumultx', options)}, tag=${tag}, update-interval=86400, opt-parser=false, img-url=${iconUrl}`);
+      const url = options?.baseUrl && options?.subToken
+        ? `${options.baseUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(options.subToken)}/source/${encodeURIComponent(s.id)}?target=quantumultx`
+        : sourceSubscriptionUrl(s, 'quantumultx', options);
+      serverRemoteLines.push(`${url}, tag=${tag}, update-interval=86400, opt-parser=false, img-url=${iconUrl}`);
       allActiveRemoteSources.push(s);
     });
 
@@ -366,9 +368,10 @@ export function injectUnifiedToQuantumultX(
   });
 
   // 2. Build [policy]
-  const validGroupNames = new Set(effectiveGroups.map(g => g.name));
+  const nativeNames = quantumultXOwnedNames({ quantumultxLines: lines });
+  const validGroupNames = new Set([...nativeNames, ...effectiveGroups.map(g => g.name)]);
   const supportedNodeNames = new Set(allNodeNames);
-  const validNodeNames = new Set(allNodeNames);
+  const validNodeNames = new Set([...nativeNames, ...allNodeNames]);
   sources.forEach(s => {
     if (Array.isArray(s.nodes)) {
       s.nodes.forEach(n => validNodeNames.add(n.name.replace(/[=,]/g, '_')));
@@ -393,7 +396,7 @@ export function injectUnifiedToQuantumultX(
     if (grp.type === 'relay') {
       throw new UnsupportedProxyGroupError('Quantumult X', grp.name);
     }
-    if (grp.includeAll) {
+    if (grp.includeAll || ((grp.sources || grp.use || []).length > 0 && !['direct', 'reject'].includes(grp.type))) {
       const groupType = grp.type === 'load-balance'
         ? (grp.strategy === 'consistent-hashing' ? 'dest-hash' : 'round-robin')
         : grp.type === 'urltest' ? 'url-latency-benchmark' : grp.type === 'fallback' ? 'available' : 'static';
@@ -625,7 +628,7 @@ export function injectUnifiedToQuantumultX(
   });
 
   // 3. Build [filter_remote]
-  const availableGroupNames = new Set(effectiveGroups.map(g => g.name));
+  const availableGroupNames = new Set([...nativeNames, ...allNodeNames, ...effectiveGroups.map(g => g.name)]);
   const fallbackGroup = effectiveGroups.find(g => g.name === '🚀 节点选择')?.name || effectiveGroups[0]?.name || 'direct';
 
   const remoteRuleLines: string[] = [];
@@ -687,7 +690,8 @@ export function injectUnifiedToQuantumultX(
   const finalOut = rawFinalTarget === '🎯 本地直连' || rawFinalTarget.toUpperCase() === 'DIRECT'
     ? 'direct'
     : (rawFinalTarget.toUpperCase() === 'REJECT' ? 'reject' : rawFinalTarget);
-  localRuleLines.push(`final, ${finalOut}`);
+  const nativeFinal = quantumultXEntries({ quantumultxLines: lines }).find(entry => entry.section === 'filter_local' && /^final\s*(?:=|$)/i.test(entry.parts[0].trim()));
+  const finalLine = !finalRule && nativeFinal ? lines[nativeFinal.index] : `final, ${finalOut}`;
 
   // 5. Assemble config
   const result: string[] = [];
@@ -696,9 +700,11 @@ export function injectUnifiedToQuantumultX(
   let hasHandledFilterRemote = false;
   let hasHandledFilterLocal = false;
 
+  let inFilterLocal = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmed = line.trim().toLowerCase();
+    if (trimmed.startsWith('[') && inFilterLocal) { result.push(finalLine); inFilterLocal = false; }
 
     // Ignore hardcoded final lines from template to prevent duplicate final entries
     if (trimmed.startsWith('final=') || trimmed.startsWith('final,') || trimmed === 'final') {
@@ -727,7 +733,7 @@ export function injectUnifiedToQuantumultX(
     }
 
     if (trimmed === '[filter_local]') {
-      hasHandledFilterLocal = true;
+      hasHandledFilterLocal = true; inFilterLocal = true;
       result.push(line);
       result.push(...localRuleLines);
       continue;
@@ -736,6 +742,7 @@ export function injectUnifiedToQuantumultX(
     result.push(line);
   }
 
+  if (inFilterLocal) result.push(finalLine);
   if (!hasHandledServerRemote) {
     result.push('\n[server_remote]');
     if (serverRemoteLines.length > 0) result.push(...serverRemoteLines);
@@ -751,6 +758,7 @@ export function injectUnifiedToQuantumultX(
   if (!hasHandledFilterLocal) {
     result.push('\n[filter_local]');
     if (localRuleLines.length > 0) result.push(...localRuleLines);
+    result.push(finalLine);
   }
 
   // Ensure mandatory Quantumult X sections exist to prevent "配置文件缺少模块" errors
