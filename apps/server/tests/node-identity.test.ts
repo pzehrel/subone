@@ -116,7 +116,8 @@ test('stable profile and explicit group references follow local and upstream ren
   const group = await api('/groups', 'POST', { name: 'Pinned members', type: 'select', proxies: ['Alpha', 'Beta'] });
   assert.equal(group.success, true);
   assert.deepEqual(group.data.proxies, [`node:${alpha.id}`, `node:${beta.id}`]);
-  const profile = (await api('/profiles', 'POST', { name: 'Pinned profile', nodeFilter: { mode: 'all', selectedNodeIds: [alpha.id, beta.id] }, selectedGroupIds: [group.data.id] })).data;
+  const template = (await api('/templates', 'POST', { name: 'Pinned identity', type: 'mihomo', content: yaml.dump({ proxies: [], 'proxy-groups': [], rules: ['MATCH,Pinned members'] }) })).data;
+  const profile = (await api('/profiles', 'POST', { name: 'Pinned profile', nodeFilter: { mode: 'all', selectedNodeIds: [alpha.id, beta.id] }, selectedGroupIds: [group.data.id], templates: { mihomo: template.id } })).data;
   await api(`/nodes/${alpha.id}`, 'PUT', { name: 'My alpha' });
   bodies.set('/references', clash([ss('Beta upstream', 'beta.example'), ss('Alpha upstream', 'alpha.example')]));
   await api(`/sources/${created.id}/refresh`, 'POST', {});
@@ -134,7 +135,16 @@ test('disabled nodes and sources are excluded from every effective, preview, pri
   const group = (await api('/groups', 'POST', { name: 'Disabled candidates', type: 'select', sources: [created.id], proxies: [`node:${stopped.id}`] })).data;
   const profile = (await api('/profiles', 'POST', { name: 'Disable profile', nodeFilter: { mode: 'all', sourceIds: [created.id] }, selectedGroupIds: [group.id] })).data;
   const nativeRule = (await api('/rules/unified', 'POST', { name: 'Node isolation rule', kind: 'local', type: 'DOMAIN', payload: 'isolation.example', outbound: 'DIRECT', enabled: true })).data;
-  await api(`/profiles/${profile.id}`, 'PUT', { selectedRuleIds: [nativeRule.id] });
+  const templates: Record<string, string> = {};
+  for (const [type, content] of Object.entries({
+    singbox: JSON.stringify({ outbounds: [{ type: 'direct', tag: 'DIRECT' }], route: { final: 'DIRECT' } }),
+    mihomo: 'proxies: []\nproxy-groups: []\nrules: ["MATCH,DIRECT"]\n',
+    loon: '[General]\ndns-server = system\n[Proxy]\n[Proxy Group]\n[Rule]\nFINAL,DIRECT\n',
+    quantumultx: '[general]\n[dns]\n[server_local]\n[policy]\n[filter_local]\nfinal,direct\n',
+    egern: 'proxies: []\npolicy_groups: []\nrules:\n  - default: {policy: DIRECT}\n',
+    shadowrocket: '[General]\ndns-server = system\n[Proxy]\n[Proxy Group]\n[Rule]\nFINAL,DIRECT\n',
+  })) templates[type] = (await api('/templates', 'POST', { name: `Disabled identity ${type}`, type, content })).data.id;
+  await api(`/profiles/${profile.id}`, 'PUT', { selectedRuleIds: [nativeRule.id], templates });
   assert.equal((await api('/nodes')).data.some((n: any) => n.id === stopped.id), false);
   for (const target of ['mihomo', 'singbox', 'loon', 'quantumultx', 'egern', 'shadowrocket']) {
     const preview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: target, expandNodes: true });
@@ -154,22 +164,24 @@ test('disabled nodes and sources are excluded from every effective, preview, pri
       assert.ok(preview.generation.diagnostics.some((entry: any) => entry.code === (target === 'egern' ? 'egern-reference-missing' : 'quantumultx-reference-missing')));
       assert.equal((await fetch(`${origin}/s/${profile.token}/${target}?expand=true`)).status, 422);
       const provider = await fetch(`${origin}/s/${profile.token}/source/${created.id}/${target}`);
-      assert.equal(provider.status, target === 'egern' ? 422 : 200);
+      assert.equal(provider.status, 200);
       assert.equal((await provider.text()).includes('stopped.example'), false);
       continue;
     }
-    assert.equal(preview.success, true, preview.message);
-    assert.equal(preview.data.includes('stopped.example'), false, target);
-    const actual = await fetch(`${origin}/s/${profile.token}/${target}?expand=true`).then(response => response.text());
-    assert.equal(actual.includes('stopped.example'), false, target);
-    const provider = await fetch(`${origin}/s/${profile.token}/source/${created.id}/${target}`).then(response => response.text());
-    assert.equal(provider.includes('stopped.example'), false, `${target} provider`);
+    assert.equal(preview.status, 422, JSON.stringify(preview));
+    assert.ok(preview.generation.diagnostics.some((entry: any) => entry.severity === 'error'));
+    assert.equal(preview.generation.dependencyNodeCount, 0);
+    const actual = await fetch(`${origin}/s/${profile.token}/${target}?expand=true`); assert.equal(actual.status, 422);
+    const provider = await fetch(`${origin}/s/${profile.token}/source/${created.id}/${target}`);
+    assert.equal(provider.status, 200);
+    assert.equal((await provider.text()).includes('stopped.example'), false, `${target} provider`);
   }
   const savedNodes = (await source(created.id)).nodes;
   await api(`/sources/${created.id}`, 'PUT', { enabled: false });
   assert.deepEqual((await source(created.id)).nodes, savedNodes);
   assert.equal((await api('/nodes')).data.some((n: any) => n.sourceId === created.id), false);
-  assert.equal((await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'mihomo', expandNodes: true })).nodeCount, 0);
+  const disabledSource = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'mihomo', expandNodes: true });
+  assert.equal(disabledSource.status, 422); assert.equal(disabledSource.generation.nodeCount, 0);
   assert.equal((await fetch(`${origin}/s/${profile.token}/source/${created.id}/mihomo`)).status, 404);
   await api(`/sources/${created.id}`, 'PUT', { enabled: true });
   assert.deepEqual((await source(created.id)).nodes, savedNodes);
@@ -180,8 +192,10 @@ test('source removal clears owned records and stable selections without retarget
   const survivor = await add('/delete-survivor', clash([ss('Owned', 'survivor.example')]));
   const node = removed.nodes[0];
   const group = (await api('/groups', 'POST', { name: 'Owned reference', type: 'select', proxies: [`node:${node.id}`], sources: [removed.id] })).data;
-  const profile = (await api('/profiles', 'POST', { name: 'Owned selection', nodeFilter: { mode: 'all', selectedNodeIds: [node.id] }, selectedGroupIds: [group.id] })).data;
-  const sourceProfile = (await api('/profiles', 'POST', { name: 'Owned source selection', nodeFilter: { mode: 'all', sourceIds: [removed.id] } })).data;
+  const safe = (await api('/groups', 'POST', { name: 'Owned source isolation', type: 'select', proxies: ['DIRECT'] })).data;
+  const template = (await api('/templates', 'POST', { name: 'Owned removal identity', type: 'mihomo', content: 'proxies: []\nproxy-groups: []\nrules: ["MATCH,DIRECT"]\n' })).data;
+  const profile = (await api('/profiles', 'POST', { name: 'Owned selection', nodeFilter: { mode: 'all', selectedNodeIds: [node.id] }, selectedGroupIds: [group.id], templates: { mihomo: template.id } })).data;
+  const sourceProfile = (await api('/profiles', 'POST', { name: 'Owned source selection', nodeFilter: { mode: 'all', sourceIds: [removed.id] }, selectedGroupIds: [safe.id], templates: { mihomo: template.id } })).data;
   await api(`/nodes/${node.id}`, 'PUT', { name: 'Owned local', enabled: false });
   const beforeRaw = (await api(`/sources/${removed.id}/raw`)).data;
   assert.equal((await api(`/nodes/${node.id}`, 'PUT', { server: 'mutated.example' })).status, 400);
@@ -197,8 +211,15 @@ test('source removal clears owned records and stable selections without retarget
   assert.equal(config.profiles.find((p: any) => p.id === profile.id).nodeFilter.selectedNodeIds.includes(node.id), false);
   for (const selected of [profile, sourceProfile]) {
     const preview = await api('/generate/preview', 'POST', { profileId: selected.id, customType: 'mihomo', expandNodes: true });
-    assert.equal(preview.nodeCount, 0);
-    assert.equal(preview.data.includes('survivor.example'), false);
+    if (selected.id === profile.id) {
+      assert.equal(preview.status, 422, JSON.stringify(preview));
+      assert.equal(preview.generation.nodeCount, 0);
+      assert.match(preview.generation.diagnostics.at(-1).message, /unresolved:Owned local/);
+    } else {
+      assert.equal(preview.success, true, JSON.stringify(preview));
+      assert.equal(preview.nodeCount, 0);
+      assert.equal(preview.data.includes('survivor.example'), false);
+    }
   }
   await stopApp(); await startApp();
   assert.equal(await source(removed.id), undefined);
@@ -243,8 +264,10 @@ test('source-local node chains retain stable targets through upstream and local 
   assert.deepEqual(updated.nodes.map((n: any) => n.id), [entry.id, exit.id]);
   assert.equal(updated.nodes[1].detourRef, `node:${entry.id}`);
   assert.equal(updated.nodes[1].raw.detour, 'Entry upstream');
-  const profile = (await api('/profiles', 'POST', { name: 'Chain', nodeFilter: { mode: 'all', sourceIds: [initial.id] } })).data;
+  const safe = (await api('/groups', 'POST', { name: 'Chain identity isolation', type: 'select', proxies: ['DIRECT'] })).data;
+  const profile = (await api('/profiles', 'POST', { name: 'Chain', nodeFilter: { mode: 'all', sourceIds: [initial.id] }, selectedGroupIds: [safe.id] })).data;
   const preview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'singbox', customTemplate: '{"outbounds":[]}' });
+  assert.equal(preview.success, true, JSON.stringify(preview));
   const generated = JSON.parse(preview.data);
   assert.equal(generated.outbounds.find((outbound: any) => outbound.tag === 'My exit').detour, 'My entry');
   assert.equal((await api(`/sources/${initial.id}/raw`)).data.content, outbounds('Entry upstream', 'Exit upstream'));
@@ -274,7 +297,9 @@ test('successful upstream removal clears references and a returning connection s
   const created = await add('/returning', clash([ss('Returning', 'returning.example')]));
   const old = created.nodes[0];
   await api(`/nodes/${old.id}`, 'PUT', { name: 'Old setting', enabled: false });
-  const profile = (await api('/profiles', 'POST', { name: 'Returning selected', nodeFilter: { selectedNodeIds: [old.id] } })).data;
+  const safe = (await api('/groups', 'POST', { name: 'Returning identity isolation', type: 'select', proxies: ['DIRECT'] })).data;
+  const template = (await api('/templates', 'POST', { name: 'Returning identity', type: 'mihomo', content: 'proxies: []\nproxy-groups: []\nrules: ["MATCH,DIRECT"]\n' })).data;
+  const profile = (await api('/profiles', 'POST', { name: 'Returning selected', nodeFilter: { selectedNodeIds: [old.id] }, selectedGroupIds: [safe.id], templates: { mihomo: template.id } })).data;
   bodies.set('/returning', 'proxies: []');
   await api(`/sources/${created.id}/refresh`, 'POST', {});
   assert.deepEqual((await source(created.id)).nodes, []);

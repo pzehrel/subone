@@ -1,31 +1,16 @@
-import { Input } from './ui/Input';
-import { Textarea } from './ui/Textarea';
-import { Select, SelectItem } from './ui/Select';
-import { Field, Label } from './ui/Field';
-import { Badge } from './ui/Badge';
-import { GroupsIcon } from './ui/module-icons';
-import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
-import React, { useState } from 'react';
-import {
-  Check,
-  Code,
-  Edit2,
-  Globe,
-  Plus,
-  Trash2,
-  X,
-  Zap,
-  Tag,
-  ArrowLeft,
-  ArrowRight,
-  Link2,
-  ChevronDown,
-  ChevronUp,
-  Server,
-  Eye,
-} from 'lucide-react';
+import { useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, Check, ChevronRight, Code, Edit2, Plus, Trash2, X } from 'lucide-react';
 import * as yaml from 'js-yaml';
-import { ProxyGroupItem, SubscriptionSource, ProxyNode, SourceIconsConfig } from '../types';
+import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
+import { Badge } from './ui/Badge';
+import { Field, Label } from './ui/Field';
+import { Input } from './ui/Input';
+import { Popconfirm } from './ui/Popconfirm';
+import { Select, SelectItem } from './ui/Select';
+import { Table, TableCell, TableHead } from './ui/Table';
+import { Textarea } from './ui/Textarea';
+import { GroupsIcon } from './ui/module-icons';
+import type { ProxyGroupItem, ProxyNode, SourceIconsConfig, SubscriptionSource } from '../types';
 
 interface GroupsManagerProps {
   groups: ProxyGroupItem[];
@@ -38,916 +23,266 @@ interface GroupsManagerProps {
   onBatchImportGroups: (text: string, replaceAll?: boolean) => Promise<void>;
 }
 
-export const cleanName = (name: string, icons?: SourceIconsConfig) => {
-  if (!name) return '';
-  let cleaned = name;
-  if (icons) {
-    for (const icon of [icons.custom, icons.filter, icons.remote]) {
-      if (icon && cleaned.startsWith(icon)) {
-        cleaned = cleaned.slice(icon.length).trim();
-      }
-    }
-  }
-  return cleaned.replace(/^[\p{Extended_Pictographic}\uFE0F\u200D\s]+/u, '').trim();
+const panel = 'bg-ui-surface border border-ui-border rounded-2xl shadow-2xs';
+const iconButton = 'p-1.5 text-ui-muted hover:text-ui-text hover:bg-ui-hover/60 rounded-lg transition-colors cursor-pointer';
+const typeLabels: Record<ProxyGroupItem['type'], string> = {
+  select: 'select', urltest: 'url-test', fallback: 'fallback', 'load-balance': 'load-balance', relay: 'relay', direct: 'direct', reject: 'reject',
+};
+const initialForm: Partial<ProxyGroupItem> = {
+  name: '', type: 'select', proxies: [], use: [], sources: [], filter: '',
+  tolerance: 50, url: 'https://www.google.com/generate_204', interval: 300,
 };
 
-export const getSourcePrefix = (
-  s: { id?: string; type?: string },
-  icons?: SourceIconsConfig
-) => {
-  const customIcon = icons?.custom || '🖥️';
-  const filterIcon = icons?.filter || '✨';
-  const remoteIcon = icons?.remote || '⚡️';
-  if (s.id === 'custom' || s.type === 'custom') return customIcon;
-  if (s.type === 'filter') return filterIcon;
-  return remoteIcon;
+const cleanName = (name: string, icons?: SourceIconsConfig) => {
+  let value = name;
+  for (const icon of [icons?.custom, icons?.filter, icons?.remote]) {
+    if (icon && value.startsWith(icon)) value = value.slice(icon.length).trim();
+  }
+  return value.replace(/^[\p{Extended_Pictographic}\uFE0F\u200D\s]+/u, '').trim().toLowerCase();
 };
 
-export const getSourceTag = (s: SubscriptionSource, icons?: SourceIconsConfig) => {
-  const isCustom = s.id === 'custom' || s.type === 'custom';
-  const label = cleanName(s.name, icons) || (isCustom ? '独立节点组' : s.name);
-  const prefix = getSourcePrefix(s, icons);
-  return `${prefix} ${label}`;
-};
-
-export function resolveNodesForGroup(
-  group: ProxyGroupItem,
-  allNodes: ProxyNode[] = [],
-  sources: SubscriptionSource[] = [],
-  icons?: SourceIconsConfig
-): ProxyNode[] {
-  if (!allNodes || allNodes.length === 0) return [];
-
-  // 1. Determine candidate nodes based on group.sources / group.use
-  let candidateNodes = allNodes;
-  const targetSources = (group.sources && group.sources.length > 0)
-    ? group.sources
-    : (group.use && group.use.length > 0 ? group.use : []);
-
-  if (targetSources.length > 0) {
-    const targetNormalized = new Set(targetSources.map(s => cleanName(s, icons).toLowerCase()));
-    candidateNodes = allNodes.filter(n => {
-      const srcName = cleanName(n.sourceName || '', icons).toLowerCase();
-      const srcId = (n.sourceId || '').trim().toLowerCase();
-      return targetNormalized.has(srcName) || targetNormalized.has(srcId) ||
-        (srcId === 'custom' && (targetNormalized.has('自建节点') || targetNormalized.has('独立节点组') || targetNormalized.has('手工自建')));
-    });
-  }
-
-  // 2. If filter regex is defined, filter candidateNodes
-  if (group.filter) {
-    const cleanRegex = group.filter.replace(/^\(\?i\)/, '');
-    try {
-      const reg = new RegExp(cleanRegex, 'i');
-      return candidateNodes.filter(n => reg.test(n.name));
-    } catch {
-      return [];
-    }
-  }
-
-  // 3. Match group name to source name (e.g. group named "✨ HK优选" or "🖥️ 独立节点组")
-  if (targetSources.length === 0) {
-    const cleanGroupName = cleanName(group.name, icons).toLowerCase();
-    const matchedSource = sources.find(
-      s => cleanName(s.name, icons).toLowerCase() === cleanGroupName ||
-        (s.id === 'custom' && (cleanGroupName === '自建节点' || cleanGroupName === '独立节点组' || cleanGroupName === '手工自建' || cleanGroupName === 'custom' || cleanName(s.name, icons).toLowerCase() === cleanGroupName))
-    );
-    if (matchedSource) {
-      if (Array.isArray(matchedSource.nodes) && matchedSource.nodes.length > 0) {
-        return matchedSource.nodes;
-      }
-      return allNodes.filter(n => n.sourceId === matchedSource.id || n.sourceName === matchedSource.name);
-    }
-  }
-
-  // 4. Global aggregated groups
-  if (group.name === '♻️ 自动选择' || group.name === '👉 手动选择') {
-    return allNodes;
-  }
-
-  // 5. If proxies are explicitly listed, check if they refer directly to specific node names
-  if (group.proxies && group.proxies.length > 0) {
-    const proxySet = new Set(group.proxies.map(p => p.trim().toLowerCase()));
-    const directMatches = allNodes.filter(n => proxySet.has(n.name.trim().toLowerCase()));
-    if (directMatches.length > 0) return directMatches;
-  }
-
-  return candidateNodes;
-}
-
-export const GroupsManager: React.FC<GroupsManagerProps> = ({
-  groups,
-  sources = [],
-  nodes = [],
-  sourceIcons,
-  onAddGroup,
-  onUpdateGroup,
-  onDeleteGroup,
-  onBatchImportGroups,
-}) => {
-  const [editingGroup, setEditingGroup] = useState<ProxyGroupItem | null>(null);
-  const [isAdding, setIsAdding] = useState(false);
-  const [showYamlModal, setShowYamlModal] = useState(false);
+export function GroupsManager({ groups, sources = [], nodes = [], sourceIcons, onAddGroup, onUpdateGroup, onDeleteGroup, onBatchImportGroups }: GroupsManagerProps) {
+  const [editor, setEditor] = useState<ProxyGroupItem | 'new' | null>(null);
+  const [form, setForm] = useState<Partial<ProxyGroupItem>>(initialForm);
+  const [formError, setFormError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const savePending = useRef(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [yamlOpen, setYamlOpen] = useState(false);
   const [yamlText, setYamlText] = useState('');
-  const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
-
-  const [formData, setFormData] = useState<Partial<ProxyGroupItem>>({
-    name: '',
-    type: 'select',
-    proxies: ['🚀 节点选择', '🎯 本地直连'],
-    use: [],
-    filter: '',
-    tolerance: 50,
-    url: 'https://www.google.com/generate_204',
-    interval: 300,
+  const [yamlError, setYamlError] = useState('');
+  const [yamlSaving, setYamlSaving] = useState(false);
+  const yamlPending = useRef(false);
+  const preview = groups.find(group => group.id === previewId);
+  const sourceFor = (value: string) => sources.find(source => source.id === value)
+    || sources.find(source => source.name === value);
+  const activeNodes = nodes.filter(node => node.enabled !== false && sources.some(source => source.id === node.sourceId && source.enabled));
+  const savedNodes = new Map(sources.flatMap(source => [...(source.nodes || []), ...(source.infoNodes || [])]).map(node => [node.id, node]));
+  activeNodes.forEach(node => savedNodes.set(node.id, node));
+  const activeIds = new Set(activeNodes.map(node => node.id));
+  const nodeLabel = (node: ProxyNode) => {
+    const source = sources.find(source => source.id === node.sourceId);
+    return `${node.name} · ${source?.name || node.sourceName || node.sourceId || '未知来源'}`;
+  };
+  const outbound = (value: string) => {
+    if (value.startsWith('node:')) {
+      const node = savedNodes.get(value.slice(5));
+      return { value, label: node ? nodeLabel(node) : value, available: !!node && activeIds.has(node.id), kind: 'node' };
+    }
+    const group = value.startsWith('group:') ? groups.find(group => group.id === value.slice(6)) : groups.find(group => group.name === value);
+    if (group) return { value, label: group.name, available: true, kind: 'group' };
+    const builtin = /^(direct|reject|block|pass|global|reject-drop|compatible|🎯 本地直连)$/i.test(value);
+    return { value, label: value, available: builtin, kind: builtin ? 'builtin' : 'unavailable' };
+  };
+  const outboundKey = (value: string) => {
+    const group = value.startsWith('group:') ? groups.find(group => group.id === value.slice(6)) : groups.find(group => group.name === value);
+    return group ? `group:${group.id}` : /^(direct|reject)$/i.test(value) ? value.toUpperCase() : value;
+  };
+  const candidates = [
+    ...groups.filter(group => editor === 'new' || group.id !== editor?.id).map(group => ({ value: `group:${group.id}`, label: group.name })),
+    ...['DIRECT', 'REJECT'].map(value => ({ value, label: value })),
+    ...activeNodes.map(node => ({ value: `node:${node.id}`, label: nodeLabel(node) })),
+  ];
+  const isTerminal = (group: ProxyGroupItem) => group.type === 'direct' || group.type === 'reject';
+  const implicitSource = (group: ProxyGroupItem) => sources.find(source => cleanName(source.name, sourceIcons) === cleanName(group.name, sourceIcons));
+  const matchesNodeSource = (group: ProxyGroupItem) => !isTerminal(group) && (!!(group.sources ?? group.use)?.length || !!group.filter || !!group.includeAll || !!implicitSource(group) || ['♻️ 自动选择', '👉 手动选择'].includes(group.name));
+  // This preview shows direct active matches. Referenced groups are never expanded here.
+  const matchedNodes = (group: ProxyGroupItem) => {
+    if (isTerminal(group)) return [];
+    const mounts = group.sources ?? group.use ?? [];
+    const selectedSources = new Set(mounts.map(value => sourceFor(value)?.id).filter(Boolean));
+    const implicit = implicitSource(group);
+    let dynamic = matchesNodeSource(group) ? activeNodes : [];
+    if (mounts.length) dynamic = dynamic.filter(node => selectedSources.has(node.sourceId));
+    else if (implicit && !group.filter && !group.includeAll) dynamic = dynamic.filter(node => node.sourceId === implicit.id);
+    if (group.filter) {
+      try {
+        const regex = new RegExp(group.filter.replace(/\(\?i\)/g, ''), 'i');
+        dynamic = dynamic.filter(node => regex.test(node.name));
+      } catch { dynamic = []; }
+    }
+    const explicit = new Set((group.proxies || []).filter(value => value.startsWith('node:')).map(value => value.slice(5)));
+    const dynamicIds = new Set(dynamic.map(node => node.id));
+    return activeNodes.filter(node => explicit.has(node.id) || dynamicIds.has(node.id));
+  };
+  const sourceNames = (group: ProxyGroupItem) => (group.sources ?? group.use ?? []).map(value => {
+    const source = sourceFor(value);
+    return `${source?.name || value}${source?.enabled ? '' : ' · 不可用'}`;
   });
-
-  const customNodes = nodes.filter(n => n.sourceId === 'custom' || !n.sourceId);
-  const customSrc = sources.find(s => s.id === 'custom' || s.type === 'custom');
-  const customSourceName = cleanName(customSrc?.name || '独立节点组', sourceIcons);
-  const customSourceTag = `${sourceIcons?.custom || '🖥️'} ${customSourceName}`;
-
-  const standardOutbounds = ['🚀 节点选择', '🎯 本地直连', '♻️ 自动选择', '👉 手动选择'];
-  const groupOutbounds = groups.map(g => g.name);
-
-  const allCandidateOutbounds = Array.from(new Set([
-    ...standardOutbounds,
-    ...groupOutbounds,
-  ]));
-
-  const isProxyValid = (proxyName: string): boolean => {
-    if (!proxyName || !proxyName.trim()) return false;
-    if (allCandidateOutbounds.includes(proxyName)) return true;
-    const clean = proxyName.trim().toLowerCase();
-    if (['direct', 'reject', 'pass', 'compatible', 'global', '🎯 本地直连'].includes(clean)) return true;
-    return nodes.some(n => n.name.trim().toLowerCase() === clean);
-  };
-
-  const isSourceValid = (sourceName: string): boolean => {
-    if (!sourceName || !sourceName.trim()) return false;
-    const clean = cleanName(sourceName, sourceIcons).toLowerCase();
-    const raw = sourceName.trim().toLowerCase();
-    return sources.some(s => {
-      const sId = (s.id || '').trim().toLowerCase();
-      const sName = (s.name || '').trim().toLowerCase();
-      const sClean = cleanName(s.name, sourceIcons).toLowerCase();
-      return sId === raw || sName === raw || sClean === clean || sId === clean;
-    });
-  };
-
-  const hasCustomGroup = groups.some(g => {
-    const clean = cleanName(g.name, sourceIcons).toLowerCase();
-    return clean === customSourceName.toLowerCase() || clean === '自建节点' || clean === '独立节点组' || clean === '手工自建' || clean === 'custom' || g.id === 'grp-src-custom';
-  });
-
-  const handleAddCustomGroup = async () => {
-    await onAddGroup({
-      name: customSourceTag,
-      type: 'select',
-      use: [customSourceName],
-    });
-  };
-
-  const handleOpenAdd = () => {
-    setFormData({
-      name: '',
-      type: 'select',
-      proxies: ['🚀 节点选择', '🎯 本地直连'],
-      use: [],
-      filter: '',
-      tolerance: 50,
-      url: 'https://www.google.com/generate_204',
-      interval: 300,
-    });
-    setIsAdding(true);
-  };
-
-  const handleOpenEdit = (group: ProxyGroupItem) => {
-    setEditingGroup(group);
-    // 静默过滤已失效或已不存在的虚假/残留项，不打扰用户
-    const validProxies = (group.proxies || []).filter(isProxyValid);
-    const rawSources = group.sources || group.use || [];
-    const validSources = rawSources.filter(isSourceValid);
-    setFormData({
-      ...group,
-      proxies: validProxies,
-      sources: validSources,
-      use: validSources,
-    });
-  };
-
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.name?.trim()) return;
-
-    // 保存时自动清洗，剔除无效项
-    const cleanProxies = (formData.proxies || []).filter(isProxyValid);
-    const rawSources = formData.sources || formData.use || [];
-    const cleanSources = rawSources.filter(isSourceValid);
-
-    const payload = {
-      ...formData,
-      name: formData.name.trim(),
-      proxies: cleanProxies,
-      sources: cleanSources,
-      use: cleanSources,
-      filter: formData.filter?.trim() || '',
-    };
-
-    if (editingGroup) {
-      const gid = editingGroup.id;
-      setEditingGroup(null);
-      await onUpdateGroup(gid, payload);
+  const closeEditor = () => { if (!savePending.current) setEditor(null); };
+  const closeYaml = () => { if (!yamlPending.current) setYamlOpen(false); };
+  const openEditor = (group?: ProxyGroupItem) => {
+    setFormError('');
+    if (group) {
+      const mounts = [...(group.sources ?? group.use ?? [])];
+      setForm({ ...group, proxies: [...(group.proxies || [])], sources: mounts, use: [...mounts] });
+      setEditor(group);
     } else {
-      setIsAdding(false);
-      await onAddGroup(payload);
+      setForm({ ...initialForm, proxies: [], sources: [], use: [] });
+      setEditor('new');
     }
   };
-
-  const handleToggleProxy = (proxyName: string) => {
-    const current = formData.proxies || [];
-    if (current.includes(proxyName)) {
-      setFormData({ ...formData, proxies: current.filter(p => p !== proxyName) });
-    } else {
-      setFormData({ ...formData, proxies: [...current, proxyName] });
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (savePending.current) return;
+    if (form.filter) {
+      try { new RegExp(form.filter.replace(/\(\?i\)/g, ''), 'i'); }
+      catch { setFormError('节点过滤正则无效'); return; }
     }
-  };
-
-
-  const handleRemoveProxy = (proxyName: string) => {
-    const current = formData.proxies || [];
-    setFormData({ ...formData, proxies: current.filter(p => p !== proxyName) });
-  };
-
-  const handleMoveProxy = (idx: number, direction: 'left' | 'right') => {
-    const current = [...(formData.proxies || [])];
-    const targetIdx = direction === 'left' ? idx - 1 : idx + 1;
-    if (targetIdx < 0 || targetIdx >= current.length) return;
-    const temp = current[idx];
-    current[idx] = current[targetIdx];
-    current[targetIdx] = temp;
-    setFormData({ ...formData, proxies: current });
-  };
-
-  const handleToggleUse = (sourceName: string) => {
-    const current: string[] = formData.sources || formData.use || [];
-    const exists = current.includes(sourceName);
-    const updated = exists ? current.filter((u: string) => u !== sourceName) : [...current, sourceName];
-    setFormData({ ...formData, sources: updated, use: updated });
-  };
-
-  const handleOpenYaml = () => {
-    const simplified = groups.map(g => {
-      const obj: any = {
-        name: g.name,
-        type: g.type,
-      };
-      if (g.filter) obj.filter = g.filter;
-      if (g.proxies && g.proxies.length > 0) obj.proxies = g.proxies;
-      if (g.use && g.use.length > 0) obj.use = g.use;
-      if (g.type === 'urltest' || g.type === 'fallback') {
-        if (g.tolerance) obj.tolerance = g.tolerance;
-        if (g.url) obj.url = g.url;
-        if (g.interval) obj.interval = g.interval;
-      }
-      return obj;
-    });
-
+    const mounts = [...(form.sources ?? form.use ?? [])];
+    const payload = { ...form, name: form.name?.trim(), proxies: [...(form.proxies || [])], sources: mounts, use: [...mounts], filter: form.filter?.trim() || '' };
+    savePending.current = true;
+    setSaving(true);
+    setFormError('');
     try {
-      const dump = yaml.dump({ 'proxy-groups': simplified }, { indent: 2, lineWidth: -1 });
-      setYamlText(dump);
-    } catch {
-      setYamlText('');
+      if (editor && editor !== 'new') await onUpdateGroup(editor.id, payload);
+      else await onAddGroup(payload);
+      setEditor(null);
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : '保存失败');
+    } finally {
+      savePending.current = false;
+      setSaving(false);
     }
-    setShowYamlModal(true);
+  };
+  const removeProxy = (value: string) => setForm(current => ({ ...current, proxies: (current.proxies || []).filter(item => item !== value) }));
+  const toggleProxy = (value: string) => setForm(current => ({ ...current, proxies: (current.proxies || []).some(item => outboundKey(item) === value) ? (current.proxies || []).filter(item => outboundKey(item) !== value) : [...(current.proxies || []), value] }));
+  const moveProxy = (index: number, direction: number) => {
+    const values = [...(form.proxies || [])];
+    const next = index + direction;
+    if (next < 0 || next >= values.length) return;
+    [values[index], values[next]] = [values[next], values[index]];
+    setForm({ ...form, proxies: values });
+  };
+  const removeSource = (value: string) => {
+    const next = (form.sources ?? form.use ?? []).filter(item => item !== value);
+    setForm({ ...form, sources: next, use: [...next] });
+  };
+  const toggleSource = (source: SubscriptionSource) => {
+    const values = form.sources ?? form.use ?? [];
+    const selected = values.some(value => sourceFor(value)?.id === source.id);
+    const next = selected ? values.filter(value => sourceFor(value)?.id !== source.id) : [...values, source.id];
+    setForm({ ...form, sources: next, use: [...next] });
+  };
+  const openYaml = () => {
+    setYamlError('');
+    setYamlText(yaml.dump({ 'proxy-groups': groups.map(group => {
+      const entry = { ...group };
+      const mounts = group.sources ?? group.use;
+      return { ...entry, ...(mounts ? { sources: [...mounts], use: [...mounts] } : {}) };
+    }) }, { indent: 2, lineWidth: -1 }));
+    setYamlOpen(true);
+  };
+  const saveYaml = async () => {
+    if (yamlPending.current) return;
+    yamlPending.current = true;
+    setYamlSaving(true);
+    setYamlError('');
+    try {
+      await onBatchImportGroups(yamlText, true);
+      setYamlOpen(false);
+    } catch (cause) {
+      setYamlError(cause instanceof Error ? cause.message : '应用失败');
+    } finally {
+      yamlPending.current = false;
+      setYamlSaving(false);
+    }
   };
 
-  const handleSaveYaml = async () => {
-    if (!yamlText.trim()) return;
-    const text = yamlText;
-    setShowYamlModal(false);
-    await onBatchImportGroups(text, true);
-  };
+  const typeBadge = (group: ProxyGroupItem) => <Badge tone={group.type === 'urltest' ? 'success' : group.type === 'relay' ? 'info' : 'neutral'} className="font-mono">{typeLabels[group.type] || group.type}</Badge>;
+  const composition = (group: ProxyGroupItem) => isTerminal(group) ? <span className="text-ui-secondary text-xs">{group.type === 'direct' ? 'DIRECT' : 'REJECT'}</span> : <div className="space-y-1.5 min-w-0">
+    {sourceNames(group).length > 0 && <div className="flex flex-wrap gap-1">{sourceNames(group).map((name, index) => <Badge key={index} className="max-w-full"><span className="truncate" title={name}>{name}</span></Badge>)}</div>}
+    {(group.proxies || []).length > 0 && <div className="flex flex-wrap items-center gap-1 text-[11px] text-ui-secondary">{group.proxies!.map((value, index) => <span className="inline-flex items-center gap-1 min-w-0 max-w-full" key={index}>{group.type === 'relay' && index > 0 && <ChevronRight size={12} className="shrink-0 text-ui-muted" />}<span className="truncate" title={outbound(value).label}>{outbound(value).label}{!outbound(value).available && ' · 不可用'}</span>{group.type !== 'relay' && index < group.proxies!.length - 1 && <span className="text-ui-muted">、</span>}</span>)}</div>}
+    {group.filter && <div className="flex items-center gap-1.5 text-[10px] text-ui-muted"><span className="shrink-0">正则</span><code className="truncate font-mono" title={group.filter}>{group.filter}</code></div>}
+    {!sourceNames(group).length && !group.proxies?.length && !group.filter && <span className="text-ui-muted text-xs">{group.type === 'direct' ? 'DIRECT' : group.type === 'reject' ? 'REJECT' : '—'}</span>}
+  </div>;
+  const previewButton = (group: ProxyGroupItem) => <button className="text-xs text-ui-accent hover:underline cursor-pointer whitespace-nowrap" aria-label={`预览 ${group.name}`} onClick={() => setPreviewId(group.id)}>{matchesNodeSource(group) || matchedNodes(group).length ? `${matchedNodes(group).length} 节点` : '查看出站'}</button>;
+  const actions = (group: ProxyGroupItem) => <div className="ui-table-actions">
+    <button className={iconButton} title="编辑" aria-label={`编辑 ${group.name}`} onClick={() => openEditor(group)}><Edit2 size={14} /></button>
+    <Popconfirm title="删除策略组？" description={group.name} confirmText="删除" danger onConfirm={() => onDeleteGroup(group.id)}><button className="ui-icon-button-danger p-1.5 rounded-lg" title="删除" aria-label={`删除 ${group.name}`}><Trash2 size={14} /></button></Popconfirm>
+  </div>;
 
-  // Helper to get node count for any outbound name (group, source, or standard)
-  const getNodeCountForOutbound = (outboundName: string): number | null => {
-    if (outboundName === '🎯 本地直连') return null;
-    const targetGroup = groups.find(g => g.name === outboundName);
-    if (targetGroup) {
-      const gNodes = resolveNodesForGroup(targetGroup, nodes, sources, sourceIcons);
-      return gNodes.length;
-    }
-    const cleanOutbound = cleanName(outboundName, sourceIcons).toLowerCase();
-    const targetSource = sources.find(s => {
-      const sName = cleanName(s.name || (s.id === 'custom' ? '独立节点组' : ''), sourceIcons).toLowerCase();
-      return sName === cleanOutbound || (s.id === 'custom' && (cleanOutbound === '自建节点' || cleanOutbound === '独立节点组' || cleanOutbound === '手工自建'));
-    });
-    if (targetSource) {
-      return targetSource.nodeCount || targetSource.nodes?.length || 0;
-    }
-    return null;
-  };
+  return <div className="space-y-5">
+    <section className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 p-4 ${panel}`}>
+      <div className="flex items-center gap-2"><GroupsIcon className="w-5 h-5 text-ui-accent" /><h1 className="text-base font-bold">策略组</h1><Badge tone="accent" className="font-mono border">{groups.length} 个策略组</Badge></div>
+      <div className="flex items-center gap-2"><button className="ui-button-secondary" onClick={openYaml}><Code size={14} />YAML 编辑</button><button className="ui-button-primary" onClick={() => openEditor()}><Plus size={14} />新建策略组</button></div>
+    </section>
+    <section className={`${panel} overflow-hidden`}>
+      <div className="hidden sm:block"><Table label="策略组列表"><thead><tr><TableHead>策略组</TableHead><TableHead>类型</TableHead><TableHead>来源 / 出站</TableHead><TableHead>节点</TableHead><TableHead fixed="right" className="text-right">操作</TableHead></tr></thead><tbody>{groups.map(group => <tr key={group.id}>
+        <TableCell minWidth={180} maxWidth={260}><button className="block max-w-full truncate text-xs font-bold text-left hover:text-ui-accent cursor-pointer" title={group.name} onClick={() => setPreviewId(group.id)}>{group.name}</button></TableCell>
+        <TableCell minWidth={95}>{typeBadge(group)}</TableCell>
+        <TableCell minWidth={220} maxWidth={380}>{composition(group)}</TableCell>
+        <TableCell minWidth={70}>{previewButton(group)}</TableCell>
+        <TableCell fixed="right" className="text-right">{actions(group)}</TableCell>
+      </tr>)}</tbody></Table></div>
+      <div className="sm:hidden divide-y divide-ui-divider">{groups.map(group => <article key={group.id} className="p-4 space-y-3 min-w-0">
+        <div className="flex items-start justify-between gap-3"><button className="min-w-0 text-left text-xs font-bold break-all hover:text-ui-accent cursor-pointer" onClick={() => setPreviewId(group.id)}>{group.name}</button><span className="shrink-0">{typeBadge(group)}</span></div>
+        {composition(group)}
+        <div className="border-t border-ui-divider pt-2.5 flex items-center justify-between">{previewButton(group)}{actions(group)}</div>
+      </article>)}</div>
+      {!groups.length && <p className="p-12 text-center text-xs text-ui-muted">暂无策略组</p>}
+    </section>
 
-  return (
-    <div className="max-w-6xl mx-auto space-y-6 pb-16">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-ui-surface p-4 rounded-2xl border border-ui-border shadow-2xs">
-        <div>
-          <div className="flex items-center gap-2">
-            <GroupsIcon className="w-5 h-5 text-ui-accent" aria-hidden="true" />
-            <h2 className="text-base font-bold text-ui-text">策略组管理</h2>
-            <Badge tone="accent" className="font-mono border">
-              {groups.length} 个策略
-            </Badge>
+    <Modal open={editor !== null} title={editor === 'new' ? '新建策略组' : '编辑策略组'} size="lg" onClose={closeEditor}>
+      {editor && <ModalForm onSubmit={save}><ModalBody>
+        <div className="grid sm:grid-cols-2 gap-3.5">
+          <Field><Label>策略组名称</Label><Input required value={form.name || ''} onChange={event => setForm({ ...form, name: event.target.value })} /></Field>
+          <Field><Label>策略类型</Label><Select value={form.type || 'select'} onValueChange={value => setForm({ ...form, type: value as ProxyGroupItem['type'] })}>
+            <SelectItem value="select">select · 手动选择</SelectItem><SelectItem value="urltest">url-test · 自动测速</SelectItem><SelectItem value="fallback">fallback · 故障切换</SelectItem><SelectItem value="load-balance">load-balance · 负载均衡</SelectItem><SelectItem value="relay">relay · 链式中继</SelectItem><SelectItem value="direct">direct · 直连</SelectItem><SelectItem value="reject">reject · 拒绝</SelectItem>
+          </Select></Field>
+        </div>
+        <Field><Label>出站</Label>
+          <div className="space-y-3 rounded-xl border border-ui-border p-3">
+            <div className="flex flex-wrap gap-1.5 min-h-6">{(form.proxies || []).map((value, index) => <Badge key={value} tone={form.type === 'relay' ? 'info' : 'accent'} className="max-w-full">
+              {form.type === 'relay' && <span className="shrink-0 text-[10px]">{index + 1}.</span>}<span className="truncate max-w-56" title={outbound(value).label}>{outbound(value).label}{!outbound(value).available && ' · 不可用'}</span>
+              {form.type === 'relay' && <><button type="button" className="cursor-pointer disabled:opacity-30" aria-label={`提前 ${outbound(value).label}`} disabled={index === 0} onClick={() => moveProxy(index, -1)}><ArrowLeft size={12} /></button><button type="button" className="cursor-pointer disabled:opacity-30" aria-label={`延后 ${outbound(value).label}`} disabled={index === (form.proxies || []).length - 1} onClick={() => moveProxy(index, 1)}><ArrowRight size={12} /></button></>}
+              <button type="button" className="cursor-pointer" aria-label={`移除出站 ${outbound(value).label}`} onClick={() => removeProxy(value)}><X size={12} /></button>
+            </Badge>)}{!form.proxies?.length && <span className="text-xs text-ui-muted">未选择出站</span>}</div>
+            {form.type === 'relay' && <p className="text-[11px] text-ui-secondary">按顺序中继，首项为入口，末项为出口。</p>}
+            <div className="flex flex-wrap gap-1.5 border-t border-ui-divider pt-3">{candidates.map(candidate => {
+              const selected = (form.proxies || []).some(value => outboundKey(value) === candidate.value);
+              return <button type="button" key={candidate.value} aria-pressed={selected} aria-label={`出站 ${candidate.label}`} onClick={() => toggleProxy(candidate.value)} className={`flex items-center gap-1 max-w-full rounded-lg border px-2 py-1 text-[11px] cursor-pointer ${selected ? 'border-ui-accent bg-ui-accent/10 text-ui-accent' : 'border-ui-border text-ui-secondary hover:border-ui-accent/60'}`}><span className="shrink-0">{selected ? <Check size={12} /> : <Plus size={12} />}</span><span className="truncate" title={candidate.label}>{candidate.label}</span></button>;
+            })}</div>
           </div>
-          <p className="text-xs text-ui-secondary mt-0.5">
-            可视化配置出站代理分组、子策略引用、订阅源
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          {customNodes.length > 0 && !hasCustomGroup && (
-            <button
-              onClick={handleAddCustomGroup}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-[#EAF2EE] text-[#2D6A5A] border border-[#D5E5DE] hover:bg-[#D5E5DE] transition-all cursor-pointer"
-              title={`为当前${customSourceName}创建策略组`}
-            >
-              <Zap className="w-3.5 h-3.5" />
-              <span>新建{customSourceName} ({customNodes.length})</span>
-            </button>
-          )}
-
-          <button
-            onClick={handleOpenYaml}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium ui-button-secondary rounded-xl cursor-pointer"
-            title="查看或批量编辑所有策略组 YAML"
-          >
-            <Code className="w-3.5 h-3.5 text-[#7A6757]" />
-            <span>YAML 编辑</span>
-          </button>
-
-          <button
-            onClick={handleOpenAdd}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold ui-button-primary rounded-xl shadow-2xs cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>新建策略组</span>
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-        {groups.map(group => {
-          const hasProxies = group.proxies && group.proxies.filter(isProxyValid).length > 0;
-          const validMountedSources = (group.sources || group.use || []).filter(isSourceValid);
-          const hasUse = validMountedSources.length > 0;
-          const isFilter = Boolean(group.filter);
-          const directNodes = resolveNodesForGroup(group, nodes, sources, sourceIcons);
-          const isExpanded = expandedGroupId === group.id;
-
-          return (
-            <div
-              key={group.id}
-              className={`p-4 rounded-2xl bg-ui-surface border transition-all flex flex-col justify-between space-y-3 shadow-2xs group ${isExpanded ? 'border-ui-accent ring-1 ring-ui-accent/20' : 'border-ui-border hover:border-ui-accent/40'
-                }`}
-            >
-              <div className="space-y-2.5">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-sm font-bold text-ui-text truncate" title={group.name}>
-                      {group.name}
-                    </span>
-                    {directNodes.length > 0 && (
-                      <Badge tone="success" className="border">
-                        {directNodes.length} 节点
-                      </Badge>
-                    )}
-                  </div>
-
-                  <Badge
-                    tone={group.type === "urltest" ? "success" : group.type === "relay" ? "info" : group.type === "select" ? "neutral" : "accent"} className="font-mono"
-                  >
-                    {group.type === 'relay' ? '🔗 relay' : group.type === 'urltest' ? 'url-test' : group.type}
-                  </Badge>
-                </div>
-
-                <div className="space-y-1.5">
-                  {hasProxies && (
-                    <div className="space-y-1">
-                      <span className="text-[10px] font-medium text-ui-muted">
-                        {group.type === 'relay' ? '🔗 链式中继流程:' : '包含子项:'}
-                      </span>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {group.proxies!.filter(isProxyValid).map((p, idx) => {
-                          const count = getNodeCountForOutbound(p);
-                          const total = group.proxies!.filter(isProxyValid).length;
-                          const isRelay = group.type === 'relay';
-                          return (
-                            <React.Fragment key={idx}>
-                              <Badge
-                                tone={isRelay ? "info" : "accent"}
-                              >
-                                {isRelay && (
-                                  <span className="text-[10px] font-bold text-[#6A4C9C]">
-                                    {idx === 0 ? '1️⃣ 入口' : (idx === total - 1 ? '🏁 落地' : `${idx + 1}️⃣ 中继`)}:
-                                  </span>
-                                )}
-                                <span>{p}</span>
-                                {count !== null && count > 0 && (
-                                  <Badge tone="success">
-                                    {count}
-                                  </Badge>
-                                )}
-                              </Badge>
-                              {isRelay && idx < total - 1 && (
-                                <span className="text-xs text-ui-muted font-bold">➔</span>
-                              )}
-                            </React.Fragment>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {hasUse && (
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[10px] font-medium text-ui-muted">挂载订阅:</span>
-                      {validMountedSources.map((u, idx) => {
-                        const cleanLabel = cleanName(u, sourceIcons);
-                        const count = getNodeCountForOutbound(u);
-                        const matchedSrc = sources.find(
-                          s => cleanName(s.name, sourceIcons).toLowerCase() === cleanLabel.toLowerCase() || s.id === u
-                        );
-                        const isFilterSrc = matchedSrc?.type === 'filter';
-                        const isCustomSrc = matchedSrc?.type === 'custom' || matchedSrc?.id === 'custom';
-                        const icon = isFilterSrc ? (sourceIcons?.filter || '✨') : isCustomSrc ? (sourceIcons?.custom || '🖥️') : (sourceIcons?.remote || '⚡️');
-                        return (
-                          <Badge
-                            key={idx}
-                            tone={isFilterSrc ? "info" : isCustomSrc ? "neutral" : "accent"}
-                          >
-                            <span className="text-xs">{icon}</span>
-                            <span>{cleanLabel}</span>
-                            {count !== null && (
-                              <span className="text-[9px] font-bold opacity-80">({count}节点)</span>
-                            )}
-                          </Badge>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {isFilter && (
-                    <div className="flex items-center gap-1.5 text-xs text-ui-secondary">
-                      <span className="text-[10px] text-ui-muted shrink-0 font-medium">节点正则:</span>
-                      <code className="px-1.5 py-0.5 bg-ui-subtle border border-ui-border rounded text-[11px] font-mono text-ui-accent truncate">
-                        {group.filter}
-                      </code>
-                    </div>
-                  )}
-
-                  {!hasProxies && !hasUse && !isFilter && (
-                    <div className="text-[11px] text-ui-muted italic">
-                      {group.name === '👉 手动选择' || group.name === '♻️ 自动选择'
-                        ? '自动汇总所有订阅与独立节点'
-                        : '根据策略组名称自动归集同名订阅源'}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* 展开节点抽屉 */}
-              {isExpanded && (
-                <div className="pt-2 border-t border-ui-divider space-y-2 animate-in fade-in duration-150">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-bold text-ui-text">
-                      {directNodes.length > 0
-                        ? `组内节点清单 (共 ${directNodes.length} 项)`
-                        : `包含的子策略项 (${group.proxies?.length || 0} 个)`}
-                    </span>
-                    <button
-                      onClick={() => setExpandedGroupId(null)}
-                      className="text-[10px] text-ui-muted hover:text-ui-text cursor-pointer"
-                    >
-                      收起 ▲
-                    </button>
-                  </div>
-
-                  {directNodes.length > 0 ? (
-                    <div className="max-h-48 overflow-y-auto space-y-1 p-2 bg-ui-subtle rounded-xl border border-ui-border">
-                      {directNodes.map(n => (
-                        <div
-                          key={n.id}
-                          className="flex items-center justify-between gap-2 px-2 py-1 bg-ui-surface rounded-md border border-[#EBE7DF] text-[11px]"
-                        >
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="text-xs shrink-0">{n.countryEmoji || '🌐'}</span>
-                            <span className="font-medium text-ui-text truncate">{n.name}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <Badge tone="neutral" className="font-mono">
-                              {(n.type || 'vless').toUpperCase()}
-                            </Badge>
-                            <span className="text-[10px] text-ui-muted font-mono">
-                              {n.server}:{n.port}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : hasProxies ? (
-                    <div className="p-2.5 bg-ui-subtle rounded-xl border border-ui-border text-xs text-ui-secondary">
-                      <div className="flex flex-wrap gap-1.5">
-                        {group.proxies!.map((p, idx) => {
-                          const count = getNodeCountForOutbound(p);
-                          return (
-                            <Badge
-                              key={idx}
-                              tone="neutral" className="border font-medium shadow-2xs"
-                            >
-                              <span>{p}</span>
-                              {count !== null && (
-                                <Badge tone="success">
-                                  {count} 节点
-                                </Badge>
-                              )}
-                            </Badge>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="p-3 bg-ui-subtle rounded-xl text-center text-xs text-ui-muted">
-                      暂无直接匹配的节点
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="pt-2 border-t border-ui-divider flex items-center justify-between text-xs">
-                <button
-                  type="button"
-                  onClick={() => setExpandedGroupId(isExpanded ? null : group.id)}
-                  className="flex items-center gap-1 text-[11px] font-medium text-ui-accent hover:text-[#B85D3F] transition-colors cursor-pointer"
-                >
-                  <Eye className="w-3.5 h-3.5" />
-                  <span>
-                    {isExpanded
-                      ? '收起节点清单'
-                      : directNodes.length > 0
-                        ? `展开查看节点 (${directNodes.length})`
-                        : '展开查看结构'}
-                  </span>
-                  {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                </button>
-
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => handleOpenEdit(group)}
-                    className="inline-flex items-center justify-center p-1 text-ui-muted hover:text-ui-text hover:bg-ui-hover rounded-lg transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ui-accent"
-                    title="编辑策略组"
-                    aria-label="编辑策略组"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" aria-hidden="true" />
-                  </button>
-                  <button
-                    onClick={() => onDeleteGroup(group.id)}
-                    className="ui-icon-button-danger p-1 rounded-lg"
-                    title="删除策略组"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {groups.length === 0 && (
-        <div className="ui-panel p-12 rounded-2xl bg-ui-surface border border-ui-border text-center space-y-3">
-          <GroupsIcon className="w-8 h-8 text-ui-muted mx-auto opacity-50" aria-hidden="true" />
-          <p className="text-xs font-semibold text-ui-secondary">暂无策略组</p>
-          <div className="flex items-center justify-center gap-2">
-            <button
-              onClick={handleOpenAdd}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold ui-button-primary rounded-xl shadow-2xs cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>新建策略组</span>
-            </button>
+        </Field>
+        {(sources.length > 0 || (form.sources ?? form.use)?.length) && <Field><Label>上游订阅</Label>
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-1.5">{(form.sources ?? form.use ?? []).map(value => {
+              const source = sourceFor(value);
+              const label = source?.name || value;
+              return <Badge key={value} tone={source?.enabled ? 'accent' : 'warning'} className="max-w-full"><span className="truncate" title={label}>{label}{!source?.enabled && ' · 不可用'}</span><button type="button" aria-label={`移除来源 ${label}`} onClick={() => removeSource(value)}><X size={12} /></button></Badge>;
+            })}</div>
+            <div className="flex flex-wrap gap-2">{sources.filter(source => source.enabled).map(source => {
+              const selected = (form.sources ?? form.use ?? []).some(value => sourceFor(value)?.id === source.id);
+              return <button type="button" key={source.id} aria-label={`来源 ${source.name}`} aria-pressed={selected} onClick={() => toggleSource(source)} className={`max-w-full flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs cursor-pointer ${selected ? 'border-ui-accent bg-ui-accent/10 text-ui-accent' : 'border-ui-border text-ui-secondary hover:border-ui-accent/60'}`}><span className="truncate" title={source.name}>{source.name}</span><span className="shrink-0 text-[10px] opacity-80">{activeNodes.filter(node => node.sourceId === source.id).length}</span>{selected && <Check size={12} className="shrink-0" />}</button>;
+            })}</div>
           </div>
-        </div>
-      )}
+        </Field>}
+        <Field><Label>节点过滤正则</Label><Input className="font-mono" value={form.filter || ''} onChange={event => setForm({ ...form, filter: event.target.value })} /></Field>
+        {(form.type === 'urltest' || form.type === 'fallback') && <div className="grid grid-cols-2 gap-3.5">
+          <Field className="col-span-2"><Label>测速 URL</Label><Input type="url" value={form.url ?? ''} onChange={event => setForm({ ...form, url: event.target.value })} /></Field>
+          <Field><Label>测速容差（ms）</Label><Input type="number" min={0} value={form.tolerance ?? 50} onChange={event => setForm({ ...form, tolerance: Number(event.target.value) })} /></Field>
+          <Field><Label>测速间隔（秒）</Label><Input type="number" min={0} value={form.interval ?? 300} onChange={event => setForm({ ...form, interval: Number(event.target.value) })} /></Field>
+        </div>}
+        {formError && <p role="alert" className="text-xs text-ui-danger">{formError}</p>}
+      </ModalBody><ModalFooter><button type="button" className="ui-button-secondary" disabled={saving} onClick={closeEditor}>取消</button><button disabled={saving} className="ui-button-primary">{saving ? '保存中...' : '保存'}</button></ModalFooter></ModalForm>}
+    </Modal>
 
-      <Modal
-        open={!!((isAdding || editingGroup))}
-        title={((isAdding || editingGroup)) ? <>{editingGroup ? `编辑策略组: ${formData.name || ''}` : '新建策略组'}</> : ''}
-        size="xl"
-        onClose={() => {
-          setIsAdding(false);
-          setEditingGroup(null);
-        }}
-      >
-        {((isAdding || editingGroup)) && (
-          <ModalForm onSubmit={handleSave} className="text-xs">
-            <ModalBody>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <Field className="space-y-1">
-                  <Label>策略组名称</Label>
-                  <Input
-                    type="text"
-                    required
-                    value={formData.name || ''}
-                    onChange={e => setFormData({ ...formData, name: e.target.value })}
-                    className="w-full"
-                  />
-                </Field>
+    <Modal open={!!preview} title={preview?.name || '策略组'} size="lg" onClose={() => setPreviewId(null)}>
+      {preview && <><ModalBody>
+        <div className="flex items-center gap-2">{typeBadge(preview)}<span className="text-xs text-ui-muted">{matchedNodes(preview).length} 个匹配节点</span></div>
+        {(preview.type === 'direct' || preview.type === 'reject') && <p className="text-xs text-ui-secondary">{preview.type === 'direct' ? 'DIRECT' : 'REJECT'}</p>}
+        {!isTerminal(preview) && !!preview.proxies?.length && <Field><Label>出站</Label><div className="flex flex-wrap items-center gap-1.5">{preview.proxies.map((value, index) => <span key={index} className="inline-flex items-center gap-1.5 max-w-full">{preview.type === 'relay' && index > 0 && <ChevronRight size={12} className="shrink-0 text-ui-muted" />}<Badge className="max-w-full"><span className="truncate" title={outbound(value).label}>{outbound(value).label}{!outbound(value).available && ' · 不可用'}</span></Badge></span>)}</div></Field>}
+        {!isTerminal(preview) && sourceNames(preview).length > 0 && <Field><Label>上游订阅</Label><p className="text-xs text-ui-secondary break-all">{sourceNames(preview).join('、')}</p></Field>}
+        {!isTerminal(preview) && <Field><Label>匹配节点</Label><div className="rounded-xl border border-ui-border divide-y divide-ui-divider max-h-80 overflow-auto">{matchedNodes(preview).map(node => <div key={node.id} className="flex items-center justify-between gap-3 p-3 text-xs">
+          <div className="min-w-0"><p className="font-medium truncate" title={node.name}>{node.countryEmoji} {node.name}</p><p className="text-[10px] text-ui-muted mt-1">{sources.find(source => source.id === node.sourceId)?.name || node.sourceName}</p><p className="text-[10px] text-ui-muted font-mono truncate mt-1">{node.server}:{node.port}</p></div><Badge className="font-mono shrink-0">{node.type.toUpperCase()}</Badge>
+        </div>)}{!matchedNodes(preview).length && <p className="p-6 text-center text-xs text-ui-muted">暂无匹配节点</p>}</div></Field>}
+      </ModalBody><ModalFooter><button className="ui-button-secondary" onClick={() => { setPreviewId(null); openEditor(preview); }}>编辑策略组</button><button className="ui-button-secondary" onClick={() => setPreviewId(null)}>关闭</button></ModalFooter></>}
+    </Modal>
 
-                <Field className="space-y-1">
-                  <Label>策略类型</Label>
-                  <Select
-                    value={formData.type || 'select'}
-                    onValueChange={nextValue => setFormData({ ...formData, type: nextValue as any })}
-                    className="w-full"
-                  >
-                    <SelectItem value="select">select (手动选择 / 选项列表)</SelectItem>
-                    <SelectItem value="urltest">url-test (自动测速优选)</SelectItem>
-                    <SelectItem value="fallback">fallback (故障自动切换)</SelectItem>
-                    <SelectItem value="load-balance">load-balance (负载均衡)</SelectItem>
-                    <SelectItem value="relay">relay (🔗 链式中继 / 链式代理)</SelectItem>
-                    <SelectItem value="direct">direct (直接直连)</SelectItem>
-                  </Select>
-                </Field>
-              </div>
-
-              {formData.type === 'relay' && (
-                <div className="p-3 bg-[#FAF5FF] border border-[#E9D8FD] rounded-xl text-xs space-y-1">
-                  <div className="font-bold text-[#6B46C1] flex items-center gap-1.5">
-                    <Link2 className="w-3.5 h-3.5" />
-                    <span>链式代理 (Relay) 说明</span>
-                  </div>
-                  <p className="text-[#553C9A] leading-relaxed">
-                    流量将严格按照下方列表中出站项从左至右依次逐级中继。<b>第 1 项为前置入口</b>（推荐为香港专线或测速优选组），<b>最后一项为出口落地</b>。您可通过每个标签上的 <b>← / →</b> 调整中继跳数顺序。
-                  </p>
-                </div>
-              )}
-
-              <div className="space-y-2 bg-ui-subtle p-3.5 rounded-xl border border-ui-border">
-                <div className="flex items-center justify-between">
-                  <Label className="flex items-center gap-1.5">
-                    <GroupsIcon className="w-3.5 h-3.5 text-ui-accent" aria-hidden="true" />
-                    <span>包含的出站策略组 / 选项 (Proxies)</span>
-                  </Label>
-                  <span className="text-[10px] text-ui-secondary">
-                    已选 {(formData.proxies || []).length} 项
-                  </span>
-                </div>
-
-                <div className="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-ui-surface rounded-lg border border-ui-border">
-                  {(formData.proxies || []).map((p, idx) => {
-                    const isRelay = formData.type === 'relay';
-                    const total = (formData.proxies || []).length;
-                    return (
-                      <Badge
-                        key={idx}
-                        tone={isRelay ? "info" : "accent"}
-                      >
-                        {isRelay && (
-                          <Badge tone="neutral">
-                            {idx === 0 ? '1️⃣ 入口' : (idx === total - 1 ? '🏁 落地' : `${idx + 1}️⃣ 中继`)}
-                          </Badge>
-                        )}
-                        <span>{p}</span>
-                        {isRelay && total > 1 && (
-                          <div className="flex items-center gap-0.5 border-l border-[#E8E1F5] pl-1 ml-0.5">
-                            <button
-                              type="button"
-                              disabled={idx === 0}
-                              onClick={() => handleMoveProxy(idx, 'left')}
-                              className="text-[#6A4C9C] hover:text-[#4A2D78] disabled:opacity-30 disabled:cursor-not-allowed px-1 cursor-pointer font-bold"
-                              title="提前一跳 (向左移)"
-                            >
-                              ←
-                            </button>
-                            <button
-                              type="button"
-                              disabled={idx === total - 1}
-                              onClick={() => handleMoveProxy(idx, 'right')}
-                              className="text-[#6A4C9C] hover:text-[#4A2D78] disabled:opacity-30 disabled:cursor-not-allowed px-1 cursor-pointer font-bold"
-                              title="延后一跳 (向右移)"
-                            >
-                              →
-                            </button>
-                          </div>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveProxy(p)}
-                          className={`${isRelay ? 'text-[#6A4C9C] hover:text-[#4A2D78]' : 'text-[#B85D3F] hover:text-[#94381C]'} p-0.5 cursor-pointer`}
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </Badge>
-                    );
-                  })}
-                  {(!formData.proxies || formData.proxies.length === 0) && (
-                    <span className="text-xs text-ui-muted italic py-0.5">暂无单独配置出站项，可点击下方候选快速添加</span>
-                  )}
-                </div>
-
-                <div className="space-y-1.5 pt-1">
-                  <div className="text-[11px] text-ui-secondary font-medium">快捷点击添加 / 移除候选策略：</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {allCandidateOutbounds
-                      .filter(cand => cand !== formData.name)
-                      .map((cand, idx) => {
-                        const isSelected = (formData.proxies || []).includes(cand);
-                        const count = getNodeCountForOutbound(cand);
-                        return (
-                          <button
-                            key={idx}
-                            type="button"
-                            onClick={() => handleToggleProxy(cand)}
-                            className={`px-2 py-1 rounded-md text-[11px] font-medium transition-all cursor-pointer border flex items-center gap-1 ${isSelected
-                              ? 'bg-ui-accent text-white border-ui-accent'
-                              : 'bg-ui-surface text-ui-secondary border-ui-border hover:border-ui-accent/60'
-                              }`}
-                          >
-                            <span>{isSelected ? `✓ ${cand}` : `+ ${cand}`}</span>
-                            {count !== null && count > 0 && (
-                              <Badge tone={isSelected ? "inverse" : "success"}>
-                                {count}
-                              </Badge>
-                            )}
-                          </button>
-                        );
-                      })}
-                  </div>
-                </div>
-              </div>
-
-              {(() => {
-                const availableSources = sources.filter(s => s.enabled);
-                if (availableSources.length === 0) return null;
-
-                const currentSources: string[] = formData.sources || formData.use || [];
-
-                return (
-                  <div className="space-y-2 bg-ui-subtle p-3.5 rounded-xl border border-ui-border">
-                    <div className="flex items-center justify-between">
-                      <Label>
-                        <span>包含节点源</span>
-                      </Label>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {availableSources.map(src => {
-                        const count = src.nodes?.length ?? (src.nodeCount || 0);
-                        const isSelected = currentSources.some(
-                          (u: string) => u === src.name ||
-                            u === src.id ||
-                            cleanName(u, sourceIcons).toLowerCase() === cleanName(src.name, sourceIcons).toLowerCase()
-                        );
-                        const isManual = src.type === 'manual' || src.type === 'custom' || src.id === 'custom' || !src.url;
-
-                        return (
-                          <button
-                            key={src.id}
-                            type="button"
-                            onClick={() => handleToggleUse(src.name)}
-                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all cursor-pointer ${isSelected
-                              ? 'bg-ui-accent text-white border-ui-accent'
-                              : 'bg-ui-surface text-ui-secondary border-ui-border hover:border-ui-accent/60'
-                              }`}
-                          >
-                            <Badge tone="neutral" className="font-mono">
-                              {isManual ? '独立组' : '订阅'}
-                            </Badge>
-                            <span>{src.name}</span>
-                            <span className="opacity-80 text-[10px]">({count}节点)</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              <Field className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <Label>节点过滤正则 (可选)</Label>
-                </div>
-                <Input
-                  type="text"
-                  value={formData.filter || ''}
-                  onChange={e => setFormData({ ...formData, filter: e.target.value })}
-                  className="w-full font-mono"
-                />
-              </Field>
-
-              {(formData.type === 'urltest' || formData.type === 'fallback') && (
-                <div className="grid grid-cols-2 gap-3">
-                  <Field className="space-y-1">
-                    <Label>测速容差 (ms)</Label>
-                    <Input
-                      type="number"
-                      value={formData.tolerance || 50}
-                      onChange={e => setFormData({ ...formData, tolerance: Number(e.target.value) })}
-                      className="w-full font-mono"
-                    />
-                  </Field>
-                  <Field className="space-y-1">
-                    <Label>测速间隔 (秒)</Label>
-                    <Input
-                      type="number"
-                      value={formData.interval || 300}
-                      onChange={e => setFormData({ ...formData, interval: Number(e.target.value) })}
-                      className="w-full font-mono"
-                    />
-                  </Field>
-                </div>
-              )}
-
-              {/* 生效结构预览 */}
-              <div className="p-3 bg-ui-subtle rounded-xl border border-ui-border space-y-1.5">
-                <div className="text-[11px] font-bold text-ui-text flex items-center gap-1">
-                  <ArrowRight className="w-3 h-3 text-ui-accent" />
-                  <span>生效结构预览：</span>
-                </div>
-                <div className="text-[11px] text-ui-secondary leading-relaxed">
-                  策略组 <strong>{formData.name || '未命名'}</strong> ({formData.type}) 包含：
-                  {formData.proxies && formData.proxies.length > 0 ? (
-                    <span className="text-[#B85D3F] font-semibold"> [{formData.proxies.join(', ')}]</span>
-                  ) : (
-                    <span className="text-ui-muted"> [按来源与正则匹配节点]</span>
-                  )}
-                  {(formData.sources || formData.use) && (formData.sources || formData.use)!.length > 0 && (
-                    <span>，节点源: <strong className="text-ui-accent">{(formData.sources || formData.use)!.join(', ')}</strong></span>
-                  )}
-                  {formData.filter && (
-                    <span>，名称正则: <code className="text-ui-accent">{formData.filter}</code></span>
-                  )}
-                </div>
-              </div>
-            </ModalBody>
-            <ModalFooter>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsAdding(false);
-                  setEditingGroup(null);
-                }}
-                className="px-4 py-2 text-xs font-medium ui-button-secondary rounded-xl cursor-pointer"
-              >
-                取消
-              </button>
-              <button
-                type="submit"
-                className="px-5 py-2 text-xs font-semibold ui-button-primary rounded-xl cursor-pointer shadow-2xs"
-              >
-                保存策略组
-              </button>
-            </ModalFooter>
-          </ModalForm>
-        )}
-      </Modal>
-
-      <Modal
-        open={!!(showYamlModal)}
-        title="批量编辑策略组 (YAML / 手工定制)"
-        description={(showYamlModal) ? <>以 Clash / Mihomo 格式描述 proxy-groups，按需自由配置</> : undefined}
-        size="wide"
-        layout="editor"
-        onClose={() => setShowYamlModal(false)}
-      >
-        {(showYamlModal) && (<>
-          <ModalBody editor>
-            <div className="flex-1 min-h-0">
-              <Textarea variant="code"
-                value={yamlText}
-                onChange={e => setYamlText(e.target.value)}
-                placeholder="proxy-groups:&#10;  - name: 🚀 节点选择&#10;    type: select&#10;    proxies:&#10;      - 🎯 本地直连"
-                className="w-full h-full font-mono resize-none"
-                spellCheck={false}
-              />
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <button
-              onClick={() => setShowYamlModal(false)}
-              className="px-4 py-2 text-xs font-medium ui-button-secondary rounded-xl cursor-pointer"
-            >
-              取消
-            </button>
-            <button
-              onClick={handleSaveYaml}
-              className="px-6 py-2 text-xs font-semibold ui-button-primary rounded-xl"
-            >
-              应用并替换全部策略组
-            </button>
-          </ModalFooter>
-        </>)}
-      </Modal>
-    </div>
-  );
-};
+    <Modal open={yamlOpen} title="YAML 编辑" size="wide" layout="editor" onClose={closeYaml}>
+      <ModalBody editor>{yamlError && <p role="alert" className="text-xs text-ui-danger max-h-32 overflow-auto whitespace-pre-wrap">{yamlError}</p>}<Textarea variant="code" aria-label="策略组 YAML" aria-invalid={!!yamlError} value={yamlText} onChange={event => setYamlText(event.target.value)} spellCheck={false} className="w-full font-mono resize-none" /></ModalBody>
+      <ModalFooter><button className="ui-button-secondary" disabled={yamlSaving} onClick={closeYaml}>取消</button><button disabled={yamlSaving} className="ui-button-primary" onClick={saveYaml}>{yamlSaving ? '保存中...' : '替换全部策略组'}</button></ModalFooter>
+    </Modal>
+  </div>;
+}

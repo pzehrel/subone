@@ -20,6 +20,9 @@ const bindingStatus: Record<GenerationBinding['status'], { label: string; tone: 
 
 const methodNames: Record<string, string> = {
   'singbox-native-domain-resolver': '节点 domain_resolver',
+  'mihomo-server-domain-policy': '节点域名 DNS 策略',
+  'loon-server-dns': '节点 server-dns',
+  'template-host-map': '模板 Host 映射',
   'template-dns': '模板 DNS',
   'nodes-only': '纯节点',
   'ip-node-no-dns': 'IP 地址，无需节点解析',
@@ -45,12 +48,12 @@ export function GenerationPreview({ result, clientType }: { result: GenerationPr
       )}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <span className="font-semibold text-ui-text">{clientNames[generation?.target.type || clientType]}</span>
-        {generation && <span>{generation.target.version ? `已核验版本 ${generation.target.version}` : '目标版本未核验'}</span>}
+        {generation && <span>{generation.target.version ? `格式核验版本 ${generation.target.version}` : '目标版本未核验'}</span>}
         <span>{generation ? '普通节点' : '节点'} <strong className="text-ui-text">{generation?.nodeCount ?? result.nodeCount}</strong></span>
-        {generation && <span>DoH 依赖节点 <strong className="text-ui-text">{generation.dependencyNodeCount}</strong></span>}
+        {generation && <span>依赖节点 <strong className="text-ui-text">{generation.dependencyNodeCount}</strong></span>}
       </div>
       {!!generation?.dependencyNodes?.length && (
-        <ul aria-label="DoH 依赖节点" className="divide-y divide-ui-border rounded-xl border border-ui-border px-3">
+        <ul aria-label="依赖节点" className="divide-y divide-ui-border rounded-xl border border-ui-border px-3">
           {generation.dependencyNodes.map(node => (
             <li key={node.id} className="py-2">
               <span className="font-medium text-ui-text">{node.name}</span>

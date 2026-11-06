@@ -216,8 +216,8 @@ export function validateMihomoRuntime(doc: Document, plan: GenerationPlan): void
   const proxies = [...native, ...nodes.filter(node => !native.some(value => value.name === node.name)).map(nodeToMihomoProxy)];
   const array = (value: unknown): string[] => Array.isArray(value) ? value.filter((value): value is string => typeof value === 'string') : typeof value === 'string' ? [value] : [];
   const dns = doc.dns || {};
-  for (const binding of plan.bindings) {
-    if (binding.diagnostics.some(entry => entry.severity === 'error')) continue;
+  for (const binding of [...plan.bindings, ...(plan.target.mode === 'nodes' ? [] : [undefined])]) {
+    if (binding?.diagnostics.some(entry => entry.severity === 'error')) continue;
     let issue: { code: string; message: string; path: RuntimePathEntry[] } | undefined;
     const visited = new Set<string>();
     type Entry = RuntimePathEntry;
@@ -245,7 +245,7 @@ export function validateMihomoRuntime(doc: Document, plan: GenerationPlan): void
         const proxy = matches[0];
         if (typeof proxy['dialer-proxy'] === 'string') visit({ kind: 'outbound', id: proxy['dialer-proxy'], label: proxy['dialer-proxy'], reason: 'dialer-proxy' }, path);
         if (Array.isArray(proxy.proxies) || Array.isArray(proxy.use)) {
-          const members = array(proxy.proxies);
+          const members = [...array(proxy.proxies), ...(plan.groups.find(group => group.name === entry.id)?.proxies || [])];
           for (const provider of array(proxy.use)) {
             const source = plan.sources.find(source => source.name.trim() === provider);
             if (!source) return fail('source-doh-dependency-missing', `必要策略组含无法确定的 provider ${provider}`, path);
@@ -263,11 +263,15 @@ export function validateMihomoRuntime(doc: Document, plan: GenerationPlan): void
       }
       visited.add(key);
     };
-    for (const id of binding.nodeIds) {
+    for (const id of binding?.nodeIds || []) {
       const node = nodes.find(node => node.id === id);
       if (node) visit({ kind: 'outbound', id: node.name, label: node.name }, []);
     }
-    if (issue) binding.diagnostics.push({ ...issue, severity: 'error', sourceId: binding.sourceId, serviceId: binding.appliedServiceIds[0] });
+    if (!binding) for (const target of [...routingTargets(doc), ...(doc['proxy-groups'] || []).map((group: Document) => group.name)]) visit({ kind: 'outbound', id: target, label: target, reason: 'ordinary routing' }, []);
+    if (issue) {
+      if (binding) binding.diagnostics.push({ ...issue, severity: 'error', sourceId: binding.sourceId, serviceId: binding.appliedServiceIds[0] });
+      else throw new GenerationError('Mihomo 出站引用需修复', { ...generationMetadata(plan), diagnostics: [...generationMetadata(plan).diagnostics, { ...issue, severity: 'error' }] });
+    }
   }
 }
 
@@ -288,30 +292,32 @@ export function collectMihomoRuntimeDependencies(plan: GenerationPlan, prospecti
     if (!group || mihomoStrategyIssue(source.doh?.format, group.raw as Document)) return;
     for (const member of array((group.raw as Document).proxies ?? (group.raw as Document).outbounds)) privateOutbound(source, sourceReference(source, member, plan), owner, [...reason, group.name]);
   };
-  const templateOutbound = (name: string, owner: string, reason: string[]): void => {
+  const ordinaryGroups = new Set(plan.ordinaryGroupIds);
+  const templateOutbound = (name: string, owner: string, reason: string[], ordinary = false): void => {
     const matches = [...(doc.proxies || []), ...(doc['proxy-groups'] || [])].filter(value => value.name === name);
     if (!matches.length && name.startsWith('node:')) return node(name.slice(5), owner, [...reason, name]);
-    if (!matches.length && name.startsWith('group:')) return managed(name.slice(6), owner, reason);
+    if (!matches.length && name.startsWith('group:')) return managed(name.slice(6), owner, reason, ordinary);
     if (!matches.length) {
       const selectedNode = [...plan.ordinaryNodes, ...plan.dependencyNodes].find(node => node.name === name);
       if (selectedNode) return node(selectedNode.id, owner, reason);
-      const group = plan.groups.find(group => group.name === name);
-      if (group) return managed(group.id, owner, reason);
+      const group = plan.inventory.groups.find(group => group.name === name);
+      if (group) return managed(group.id, owner, reason, ordinary);
     }
-    if (!once(`${owner}:template:${name}`) || matches.length !== 1) return;
+    if (!once(`${owner}:template:${name}:${ordinary}`) || matches.length !== 1) return;
     const value = matches[0];
     if (typeof value['dialer-proxy'] === 'string') templateOutbound(value['dialer-proxy'], owner, [...reason, name]);
-    for (const member of array(value.proxies)) templateOutbound(member, owner, [...reason, name]);
+    for (const member of array(value.proxies)) templateOutbound(member, owner, [...reason, name], ordinary);
     if (needsHostnameLookup(value.server)) templateDns(policyServices(doc.dns || {}, value.server), owner, [...reason, name]);
   };
-  const managed = (id: string, owner: string, reason: string[]): void => {
-    if (!once(`${owner}:managed:${id}`)) return;
-    result.groups.push({ groupId: id, bindingSourceId: owner, reason });
+  const managed = (id: string, owner: string, reason: string[], ordinary = false): void => {
+    if (ordinary) ordinaryGroups.add(id);
+    if (!once(`${owner}:managed:${id}:${ordinary}`)) return;
+    result.groups.push({ groupId: id, bindingSourceId: owner, reason, ordinary });
     const group = plan.inventory.groups.find(group => group.id === id);
     if (!group || ['direct', 'reject'].includes(group.type)) return;
-    for (const member of group.proxies || []) templateOutbound(member, owner, [...reason, group.name]);
+    for (const member of group.proxies || []) templateOutbound(member, owner, [...reason, group.name], ordinary);
     const mounts = group.sources ?? group.use;
-    let candidates = plan.groups.some(value => value.id === id) && !plan.dependencyGroupIds.includes(id)
+    let candidates = ordinaryGroups.has(id)
       ? plan.ordinaryNodes : plan.inventory.nodes.filter(entry => entry.state === 'enabled').map(entry => entry.node);
     if (mounts?.length) candidates = candidates.filter(node => { const source = sourceOf(node.sourceId); return !!source && (mounts.includes(source.id) || mounts.includes(source.name)); });
     if (group.filter) { try { const regex = new RegExp(group.filter.replace(/\(\?i\)/gi, ''), 'i'); candidates = candidates.filter(node => regex.test(node.name)); } catch { return; } }
@@ -347,6 +353,11 @@ export function collectMihomoRuntimeDependencies(plan: GenerationPlan, prospecti
     }
   };
   const ordinaryIds = new Set(plan.ordinaryNodes.map(node => node.id));
+  if (plan.target.mode !== 'nodes') {
+    const ordinaryOwner = plan.bindings[0]?.sourceId || '';
+    const routing = { ...doc, rules: (doc.rules || []).filter((rule: unknown) => !(plan.rules.some(rule => rule.enabled && rule.type === 'FINAL') && typeof rule === 'string' && /^(MATCH|FINAL),/i.test(rule))) };
+    for (const target of routingTargets(routing)) templateOutbound(target, ordinaryOwner, ['Mihomo routing', target], true);
+  }
   for (const binding of plan.bindings) for (const id of binding.nodeIds.filter(id => ordinaryIds.has(id))) node(id, binding.sourceId, [binding.sourceName]);
   return result;
 }

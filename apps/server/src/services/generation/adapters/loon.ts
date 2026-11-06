@@ -91,9 +91,7 @@ registerRuntimeDependencyCollector('loon', plan => {
       if (!group || ['direct', 'reject'].includes(group.type)) return;
       for (const member of group.proxies || []) visit(member, [...reason, group.name]);
       if (group.type !== 'relay' && ((group.sources ?? group.use)?.length || group.filter || !group.proxies?.length)) {
-        const ordinaryGroup = plan.groups.some(value => value.id === id) && !plan.dependencyGroupIds.includes(id);
-        const pool = ordinaryGroup || !(group.sources ?? group.use)?.length ? plan.ordinaryNodes : plan.inventory.nodes.filter(entry => entry.state === 'enabled').map(entry => entry.node);
-        for (const node of resolveGroupNodes(group, pool, plan.inventory.sources)) visit(`node:${node.id}`, [...reason, group.name]);
+        for (const node of resolveGroupNodes(group, plan.ordinaryNodes, plan.inventory.sources)) visit(`node:${node.id}`, [...reason, group.name]);
       }
     }
   };
@@ -130,7 +128,7 @@ export function validateLoonRuntime(output: string, plan: GenerationPlan): void 
   // Provider nodes are concrete native declarations fetched from profile-scoped URLs.
   for (const node of [...plan.ordinaryNodes, ...plan.dependencyNodes]) terminals.add(node.name);
   // Keep explicit managed edges visible even when a legacy generator would prune them.
-  for (const group of plan.groups) if (group.proxies?.length) groups.set(group.name, [...new Set([...(groups.get(group.name) || []), ...group.proxies.filter(member => plan.dependencyGroupIds.includes(group.id) || !/^(node|unresolved|ambiguous):/.test(member))])]);
+  for (const group of plan.groups) if (group.proxies?.length) groups.set(group.name, [...new Set([...(groups.get(group.name) || []), ...group.proxies])]);
   const builtin = /^(DIRECT|REJECT(?:-IMG|-DICT|-ARRAY|-DROP)?|全部节点)$/i;
   let issue: GenerationDiagnostic | undefined;
   const visit = (name: string, stack: string[]) => {

@@ -449,7 +449,7 @@ export function injectUnifiedToLoon(
     if (options?.dependencyGroupIds?.has(grp.id) && !['direct', 'reject'].includes(grp.type)) {
       const members = [...(grp.proxies || [])];
       if (grp.type !== 'relay' && ((grp.sources ?? grp.use)?.length || grp.filter || !members.length)) {
-        for (const node of resolveGroupNodes(grp, (grp.sources ?? grp.use)?.length ? runtimeNodes : nodes, options.runtimeSources || sources)) if (!members.includes(node.name)) members.push(node.name);
+        for (const node of resolveGroupNodes(grp, nodes, options.runtimeSources || sources)) if (!members.includes(node.name)) members.push(node.name);
       }
       if (!members.length && !(grp.sources ?? grp.use)?.length && !grp.proxies?.length) members.push('DIRECT');
       const type = grp.type === 'urltest' ? 'url-test' : grp.type;

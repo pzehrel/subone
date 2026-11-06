@@ -291,6 +291,7 @@ export interface MihomoGeneratorOptions {
   subToken?: string;
   ordinaryNodeIds?: ReadonlySet<string>;
   dependencyGroupIds?: ReadonlySet<string>;
+  ordinaryGroupIds?: ReadonlySet<string>;
 }
 
 export function generateMihomoConfig(
@@ -461,7 +462,7 @@ export function injectUnifiedToMihomo(
 
   const generatedGroups: any[] = [];
   effectiveGroups.forEach(grp => {
-    const candidates = options?.ordinaryNodeIds && !options.dependencyGroupIds?.has(grp.id) ? nodes.filter(node => options.ordinaryNodeIds!.has(node.id)) : nodes;
+    const candidates = options?.ordinaryNodeIds && (!options.dependencyGroupIds?.has(grp.id) || options.ordinaryGroupIds?.has(grp.id)) ? nodes.filter(node => options.ordinaryNodeIds!.has(node.id)) : nodes;
     if (grp.type === 'direct') {
       generatedGroups.push({
         name: grp.name,
@@ -510,7 +511,12 @@ export function injectUnifiedToMihomo(
 
     const acceptsNodes = grp.includeAll || Boolean(grp.filter) || groupUses.length > 0 ||
       ['👉 手动选择', '♻️ 自动选择'].includes(grp.name);
-    if ((options?.expandNodes || options?.dependencyGroupIds?.has(grp.id)) && acceptsNodes) {
+    if (!options?.dependencyGroupIds?.has(grp.id) && acceptsNodes && !grp.proxies?.length && !resolveGroupNodes(grp, candidates, sources).length) {
+      grpObj.proxies = ['REJECT'];
+      generatedGroups.push(grpObj);
+      return;
+    }
+    if ((options?.expandNodes || options?.dependencyGroupIds?.has(grp.id) && !options.ordinaryGroupIds?.has(grp.id)) && acceptsNodes) {
       const groupSources = options?.dependencyGroupIds?.has(grp.id)
         ? [...sources, ...candidates.filter(node => node.sourceId && !sources.some(source => source.id === node.sourceId)).map(node => ({ id: node.sourceId!, name: node.sourceName || node.sourceId!, enabled: true, nodes: [] } as unknown as SubscriptionSource))]
         : sources;
@@ -644,7 +650,7 @@ export function injectUnifiedToMihomo(
 
   const generatedRules: string[] = [];
   activeRules.forEach((r, idx) => {
-    const safeOutbound = resolveSafeOutbound(r.outbound, availableGroupNames, fallbackGroup);
+    const safeOutbound = resolveSafeOutbound(r.outbound === '🎯 本地直连' ? 'DIRECT' : r.outbound, availableGroupNames, fallbackGroup);
     if (r.type === 'FINAL') return; // final rule at the end
     const suffix = r.noResolve ? ',no-resolve' : '';
     if (r.kind === 'remote') {
@@ -663,7 +669,7 @@ export function injectUnifiedToMihomo(
 
   const finalRule = activeRules.find(r => r.type === 'FINAL');
   const finalMatch = finalRule
-    ? `MATCH,${resolveSafeOutbound(finalRule.outbound, availableGroupNames, fallbackGroup)}`
+    ? `MATCH,${resolveSafeOutbound(finalRule.outbound === '🎯 本地直连' ? 'DIRECT' : finalRule.outbound, availableGroupNames, fallbackGroup)}`
     : existingMatch || (availableGroupNames.has('🐟 漏网之鱼') ? 'MATCH,🐟 漏网之鱼' : `MATCH,${fallbackGroup}`);
 
   const postRules = Array.isArray(doc.post_rules)

@@ -325,19 +325,21 @@ test('retained native conditional groups keep stable references and validate eve
 test('unsupported strategy or schema is rejected explicitly and retained template rules are not silently repaired', async () => {
   const source = await addSource('/native-invalid', [{ name: 'Native invalid candidate', type: 'socks5', server: 'invalid.native.example', port: 1080 }], []);
   const { profile, groups, template, rule } = await profileFor(source);
-  await api(`/groups/${groups[0].id}`, 'PUT', { type: 'invented-strategy' });
-  let result = await preview(profile); assert.equal(result.status, 422); assert.equal(result.generation.diagnostics.at(-1).code, 'egern-group-unsupported');
+  const before = (await api('/groups')).data;
+  const invalid = await api(`/groups/${groups[0].id}`, 'PUT', { type: 'invented-strategy' });
+  assert.equal(invalid.status, 400); assert.equal(invalid.success, false);
+  assert.deepEqual((await api('/groups')).data, before);
+  let result = await preview(profile); assert.equal(result.success, true, result.message);
   for (const change of [{ type: 'relay' }, { type: 'urltest', lazy: true }, { type: 'load-balance', lazy: undefined, strategy: 'sticky-sessions' }]) {
-    await api(`/groups/${groups[0].id}`, 'PUT', change);
+    assert.equal((await api(`/groups/${groups[0].id}`, 'PUT', change)).success, true);
     result = await preview(profile); assert.equal(result.status, 422); assert.match(result.generation.diagnostics.at(-1).code, /^egern-group/);
   }
-  await api(`/groups/${groups[0].id}`, 'PUT', { type: 'select', strategy: null, lazy: null });
   // Create a separate supported group; old unsupported semantics stay outside this profile.
   const valid = (await api('/groups', 'POST', { name: 'Native schema valid group', type: 'select', sources: [source.id] })).data;
   await api(`/profiles/${profile.id}`, 'PUT', { selectedGroupIds: [valid.id] }); await api(`/rules/unified/${rule.id}`, 'PUT', { outbound: valid.name });
   for (const content of ['proxies: []\nproxy-groups: []\nrules: [MATCH,DIRECT]\n', 'proxies: [{name: Bad, type: ss}]\npolicy_groups: []\nrules: []\n', 'dns: {nameservers: [127.0.0.1]}\nproxies: []\npolicy_groups: []\nrules: []\n']) {
     await api(`/templates/${template.id}`, 'PUT', { content });
-    result = await preview(profile); assert.equal(result.status, 422); assert.equal(result.generation.diagnostics.at(-1).code, 'egern-template-schema-unsupported');
+    result = await preview(profile); assert.equal(result.status, 422, result.message); assert.equal(result.generation.diagnostics.at(-1).code, 'egern-template-schema-unsupported');
   }
   const broken = { ...nativeTemplate, rules: [{ domain: { match: 'broken.native.example', policy: 'Missing required native policy' } }] };
   await api(`/templates/${template.id}`, 'PUT', { content: yaml.dump(broken) });

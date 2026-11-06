@@ -155,6 +155,7 @@ export interface EgernGeneratorOptions {
   subToken?: string;
   ordinaryNodeIds?: ReadonlySet<string>;
   dependencyGroupIds?: ReadonlySet<string>;
+  ordinaryGroupIds?: ReadonlySet<string>;
   inventorySources?: SubscriptionSource[];
 }
 function parseTemplate(text: string): NativeEntry {
@@ -195,7 +196,7 @@ export function injectUnifiedToEgern(doc: NativeEntry, egernProxies: NativeEntry
     if (group.lazy !== undefined || group.strategy && !(group.type === 'load-balance' && group.strategy === 'round-robin')) return fail('egern-group-options-unsupported', `Egern 策略组「${group.name}」无法无损转换 lazy/strategy`);
     const type = ({ urltest: 'auto_test', 'load-balance': 'load_balance', direct: 'select', reject: 'select' } as Record<string, string>)[group.type] || group.type;
     const value: NativeEntry = { name: group.name };
-    const candidates = options?.dependencyGroupIds?.has(group.id) ? nodes : ordinary;
+    const candidates = options?.dependencyGroupIds?.has(group.id) && !options.ordinaryGroupIds?.has(group.id) ? nodes : ordinary;
     const groupSources = options?.dependencyGroupIds?.has(group.id) ? options.inventorySources || sources : sources;
     if (group.type === 'direct' || group.type === 'reject') value.policies = [group.type === 'direct' ? 'DIRECT' : 'REJECT'];
     else {

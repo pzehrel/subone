@@ -30,7 +30,7 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
   const plan: GenerationPlan = {
     target: { type: options.target, ...(options.target === 'singbox' ? { version: '1.14.4' } : options.target === 'egern' ? { version: '2.21.0' } : options.target === 'mihomo' ? { version: '1.19.33' } : options.target === 'loon' ? { version: '3.5.3' } : options.target === 'shadowrocket' ? { version: '2.2.93' } : options.target === 'quantumultx' ? { version: '1.8.1' } : {}), mode: nodeOnly ? 'nodes' : 'complete' },
     templateContent: stableTemplate(ordinary, groups), template, inventory: createRuntimeInventory(config),
-    ordinaryNodes: structuredClone(ordinary), dependencyNodes: [], dependencyGroupIds: [], dependencyReasons: [], groups: structuredClone(groups),
+    ordinaryNodes: structuredClone(ordinary), dependencyNodes: [], dependencyGroupIds: [], ordinaryGroupIds: groups.map(group => group.id), dependencyReasons: [], groups: structuredClone(groups),
     rules: structuredClone(options.profile ? getEffectiveRulesForProfile(options.profile) : config.rulesList),
     sources: structuredClone(sources.filter(source => source.enabled && (ordinary.some(node => node.sourceId === source.id) || options.profile?.nodeFilter?.sourceIds?.includes(source.id) || groups.some(group => (group.sources ?? group.use)?.some(mount => mount === source.id || mount === source.name))))),
     bindings: [],
@@ -53,7 +53,14 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
   do {
     bindNodes();
     changed = false;
-    const required = collectRuntimeDependencies(plan);
+    let required = collectRuntimeDependencies(plan);
+    const ordinaryGroups = required.groups.filter(requirement => requirement.ordinary && !plan.ordinaryGroupIds.includes(requirement.groupId));
+    if (ordinaryGroups.length) {
+      plan.ordinaryGroupIds.push(...new Set(ordinaryGroups.map(requirement => requirement.groupId)));
+      // Classify every ordinary root before connection completion can widen a shared group.
+      required = collectRuntimeDependencies(plan);
+      changed = true;
+    }
     const included = new Set([...plan.ordinaryNodes, ...plan.dependencyNodes].map(node => node.id));
     for (const requirement of required.nodes) {
       if (requirement.state !== 'omitted' || included.has(requirement.nodeId)) continue;
@@ -90,14 +97,14 @@ export function renderGeneration(input: GenerationPlan) {
   const plan = structuredClone(input);
   const nodes = [...plan.ordinaryNodes, ...plan.dependencyNodes];
   const { groups, rules, sources, templateContent } = plan;
-  const options = { expandNodes: plan.expandNodes, baseUrl: plan.baseUrl, subToken: plan.subToken, ordinaryNodeIds: new Set(plan.ordinaryNodes.map(node => node.id)), dependencyGroupIds: new Set(plan.dependencyGroupIds) };
+  const options = { expandNodes: plan.expandNodes, baseUrl: plan.baseUrl, subToken: plan.subToken, ordinaryNodeIds: new Set(plan.ordinaryNodes.map(node => node.id)), dependencyGroupIds: new Set(plan.dependencyGroupIds), ordinaryGroupIds: new Set(plan.ordinaryGroupIds) };
   let output: string;
   let contentType = 'text/plain; charset=utf-8';
   if (plan.target.mode === 'nodes') {
     diagnosePureNodes(plan);
     output = generateShadowrocketBase64(plan.ordinaryNodes);
   } else if (plan.target.type === 'singbox') {
-    const { document, nodeTags } = generateSingboxDocument(templateContent, nodes, groups, rules, sources, new Set(plan.ordinaryNodes.map(node => node.id)), new Set(plan.groups.filter(group => !plan.dependencyGroupIds.includes(group.id)).map(group => group.id)));
+    const { document, nodeTags } = generateSingboxDocument(templateContent, nodes, groups, rules, sources, new Set(plan.ordinaryNodes.map(node => node.id)), new Set(plan.ordinaryGroupIds));
     adaptSingboxDns(document, plan, nodeTags);
     validateSingboxRuntime(document, plan, nodeTags);
     output = JSON.stringify(document, null, 2);
@@ -133,9 +140,16 @@ export function renderSourceGeneration(plan: GenerationPlan, sourceId: string): 
   switch (plan.target.type) {
     case 'mihomo': return renderMihomoSource(plan, sourceId);
     case 'loon': {
-      renderGeneration(plan);
-      const serverDns = adaptLoonDns(structuredClone(plan));
-      return { output: ['[Proxy]', ...nodes.map(node => nodeToLoonProxy(node, serverDns.get(node.id)))].join('\n'), contentType: 'text/plain; charset=utf-8' };
+      const providerPlan = structuredClone(plan);
+      providerPlan.ordinaryNodes = nodes; providerPlan.dependencyNodes = [];
+      providerPlan.bindings = providerPlan.bindings.flatMap(binding => {
+        const nodeIds = binding.nodeIds.filter(id => nodes.some(node => node.id === id));
+        return nodeIds.length ? [{ ...binding, nodeIds }] : [];
+      });
+      const serverDns = adaptLoonDns(providerPlan);
+      const generation = generationMetadata(providerPlan);
+      if (generation.diagnostics.some(diagnostic => diagnostic.severity === 'error')) throw new GenerationError('节点连接依赖需修复', generation);
+      return { output: ['[Proxy]', ...nodes.map(node => nodeToLoonProxy(node, serverDns.get(node.id)))].join('\n'), contentType: 'text/plain; charset=utf-8', generation };
     }
     case 'quantumultx': return renderQuantumultXSource(plan, sourceId);
     case 'egern': return { output: renderEgernSource(plan, sourceId), contentType: 'text/yaml; charset=utf-8' };

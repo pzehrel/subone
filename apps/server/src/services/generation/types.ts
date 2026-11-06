@@ -41,6 +41,7 @@ export interface GenerationPlan {
   ordinaryNodes: ProxyNode[];
   dependencyNodes: ProxyNode[];
   dependencyGroupIds: string[];
+  ordinaryGroupIds: string[];
   dependencyReasons?: RuntimeNodeRequirement[];
   groups: ProxyGroupItem[];
   rules: UnifiedRuleItem[];

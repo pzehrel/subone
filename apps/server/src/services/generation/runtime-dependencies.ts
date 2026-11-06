@@ -1,7 +1,7 @@
 import { defaultMihomoDohEgress } from '../../core/parser/source-doh';
 import { isIP } from 'node:net';
 import type { AppConfig, ClientType, ProxyGroupItem, ProxyNode, SourceDohReference, SubscriptionSource } from '../../types';
-import type { GenerationPlan, GenerationDiagnostic } from './types';
+import { GenerationError, generationMetadata, type GenerationPlan, type GenerationDiagnostic } from './types';
 
 type Document = Record<string, any>;
 export interface RuntimeInventoryNode {
@@ -35,7 +35,7 @@ export function singboxStrategyIssue(format: string | undefined, raw: Document):
 
 export interface RuntimePathEntry { kind: 'outbound' | 'resolver'; id: string; label: string; reason?: string }
 
-/** Inspect only connections reachable from actually adopted bindings in the final client document. */
+/** Inspect adopted connections and retained ordinary routing in the final client document. */
 export function validateSingboxRuntime(doc: Document, plan: GenerationPlan, nodeTags: ReadonlyMap<string, string[]>): void {
   const outbounds: Document[] = Array.isArray(doc.outbounds) ? doc.outbounds : [];
   const resolvers: Document[] = Array.isArray(doc.dns?.servers) ? doc.dns.servers : [];
@@ -46,8 +46,8 @@ export function validateSingboxRuntime(doc: Document, plan: GenerationPlan, node
     const group = id.startsWith('group:') ? plan.inventory.groups.find(group => group.id === id.slice(6)) : undefined;
     return { kind, id, label: kind === 'resolver' && value?.server ? `DNS ${value.server}` : node?.name || group?.name || id, ...(reason ? { reason } : {}) };
   };
-  for (const binding of plan.bindings) {
-    if (binding.diagnostics.some(diagnostic => diagnostic.severity === 'error')) continue;
+  for (const binding of [...plan.bindings, undefined]) {
+    if (binding?.diagnostics.some(diagnostic => diagnostic.severity === 'error')) continue;
     const visited = new Set<string>();
     let issue: Omit<GenerationDiagnostic, 'sourceId' | 'serviceId'> | undefined;
     const visit = (current: RuntimePathEntry, stack: RuntimePathEntry[]): void => {
@@ -85,8 +85,12 @@ export function validateSingboxRuntime(doc: Document, plan: GenerationPlan, node
       }
       visited.add(key);
     };
-    for (const id of binding.nodeIds) for (const tag of nodeTags.get(id) || []) visit(entry('outbound', tag), []);
-    if (issue) binding.diagnostics.push({ ...issue, sourceId: binding.sourceId, serviceId: binding.appliedServiceIds[0] });
+    if (binding) for (const id of binding.nodeIds) for (const tag of nodeTags.get(id) || []) visit(entry('outbound', tag), []);
+    else for (const tag of [...singboxRoutingTargets(doc), ...outbounds.filter(value => Array.isArray(value.outbounds)).map(value => value.tag)]) visit(entry('outbound', tag, 'ordinary routing'), []);
+    if (issue) {
+      if (binding) binding.diagnostics.push({ ...issue, sourceId: binding.sourceId, serviceId: binding.appliedServiceIds[0] });
+      else throw new GenerationError('sing-box 出站引用需修复', { ...generationMetadata(plan), diagnostics: [...generationMetadata(plan).diagnostics, issue] });
+    }
   }
 }
 
@@ -97,7 +101,7 @@ export interface RuntimeNodeRequirement {
   bindingSourceId: string;
   reason: string[];
 }
-export interface RuntimeGroupRequirement { groupId: string; bindingSourceId: string; reason: string[] }
+export interface RuntimeGroupRequirement { groupId: string; bindingSourceId: string; reason: string[]; ordinary?: boolean }
 export interface RuntimeDependencyCollection { nodes: RuntimeNodeRequirement[]; groups: RuntimeGroupRequirement[] }
 
 type RuntimeDependencyCollector = (plan: GenerationPlan) => RuntimeDependencyCollection;
@@ -135,33 +139,35 @@ function collectSingboxRuntimeDependencies(plan: GenerationPlan): RuntimeDepende
     for (const member of raw.outbounds ?? raw.proxies ?? []) if (typeof member === 'string') outbound(source, sourceReference(source, member), owner, [...reason, group.name]);
     if (typeof raw.detour === 'string') outbound(source, sourceReference(source, raw.detour), owner, [...reason, group.name]);
   };
-  const managedGroup = (id: string, owner: string, reason: string[]): void => {
-    if (!once(`${owner}:managed:${id}`)) return;
-    result.groups.push({ groupId: id, bindingSourceId: owner, reason });
+  const ordinaryGroups = new Set(plan.ordinaryGroupIds);
+  const managedGroup = (id: string, owner: string, reason: string[], ordinary = false): void => {
+    if (ordinary) ordinaryGroups.add(id);
+    if (!once(`${owner}:managed:${id}:${ordinary}`)) return;
+    result.groups.push({ groupId: id, bindingSourceId: owner, reason, ordinary });
     const group = plan.inventory.groups.find(group => group.id === id);
     if (!group || ['direct', 'reject'].includes(group.type)) return;
-    for (const member of group.proxies || []) templateOutbound(member, owner, [...reason, group.name]);
+    for (const member of group.proxies || []) templateOutbound(member, owner, [...reason, group.name], ordinary);
     // Mounted candidates follow the same ordinary selection as generated automatic groups.
     const mounts = group.sources ?? group.use;
-    const candidatesPool = plan.groups.some(candidate => candidate.id === id) && !plan.dependencyGroupIds.includes(id) ? plan.ordinaryNodes : plan.inventory.nodes.filter(entry => entry.state === 'enabled').map(entry => entry.node);
+    const candidatesPool = ordinaryGroups.has(id) ? plan.ordinaryNodes : plan.inventory.nodes.filter(entry => entry.state === 'enabled').map(entry => entry.node);
     let candidates = mounts?.length ? candidatesPool.filter(candidate => {
       const entry = plan.inventory.nodes.find(entry => entry.node.id === candidate.id)!; const source = sourceOf(entry.sourceId); return mounts.includes(entry.sourceId) || !!source && mounts.includes(source.name); }) : plan.ordinaryNodes;
     if (group.filter) { try { const regex = new RegExp(group.filter.replace(/\(\?i\)/gi, ''), 'i'); candidates = candidates.filter(node => regex.test(node.name)); } catch { /* Actual generator reports invalid patterns. */ } }
     if (group.type !== 'relay' && (mounts?.length || group.filter || !group.proxies?.length)) for (const candidate of candidates) node(candidate.id, owner, [...reason, group.name]);
   };
-  const templateOutbound = (tag: string, owner: string, reason: string[]): void => {
+  const templateOutbound = (tag: string, owner: string, reason: string[], ordinary = false): void => {
     const matches = (template.outbounds || []).filter((value: Document) => value.tag === tag);
     if (!matches.length && tag.startsWith('node:')) return node(tag.slice(5), owner, [...reason, tag]);
-    if (!matches.length && tag.startsWith('group:')) return managedGroup(tag.slice(6), owner, reason);
+    if (!matches.length && tag.startsWith('group:')) return managedGroup(tag.slice(6), owner, reason, ordinary);
     const selectedNode = !matches.length && [...plan.ordinaryNodes, ...plan.dependencyNodes].find(node => node.name === tag);
     if (selectedNode) return node(selectedNode.id, owner, [...reason, tag]);
-    const selectedGroup = !matches.length && plan.groups.find(group => group.name === tag);
-    if (selectedGroup) return managedGroup(selectedGroup.id, owner, reason);
-    if (!once(`${owner}:template-outbound:${tag}`)) return;
+    const selectedGroup = !matches.length && plan.inventory.groups.find(group => group.name === tag);
+    if (selectedGroup) return managedGroup(selectedGroup.id, owner, reason, ordinary);
+    if (!once(`${owner}:template-outbound:${tag}:${ordinary}`)) return;
     if (matches.length !== 1) return;
     const value = matches[0];
     if (typeof value.detour === 'string') templateOutbound(value.detour, owner, [...reason, tag]);
-    for (const member of value.outbounds || []) if (typeof member === 'string') templateOutbound(member, owner, [...reason, tag]);
+    for (const member of value.outbounds || []) if (typeof member === 'string') templateOutbound(member, owner, [...reason, tag], ordinary);
     if (needsHostnameLookup(value.server)) resolver(undefined, resolverTag(value.domain_resolver ?? template.route?.default_domain_resolver), owner, [...reason, tag]);
   };
   const resolver = (source: SubscriptionSource | undefined, tag: string | undefined, owner: string, reason: string[]): void => {
@@ -211,6 +217,16 @@ function collectSingboxRuntimeDependencies(plan: GenerationPlan): RuntimeDepende
     if (resolverTag(ownResolver)) resolver(source, resolverTag(ownResolver), owner, nextReason);
     else resolver(undefined, resolverTag(template.route?.default_domain_resolver), owner, nextReason);
   };
+  const ordinaryOwner = plan.bindings[0]?.sourceId || '';
+  const routing = { ...template, route: { ...template.route, ...(plan.rules.some(rule => rule.enabled && rule.type === 'FINAL') ? { final: undefined } : {}) } };
+  for (const target of singboxRoutingTargets(routing)) templateOutbound(target, ordinaryOwner, ['sing-box routing', target], true);
   for (const binding of plan.bindings) for (const id of binding.nodeIds) node(id, binding.sourceId, [binding.sourceName]);
   return result;
+}
+
+function singboxRoutingTargets(doc: Document): string[] {
+  const result: string[] = typeof doc.route?.final === 'string' ? [doc.route.final] : [];
+  const visit = (rules: Document[]) => { for (const rule of rules || []) { if (typeof rule.outbound === 'string') result.push(rule.outbound); if (Array.isArray(rule.rules)) visit(rule.rules); } };
+  visit(doc.route?.rules);
+  return [...new Set(result)];
 }

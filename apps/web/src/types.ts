@@ -134,6 +134,10 @@ export interface ProxyGroupItem {
   interval?: number;
   isCountryGroup?: boolean;
   icon?: string;
+  includeAll?: boolean;
+  strategy?: 'consistent-hashing' | 'round-robin' | 'sticky-sessions';
+  lazy?: boolean;
+  hidden?: boolean;
 }
 
 

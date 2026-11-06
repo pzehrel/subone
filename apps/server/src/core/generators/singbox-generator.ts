@@ -606,18 +606,21 @@ export function injectUnifiedToSingbox(
   });
 
   // Ensure 🎯 本地直连 always exists
-  const hasDirect = groupOutbounds.some((g: any) => g.tag === '🎯 本地直连' || g.type === 'direct') ||
-    customTemplateOutbounds.some((g: any) => g.tag === '🎯 本地直连' || g.type === 'direct');
+  const hasDirect = groupOutbounds.some((g: any) => g.tag === '🎯 本地直连') ||
+    customTemplateOutbounds.some((g: any) => g.tag === '🎯 本地直连');
   if (!hasDirect) {
     groupOutbounds.push({
       tag: '🎯 本地直连',
       type: 'direct',
     });
   }
+  if (![...groupOutbounds, ...customTemplateOutbounds].some((outbound: any) => outbound.tag === 'DIRECT')) {
+    groupOutbounds.push({ tag: 'DIRECT', type: 'direct' });
+  }
 
   // Ensure REJECT always exists
-  const hasReject = groupOutbounds.some((g: any) => g.tag === 'REJECT' || g.type === 'block') ||
-    customTemplateOutbounds.some((g: any) => g.tag === 'REJECT' || g.type === 'block');
+  const hasReject = groupOutbounds.some((g: any) => g.tag === 'REJECT') ||
+    customTemplateOutbounds.some((g: any) => g.tag === 'REJECT');
   if (!hasReject) {
     groupOutbounds.push({
       tag: 'REJECT',

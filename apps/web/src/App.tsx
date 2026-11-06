@@ -243,21 +243,17 @@ export function App() {
     }
   };
 
-  // Groups handlers
+  // Publish group changes only after the API acknowledges persistence.
   const handleAddGroup = async (group: Partial<ProxyGroupItem>) => {
     const res = await apiFetch(`${API_BASE}/groups`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(group),
     });
-    if (res.ok) {
-      const json = await res.json().catch(() => null);
-      if (json?.data) {
-        setConfig(prev => prev ? { ...prev, proxyGroups: [...(prev.proxyGroups || []), json.data] } : prev);
-      } else {
-        await fetchConfigOnly();
-      }
-    }
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.success === false) throw new Error(json?.message || '新建策略组失败');
+    if (json?.data) setConfig(prev => prev ? { ...prev, proxyGroups: [...(prev.proxyGroups || []), json.data] } : prev);
+    else await fetchConfigOnly();
   };
 
   const handleBatchImportGroups = async (text: string, replaceAll?: boolean) => {
@@ -266,62 +262,30 @@ export function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, replaceAll }),
     });
-    if (res.ok) {
-      const json = await res.json().catch(() => null);
-      if (json?.data) {
-        setConfig(prev => prev ? { ...prev, proxyGroups: json.data } : prev);
-      } else {
-        await fetchConfigOnly();
-      }
-    }
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.success === false) throw new Error(json?.message || '替换策略组失败');
+    if (json?.data) setConfig(prev => prev ? { ...prev, proxyGroups: json.data } : prev);
+    else await fetchConfigOnly();
   };
 
   const handleUpdateGroup = async (id: string, updates: Partial<ProxyGroupItem>) => {
-    // Optimistic update for instant UI feedback
-    setConfig(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        proxyGroups: (prev.proxyGroups || []).map(g => g.id === id ? { ...g, ...updates } : g),
-      };
+    const res = await apiFetch(`${API_BASE}/groups/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
     });
-
-    try {
-      const res = await apiFetch(`${API_BASE}/groups/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates),
-      });
-      if (res.ok) {
-        const json = await res.json().catch(() => null);
-        if (json?.data) {
-          setConfig(prev => {
-            if (!prev) return prev;
-            return {
-              ...prev,
-              proxyGroups: (prev.proxyGroups || []).map(g => g.id === id ? json.data : g),
-            };
-          });
-        }
-      } else {
-        await fetchConfigOnly();
-      }
-    } catch (err) {
-      console.error('Failed to update group:', err);
-      await fetchConfigOnly();
-    }
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.success === false) throw new Error(json?.message || '保存策略组失败');
+    if (json?.data) setConfig(prev => prev ? { ...prev, proxyGroups: (prev.proxyGroups || []).map(group => group.id === id ? json.data : group) } : prev);
+    await fetchConfigOnly();
   };
 
   const handleDeleteGroup = async (id: string) => {
-    setConfig(prev => prev ? {
-      ...prev,
-      proxyGroups: (prev.proxyGroups || []).filter(g => g.id !== id),
-    } : prev);
-
     const res = await apiFetch(`${API_BASE}/groups/${id}`, { method: 'DELETE' });
-    if (!res.ok) {
-      await fetchConfigOnly();
-    }
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.success === false) throw new Error(json?.message || '删除策略组失败');
+    setConfig(prev => prev ? { ...prev, proxyGroups: (prev.proxyGroups || []).filter(group => group.id !== id) } : prev);
+    await fetchConfigOnly();
   };
 
   // Unified Rules handlers

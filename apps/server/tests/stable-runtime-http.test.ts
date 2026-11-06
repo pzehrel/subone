@@ -45,7 +45,8 @@ test('an untouched packaged template binds its current managed target before the
   const content = JSON.parse(tpl.content);
   const group = (await api('/groups')).data.find((entry: any) => entry.name === content.route.final);
   assert.ok(group, 'the packaged default route names an initial managed group');
-  assert.equal((await api(`/groups/${group.id}`, 'PUT', { name: 'Renamed packaged default' })).success, true);
+  // The identity check uses a valid terminal group; an empty regional selector graph requires repair.
+  assert.equal((await api(`/groups/${group.id}`, 'PUT', { name: 'Renamed packaged default', type: 'direct', proxies: [], sources: [], filter: '' })).success, true);
   const profile = (await api('/profiles', 'POST', { name: 'Packaged identity', nodeFilter: { mode: 'manual', selectedNodeIds: [] }, selectedGroupIds: [group.id], templates: { singbox: tpl.id } })).data;
   await stopApp(); await startApp();
   const response = await fetch(`${origin}/s/${profile.token}/singbox`);

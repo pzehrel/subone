@@ -314,10 +314,35 @@ export function sanitizeProxyGroups(_config: AppConfig): boolean { return false;
 // Reads preserve unavailable references so users can repair them.
 apiRouter.get('/groups', (c) => c.json({ success: true, data: appConfig.proxyGroups }));
 
+function validateGroup(value: unknown, partial = false): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('策略组必须为对象');
+  const group = value as Record<string, unknown>;
+  if ('id' in group && (typeof group.id !== 'string' || !group.id.trim())) throw new Error('策略组 ID 无效');
+  if ((!partial || 'name' in group) && (typeof group.name !== 'string' || !group.name.trim())) throw new Error('请填写策略组名称');
+  if ('type' in group && !['select', 'urltest', 'fallback', 'load-balance', 'relay', 'direct', 'reject'].includes(group.type as string)) throw new Error('策略类型无效');
+  for (const field of ['proxies', 'sources', 'use']) {
+    if (field in group && group[field] !== undefined && (!Array.isArray(group[field]) || !(group[field] as unknown[]).every(item => typeof item === 'string' && item.trim()))) throw new Error(`${field} 必须为字符串列表`);
+  }
+  for (const field of ['filter', 'url', 'icon']) {
+    if (field in group && group[field] !== undefined && typeof group[field] !== 'string') throw new Error(`${field} 必须为文本`);
+  }
+  if (group.filter) {
+    try { new RegExp((group.filter as string).replace(/\(\?i\)/g, ''), 'i'); } catch { throw new Error('节点过滤正则无效'); }
+  }
+  for (const field of ['tolerance', 'interval']) {
+    if (field in group && group[field] !== undefined && (typeof group[field] !== 'number' || !Number.isFinite(group[field]) || (group[field] as number) < 0)) throw new Error(`${field} 必须为非负数`);
+  }
+  for (const field of ['includeAll', 'lazy', 'hidden', 'isCountryGroup']) {
+    if (field in group && group[field] !== undefined && typeof group[field] !== 'boolean') throw new Error(`${field} 必须为布尔值`);
+  }
+  if (group.strategy !== undefined && !['consistent-hashing', 'round-robin', 'sticky-sessions'].includes(group.strategy as string)) throw new Error('负载均衡策略无效');
+}
+
 apiRouter.post('/groups', (c) => {
   const body = c.get('body');
+  try { validateGroup(body); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
   const newGroup: ProxyGroupItem = {
-    id: `grp-${Date.now()}`,
+    id: `grp-${crypto.randomUUID()}`,
     name: body.name || '新分组',
     type: body.type || 'select',
     proxies: body.proxies || [],
@@ -332,12 +357,13 @@ apiRouter.post('/groups', (c) => {
     lazy: body.lazy,
     hidden: body.hidden,
     icon: body.icon,
+    isCountryGroup: body.isCountryGroup,
   };
   try {
     const candidate = structuredClone(appConfig);
     const normalized = normalizeGroupReferences(newGroup, candidate);
     candidate.proxyGroups.push(normalized);
-    commitConfig(candidate);
+    try { commitConfig(candidate); } catch (error: any) { return c.json({ success: false, message: error.message }, 500); }
     return c.json({ success: true, data: normalized });
   } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });
@@ -348,19 +374,33 @@ apiRouter.post('/groups/batch-import', (c) => {
   if (!text || typeof text !== 'string') {
     return c.json({ success: false, message: 'Text required' }, 400);
   }
-  const parsed = parseProxyGroupsText(text);
-  if (parsed.length === 0) {
-    return c.json({ success: false, message: '未能从粘贴内容中识别到策略组' }, 400);
-  }
-
   try {
+    const parsed = parseProxyGroupsText(text);
+    if (parsed.length === 0) {
+      const document = yaml.load(text) as any;
+      const list = Array.isArray(document) ? document : document?.['proxy-groups'] ?? document?.outbounds;
+      if (!replaceAll || !Array.isArray(list) || list.length !== 0) return c.json({ success: false, message: '未能从粘贴内容中识别到策略组' }, 400);
+    }
+    parsed.forEach(group => validateGroup(group));
     const candidate = structuredClone(appConfig);
+    candidate.templates = candidate.templates.map(template => prepareTemplateReferences(template, candidate, template));
+    candidate.proxyGroups = candidate.proxyGroups.map(group => normalizeGroupReferences(group, candidate));
+    const previousGroups = candidate.proxyGroups;
     const names = new Set(replaceAll ? [] : candidate.proxyGroups.map(group => group.name));
     const additions = parsed.filter(group => !names.has(group.name));
     if (replaceAll) candidate.proxyGroups = additions;
     else candidate.proxyGroups.push(...additions);
+    if (new Set(candidate.proxyGroups.map(group => group.id)).size !== candidate.proxyGroups.length) throw new Error('策略组 ID 重复');
+    const renamedGroups = new Map<string, string>();
+    for (const previous of previousGroups) {
+      const updated = candidate.proxyGroups.find(group => group.id === previous.id);
+      if (updated && previous.name !== updated.name && previousGroups.filter(group => group.name === previous.name).length === 1) {
+        renamedGroups.set(previous.name, updated.name);
+      }
+    }
+    for (const rule of candidate.rulesList) rule.outbound = renamedGroups.get(rule.outbound) ?? rule.outbound;
     candidate.proxyGroups = candidate.proxyGroups.map(group => normalizeGroupReferences(group, candidate));
-    commitConfig(candidate);
+    try { commitConfig(candidate); } catch (error: any) { return c.json({ success: false, message: error.message }, 500); }
     return c.json({ success: true, count: parsed.length, data: candidate.proxyGroups });
   } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });
@@ -419,25 +459,15 @@ apiRouter.put('/groups/:id', (c) => {
   const body = c.get('body');
   const idx = appConfig.proxyGroups.findIndex(g => g.id === c.req.param('id'));
   if (idx === -1) return c.json({ success: false, message: 'Group not found' }, 404);
+  try { validateGroup(body, true); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
   
   const current = appConfig.proxyGroups[idx];
-  const updated = { ...current, ...body };
+  const updated = { ...current, ...body, id: current.id };
 
-  // Explicitly handle clearing fields if provided
-  if ('proxies' in body) {
-    if (Array.isArray(body.proxies) && body.proxies.length > 0) {
-      updated.proxies = body.proxies;
-    } else {
-      delete updated.proxies;
-    }
-  }
-
-  if ('use' in body) {
-    if (Array.isArray(body.use) && body.use.length > 0) {
-      updated.use = body.use;
-    } else {
-      delete updated.use;
-    }
+  // Both names represent one mount list, including an explicit empty list.
+  if ('sources' in body || 'use' in body) {
+    updated.sources = 'sources' in body ? body.sources : body.use;
+    updated.use = updated.sources;
   }
 
   if ('filter' in body) {
@@ -457,7 +487,7 @@ apiRouter.put('/groups/:id', (c) => {
       for (const rule of candidate.rulesList) if (rule.outbound === previousGroup.name) rule.outbound = updated.name;
     }
     candidate.proxyGroups[idx] = normalizeGroupReferences(updated, candidate);
-    commitConfig(candidate);
+    try { commitConfig(candidate); } catch (error: any) { return c.json({ success: false, message: error.message }, 500); }
     return c.json({ success: true, data: candidate.proxyGroups[idx] });
   } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });
@@ -469,7 +499,7 @@ apiRouter.delete('/groups/:id', (c) => {
   try {
     removeGroupReferences(candidate, group);
     candidate.proxyGroups = candidate.proxyGroups.filter(item => item.id !== group.id);
-    commitConfig(candidate);
+    try { commitConfig(candidate); } catch (error: any) { return c.json({ success: false, message: error.message }, 500); }
     return c.json({ success: true, message: 'Group deleted' });
   } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
 });

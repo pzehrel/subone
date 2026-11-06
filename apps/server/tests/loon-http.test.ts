@@ -125,7 +125,8 @@ test('Loon keeps native template namespaces and stable managed references throug
 test('retained Loon template references complete runtime dependencies without adding them to ordinary candidates or providers', async () => {
   const ordinary = await addSource('/loon-ordinary', ['https://192.0.2.20/dns-query'], 'ordinary.runtime.example');
   const dependency = await addSource('/loon-dependency', ['https://192.0.2.21/dns-query'], 'dependency.runtime.example');
-  const requiredGroup = (await api('/groups', 'POST', { name: 'Loon required', type: 'select', sources: [dependency.id] })).data;
+  // An explicit stable pin authorizes this connection dependency; an ordinary mount cannot widen the profile pool.
+  const requiredGroup = (await api('/groups', 'POST', { name: 'Loon required', type: 'select', proxies: [`node:${dependency.nodes[0].id}`] })).data;
   const content = template.replace('[Proxy Group]\n', '[Proxy Group]\nNative runtime = select, Loon required\n').replace('DOMAIN,kept.example,DIRECT', 'DOMAIN,kept.example,Native runtime');
   const profile = await profileFor([ordinary], content);
   const preview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'loon', expandNodes: true });
@@ -150,7 +151,12 @@ test('retained Loon template references complete runtime dependencies without ad
   const broken = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'loon', expandNodes: true });
   assert.equal(broken.status, 422);
   assert.ok(broken.generation.diagnostics.some((diagnostic: any) => diagnostic.code === 'loon-outbound-reference-missing'));
-  assert.equal((await fetch(`${origin}/s/${profile.token}/source/${ordinary.id}?target=loon`)).status, 422);
+  // The provider emits the ordinary node only and does not use the broken managed group.
+  const unaffectedProvider = await fetch(`${origin}/s/${profile.token}/source/${ordinary.id}?target=loon`);
+  assert.equal(unaffectedProvider.status, 200);
+  const providerText = await unaffectedProvider.text();
+  assert.match(providerText, / = SOCKS5,ordinary\.runtime\.example,1080.*server-dns="https:\/\/192\.0\.2\.20\/dns-query"/);
+  assert.doesNotMatch(providerText, /dependency\.runtime\.example|node:/);
   assert.equal((await api(`/nodes/${dependency.nodes[0].id}`, 'PUT', { enabled: true })).success, true);
   await stopApp(); await startApp();
   assert.equal(await fetch(`${origin}/s/${profile.token}/loon?expand=true`).then(response => response.text()), preview.data);
