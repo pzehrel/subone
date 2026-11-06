@@ -10,6 +10,7 @@ import { getEffectiveNodes, getEffectiveNodesForProfile, getEffectiveGroupsForPr
 import { requiresExpandedNodes, resolveOutputReferences, prepareTemplateReferences, resolveTemplateReferences, templateOutboundNames } from './node-references';
 import { createRuntimeInventory, validateSingboxRuntime } from './generation/runtime-dependencies';
 import { adaptSingboxDns } from './generation/adapters/singbox';
+import { adaptMihomoDns, validateMihomoRuntime } from './generation/adapters/mihomo';
 import { retainTemplateDns } from './generation/adapters/unsupported';
 import { GenerationError, generationMetadata, type GenerationOptions, type GenerationPlan } from './generation/types';
 export { GenerationError } from './generation/types';
@@ -26,7 +27,7 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
   const resolved = resolveOutputReferences(ordinary, groups, sources, options.target, templateOutboundNames(template));
   const nodeOnly = options.target === 'shadowrocket' && ['base64', 'b64'].includes(options.format || '');
   return {
-    target: { type: options.target, ...(options.target === 'singbox' ? { version: '1.14.4' } : {}), mode: nodeOnly ? 'nodes' : 'complete' },
+    target: { type: options.target, ...(options.target === 'singbox' ? { version: '1.14.4' } : options.target === 'mihomo' ? { version: '1.19.33' } : {}), mode: nodeOnly ? 'nodes' : 'complete' },
     templateContent: resolveTemplateReferences(template, resolved.nodes, resolved.groups), template, inventory: createRuntimeInventory(config),
     ordinaryNodes: resolved.nodes, dependencyNodes: [], groups: resolved.groups,
     rules: (options.profile ? getEffectiveRulesForProfile(options.profile) : config.rulesList).map(rule => {
@@ -51,7 +52,7 @@ export function renderGeneration(input: GenerationPlan) {
   const plan = structuredClone(input);
   const nodes = [...plan.ordinaryNodes, ...plan.dependencyNodes];
   const { groups, rules, sources, templateContent } = plan;
-  const options = { expandNodes: plan.expandNodes, baseUrl: plan.baseUrl, subToken: plan.subToken };
+  const options = { expandNodes: plan.expandNodes, baseUrl: plan.baseUrl, subToken: plan.subToken, ordinaryNodeIds: new Set(plan.ordinaryNodes.map(node => node.id)), dependencyGroupIds: new Set((plan as GenerationPlan & { dependencyGroupIds?: string[] }).dependencyGroupIds || []) };
   let output: string;
   let contentType = 'text/plain; charset=utf-8';
   if (plan.target.mode === 'nodes') {
@@ -62,10 +63,15 @@ export function renderGeneration(input: GenerationPlan) {
     validateSingboxRuntime(document, plan, nodeTags);
     output = JSON.stringify(document, null, 2);
     contentType = 'application/json; charset=utf-8';
+  } else if (plan.target.type === 'mihomo') {
+    const document = yaml.load(generateMihomoConfig(templateContent, nodes, groups, rules, sources, options)) as Record<string, any>;
+    adaptMihomoDns(document, plan);
+    validateMihomoRuntime(document, plan);
+    output = yaml.dump(document, { indent: 2, lineWidth: -1, noRefs: true });
+    contentType = 'text/yaml; charset=utf-8';
   } else {
     retainTemplateDns(plan);
     switch (plan.target.type) {
-      case 'mihomo': output = generateMihomoConfig(templateContent, nodes, groups, rules, sources, options); contentType = 'text/yaml; charset=utf-8'; break;
       case 'loon': output = generateLoonConfig(templateContent, nodes, groups, rules, sources, options); break;
       case 'quantumultx': output = generateQuantumultXConfig(templateContent, nodes, groups, rules, sources, options); break;
       case 'egern': output = generateEgernConfig(templateContent, nodes, groups, rules, sources, options); contentType = 'text/yaml; charset=utf-8'; break;
@@ -81,7 +87,10 @@ export function renderGeneration(input: GenerationPlan) {
 export function renderSourceGeneration(plan: GenerationPlan, sourceId: string) {
   const nodes = plan.ordinaryNodes.filter(node => node.sourceId === sourceId);
   switch (plan.target.type) {
-    case 'mihomo': return { output: yaml.dump({ proxies: nodes.map(nodeToMihomoProxy) }, { indent: 2, lineWidth: -1, noRefs: true }), contentType: 'text/yaml; charset=utf-8' };
+    case 'mihomo': {
+      const final = yaml.load(renderGeneration({ ...plan, expandNodes: true }).output) as Record<string, any>;
+      return { output: yaml.dump({ proxies: nodes.map(node => final.proxies.find((proxy: any) => proxy.name === node.name) || nodeToMihomoProxy(node)) }, { indent: 2, lineWidth: -1, noRefs: true }), contentType: 'text/yaml; charset=utf-8' };
+    }
     case 'loon': return { output: ['[Proxy]', ...nodes.map(nodeToLoonProxy)].join('\n'), contentType: 'text/plain; charset=utf-8' };
     case 'quantumultx': return { output: nodes.map(nodeToQuantumultXProxy).join('\n'), contentType: 'text/plain; charset=utf-8' };
     case 'egern': return { output: yaml.dump({ proxies: nodes.map(nodeToEgernProxy) }, { indent: 2, lineWidth: -1 }), contentType: 'text/yaml; charset=utf-8' };

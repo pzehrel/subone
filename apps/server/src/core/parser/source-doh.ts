@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { mihomoDnsFragment } from '../mihomo-dns';
 import { isIP } from 'node:net';
 import type { SourceDohOutbound, SourceDohReference, SourceDohResult, SourceDohService, SourceFormat, SubscriptionSource } from '../../types';
 
@@ -117,7 +118,7 @@ export function extractSourceDoh(format: SourceFormat, document?: Record<string,
     if (typeof value !== 'string' || !looksLikeHttps(value)) return;
     const hash = value.indexOf('#');
     const url = endpoint(hash < 0 ? value : value.slice(0, hash));
-    const suffix = hash < 0 ? undefined : value.slice(hash + 1).split('&').map(part => decodeURIComponent(part)).filter(part => part && !part.includes('=' )).at(-1);
+    const suffix = mihomoDnsFragment(value).route;
     services.push({ id: randomUUID(), path, url: url.href, raw: value, outbound: suffix ? suffix === 'DIRECT' ? { kind: 'direct' as const, name: suffix } : { kind: suffix === 'RULES' ? 'routing' as const : 'unresolved' as const, name: suffix } : defaultMihomoDohEgress(path, document) });
   };
   for (const [key, value] of Object.entries(document.dns)) {

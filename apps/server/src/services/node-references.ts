@@ -1,4 +1,5 @@
 import yaml from 'js-yaml';
+import { mihomoDnsFragment, withMihomoDnsRoute } from '../core/mihomo-dns';
 import type { AppConfig, ClientType, ConfigTemplate, ProxyGroupItem, ProxyNode, SubscriptionSource, TemplateConnectionReference } from '../types';
 
 export const nodeReference = (id: string): string => `node:${id}`;
@@ -155,15 +156,14 @@ function templateSlots(document: any, type: ClientType): TemplateSlot[] {
       if (Array.isArray(value)) { value.forEach((_item, index) => dnsValues(value, index, [...owner, key])); return; }
       if (typeof value !== 'string' || !value.includes('#')) return;
       const hash = value.indexOf('#');
-      const fragment = value.slice(hash + 1); const end = fragment.indexOf('&');
-      const literal = end < 0 ? fragment : fragment.slice(0, end);
-      if (!literal || literal.includes('=')) return;
+      const literal = mihomoDnsFragment(value).route;
+      if (!literal) return;
       const identity = JSON.stringify([type, 'dns', ...owner, typeof key === 'string' ? key : '', value.slice(0, hash)]);
       const occurrence = dnsOccurrences.get(identity) || 0; dnsOccurrences.set(identity, occurrence + 1);
-      slots.push({ slot: JSON.stringify([identity, occurrence]), literal, write: target => { container[key] = value.slice(0, hash + 1) + target + (end < 0 ? '' : fragment.slice(end)); } });
+      slots.push({ slot: JSON.stringify([identity, occurrence]), literal, write: target => { container[key] = withMihomoDnsRoute(value, target); } });
     };
-    for (const key of ['nameserver', 'fallback', 'proxy-server-nameserver']) dnsValues(document.dns, key, []);
-    for (const key of Object.keys(document.dns?.['nameserver-policy'] || {})) dnsValues(document.dns['nameserver-policy'], key, ['nameserver-policy']);
+    for (const key of ['nameserver', 'fallback', 'proxy-server-nameserver', 'default-nameserver', 'direct-nameserver']) dnsValues(document.dns, key, []);
+    for (const policy of ['nameserver-policy', 'proxy-server-nameserver-policy']) for (const key of Object.keys(document.dns?.[policy] || {})) dnsValues(document.dns[policy], key, [policy]);
   }
   return slots;
 }
