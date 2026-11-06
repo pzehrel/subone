@@ -98,6 +98,7 @@ function templateDocument(template: ConfigTemplate): any {
 }
 
 function ownedOutboundNames(document: any, type: ClientType): Set<string> {
+  if (type === 'egern') return new Set([...templateArray(document?.proxies), ...templateArray(document?.policy_groups)].map(entry => entry && typeof entry === 'object' ? (Object.values(entry)[0] as any)?.name : undefined).filter((name): name is string => typeof name === 'string'));
   const entries = type === 'singbox' ? templateArray(document?.outbounds) : [...templateArray(document?.proxies), ...templateArray(document?.['proxy-groups'])];
   return new Set(entries.map((entry: any) => type === 'singbox' ? entry?.tag : entry?.name).filter((name: unknown): name is string => typeof name === 'string'));
 }
@@ -135,6 +136,27 @@ function templateSlots(document: any, type: ClientType): TemplateSlot[] {
       }
     };
     routeRules(document.route?.rules, ['route', 'rules']);
+  } else if (type === 'egern') {
+    const typed = (entry: any): any => entry && typeof entry === 'object' && Object.keys(entry).length === 1 ? Object.values(entry)[0] : undefined;
+    add(['config'], document, 'default_proxy_group'); add(['config'], document, 'default_subscription_group');
+    for (const [index, entry] of templateArray(document.proxies).entries()) {
+      const proxy = typed(entry); add(['proxy', ownerKey(proxy, index, 'name')], proxy, 'prev_hop');
+    }
+    for (const [index, entry] of templateArray(document.policy_groups).entries()) {
+      const group = typed(entry); const owner = ['group', ownerKey(group, index, 'name')];
+      add(owner, group, 'prev_hop'); add(owner, group, 'default_policy');
+      if (Array.isArray(group?.rules)) group.rules.forEach((entry: any, ruleIndex: number) => add([...owner, 'rules', ruleIndex], typed(entry), 'policy'));
+      if (Array.isArray(group?.policies)) group.policies.forEach((_value: unknown, member: number) => add([...owner, 'policies'], group.policies, member));
+    }
+    const occurrences = new Map<string, number>();
+    for (const entry of templateArray(document.rules)) {
+      const rule = typed(entry);
+      if (!rule || typeof rule !== 'object') continue;
+      const identity = { ...rule }; delete identity.policy;
+      const key = stableJson([Object.keys(entry)[0], identity]);
+      const occurrence = occurrences.get(key) || 0; occurrences.set(key, occurrence + 1);
+      add(['rule', key, occurrence], rule, 'policy');
+    }
   } else if (type === 'mihomo') {
     for (const [index, proxy] of templateArray(document.proxies).entries()) add(['proxy', ownerKey(proxy, index, 'name')], proxy, 'dialer-proxy');
     for (const [index, group] of templateArray(document['proxy-groups']).entries()) {

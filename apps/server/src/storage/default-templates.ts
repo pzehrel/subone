@@ -105,7 +105,7 @@ function getFallbackTemplate(type: ClientType): string {
     case 'quantumultx':
       return `[general]\nserver_check_url = http://cp.cloudflare.com/generate_204\n\n[dns]\nserver = 223.5.5.5\nserver = 119.29.29.29\n\n[policy]\n\n[server_remote]\n\n[server_local]\n\n[filter_remote]\n\n[filter_local]\nfinal, 🐟 漏网之鱼\n\n[rewrite_remote]\n\n[rewrite_local]\n\n[mitm]\nhostname =\n`;
     case 'egern':
-      return `general:\n  log-level: notify\n\nproxies: []\nproxy-groups: []\nrules:\n  - MATCH,🐟 漏网之鱼\n`;
+      return `dns:\n  bootstrap: [223.5.5.5, 119.29.29.29]\nproxies: []\npolicy_groups: []\nrules:\n  - default:\n      policy: DIRECT\n`;
     case 'shadowrocket':
       return `[General]\nbypass-system = true\n\n[Proxy]\n\n[Proxy Group]\n\n[Rule]\nFINAL,🐟 漏网之鱼\n`;
     default:

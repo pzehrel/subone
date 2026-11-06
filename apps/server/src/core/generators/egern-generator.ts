@@ -1,411 +1,273 @@
 import yaml from 'js-yaml';
-import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
-import { adaptRulesetForEgern, formatRuleTag } from './ruleset-adapter';
-import { sourceSubscriptionUrl, resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag } from './common';
-import { nodeToMihomoProxy } from './mihomo-generator';
+import type { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
+import { cleanSourceOrGroupName, formatCidr, formatSourceGroupTag } from './common';
+import { resolveGroupNodes } from './group-nodes';
 
-export function nodeToEgernProxy(node: ProxyNode): any {
-  // Egern uses the modern proxy specification compatible with Mihomo's proxy object schema
-  return nodeToMihomoProxy(node);
+export class EgernConfigError extends Error {
+  constructor(public code: string, message: string) { super(message); this.name = 'EgernConfigError'; }
+}
+const fail = (code: string, message: string): never => { throw new EgernConfigError(code, message); };
+type NativeEntry = Record<string, any>;
+export const egernEntry = (entry: NativeEntry): NativeEntry => Object.values(entry)[0] as NativeEntry;
+
+/** Egern 2.21 uses a typed mapping, never a Mihomo proxy object. */
+export function nodeToEgernProxy(node: ProxyNode): NativeEntry {
+  const value: NativeEntry = { name: node.name, server: node.server.trim().replace(/^\[(.*)\]$/, '$1'), port: node.port };
+  const unsupported = (detail: string): never => fail('egern-node-options-unsupported', `Egern 节点「${node.name}」无法无损转换 ${detail}`);
+  const raw = node.raw && typeof node.raw === 'object' ? node.raw : {};
+  if (node.detour) value.prev_hop = node.detour;
+  if (raw.tfo !== undefined || raw.tcp_fast_open !== undefined) value.tfo = raw.tfo ?? raw.tcp_fast_open;
+  if (node.fingerprint || node.certificate || node.certificatePublicKeySha256?.length) unsupported('TLS 指纹/证书选项');
+  if (node.multiplex || raw.smux?.enabled || raw.multiplex?.enabled) unsupported('multiplex');
+  if (node.maxEarlyData || node.earlyDataHeaderName) unsupported('WebSocket early data');
+  if (node.packetEncoding) unsupported('packetEncoding');
+  if (node.alpn?.length && node.type !== 'tuic' && !(node.network === 'grpc' && node.alpn.length === 1 && node.alpn[0] === 'h2')) unsupported('ALPN');
+  if (node.network && node.network !== 'tcp' && !['vmess', 'vless', 'trojan'].includes(node.type)) unsupported(`transport ${node.network}`);
+  if (node.reality?.enabled && !['vmess', 'vless', 'trojan', 'anytls'].includes(node.type)) unsupported('REALITY');
+  if (node.udp !== undefined && ['ss', 'socks5', 'vmess', 'vless', 'trojan', 'snell', 'anytls'].includes(node.type)) value.udp_relay = node.udp;
+  const tls = (): NativeEntry => ({ ...(node.sni ? { sni: node.sni } : {}), ...(node.reality?.enabled
+    ? { reality: { public_key: node.reality.publicKey, ...(node.reality.shortId ? { short_id: node.reality.shortId } : {}) } }
+    : { skip_tls_verify: node.skipCertVerify ?? false }) });
+  const transport = (): NativeEntry | undefined => {
+    switch (node.network || 'tcp') {
+      case 'tcp': return node.tls || node.reality?.enabled ? { tls: tls() } : undefined;
+      case 'ws':
+        if (node.reality?.enabled) return unsupported('WebSocket REALITY');
+        return { [node.tls ? 'wss' : 'ws']: { path: node.wsPath || '/', ...(node.wsHeaders ? { headers: node.wsHeaders } : {}), ...(node.tls ? tls() : {}) } };
+      case 'grpc':
+        if (!node.tls && !node.reality?.enabled) return unsupported('明文 gRPC');
+        return { grpc: { ...(node.grpcServiceName ? { service_name: node.grpcServiceName } : {}), ...tls() } };
+      case 'http':
+        if (node.tls || node.reality?.enabled) return unsupported('HTTP/1 TLS transport');
+        return { http1: { path: node.wsPath || '/' } };
+      case 'h2': {
+        if (!node.tls || node.reality?.enabled) return unsupported('HTTP/2 非 TLS / REALITY transport');
+        const hosts = raw['h2-opts']?.host;
+        if (Array.isArray(hosts) && hosts.length > 1) return unsupported('HTTP/2 多 Host');
+        const host = node.h2Host || (Array.isArray(hosts) ? hosts[0] : hosts);
+        return { http2: { path: node.h2Path || node.wsPath || '/', ...(host ? { headers: { Host: host } } : {}), ...tls() } };
+      }
+      default: return unsupported(`transport ${node.network}`);
+    }
+  };
+  const portHopping = () => {
+    if (node.serverPorts?.length) value.port_hopping = node.serverPorts.join(',');
+    if (node.hopInterval) {
+      if (!/^\d+s?$/.test(node.hopInterval)) unsupported('port hopping interval');
+      value.port_hopping_interval = Number(node.hopInterval.replace(/s$/, ''));
+    }
+  };
+  switch (node.type) {
+    case 'ss':
+      value.method = node.method || node.cipher;
+      value.password = node.password;
+      if (node.plugin || raw.plugin) {
+        const plugin = node.plugin || raw.plugin;
+        if (!['obfs-local', 'simple-obfs'].includes(plugin)) unsupported(`插件 ${plugin}`);
+        const opts = node.pluginOpts || raw['plugin-opts'] || {};
+        if (!['http', 'tls'].includes(opts.mode) || Object.keys(opts).some(key => !['mode', 'host', 'uri'].includes(key))) unsupported('Shadowsocks obfs 插件参数');
+        value.obfs = opts.mode;
+        if (opts.host) value.obfs_host = opts.host;
+        if (opts.uri) value.obfs_uri = opts.uri;
+      }
+      return { shadowsocks: value };
+    case 'socks5':
+    case 'http':
+      if (node.username !== undefined) value.username = node.username;
+      if (node.password !== undefined) value.password = node.password;
+      if (node.tls) Object.assign(value, tls());
+      if (node.type === 'http' && raw.headers) value.headers = structuredClone(raw.headers);
+      return { [node.type === 'http' ? node.tls ? 'https' : 'http' : node.tls ? 'socks5_tls' : 'socks5']: value };
+    case 'vmess':
+    case 'vless': {
+      if (node.alterId) unsupported('VMess alterId');
+      value.user_id = node.uuid;
+      if (node.type === 'vmess') value.security = node.cipher || node.method || 'auto';
+      if (node.flow) {
+        if (node.type !== 'vless' || node.flow !== 'xtls-rprx-vision') unsupported(`flow ${node.flow}`);
+        value.flow = node.flow;
+      }
+      const nativeTransport = transport();
+      if (nativeTransport) value.transport = nativeTransport;
+      return { [node.type]: value };
+    }
+    case 'trojan':
+    case 'anytls':
+      value.password = node.password;
+      Object.assign(value, tls());
+      if (node.type === 'anytls' && (node.idleSessionTimeout || node.idleSessionCheckInterval || node.minIdleSession)) unsupported('AnyTLS session options');
+      if (node.network && node.network !== 'tcp') {
+        if (node.type !== 'trojan' || node.network !== 'ws') unsupported(`transport ${node.network}`);
+        if (node.wsHeaders && Object.keys(node.wsHeaders).some(key => key.toLowerCase() !== 'host')) unsupported('Trojan WebSocket headers');
+        const host = Object.entries(node.wsHeaders || {}).find(([key]) => key.toLowerCase() === 'host')?.[1];
+        value.websocket = { path: node.wsPath || '/', ...(host ? { host } : {}) };
+      }
+      return { [node.type]: value };
+    case 'snell':
+      value.psk = node.psk || node.password;
+      if (node.snellVersion !== undefined) value.version = node.snellVersion;
+      if (node.obfs) {
+        if (!['http', 'tls'].includes(node.obfs)) unsupported('Snell obfs');
+        value.obfs = node.obfs;
+        if (node.obfsHost) value.obfs_host = node.obfsHost;
+      }
+      return { snell: value };
+    case 'hysteria2':
+      value.auth = node.password;
+      Object.assign(value, tls());
+      if (node.obfs) {
+        if (node.obfs !== 'salamander') unsupported('Hysteria2 obfs');
+        value.obfs = node.obfs;
+        if (node.obfsPassword) value.obfs_password = node.obfsPassword;
+      }
+      if (node.downMbps !== undefined) unsupported('Hysteria2 download bandwidth');
+      if (node.upMbps !== undefined) value.bandwidth = node.upMbps;
+      portHopping();
+      return { hysteria2: value };
+    case 'tuic':
+      if (node.zeroRttHandshake !== undefined || node.heartbeat || node.quicCongestionControl || node.congestionControl) unsupported('TUIC handshake / congestion options');
+      value.uuid = node.uuid; value.password = node.password;
+      Object.assign(value, tls());
+      if (node.udpRelayMode) value.udp_relay_mode = node.udpRelayMode;
+      if (node.alpn) value.alpn = [...node.alpn];
+      portHopping();
+      return { tuic: value };
+    case 'wireguard': {
+      value.private_key = node.privateKey; value.peer_public_key = node.publicKey;
+      if (node.presharedKey) value.preshared_key = node.presharedKey;
+      const addresses = node.localAddress || [node.ip, node.ipv6].filter((address): address is string => !!address);
+      const v4 = addresses.filter(address => !address.includes(':')); const v6 = addresses.filter(address => address.includes(':'));
+      if (v4.length > 1 || v6.length > 1 || node.remoteDnsResolve) unsupported('WireGuard address / remote DNS options');
+      if (v4[0]) value.local_ipv4 = v4[0];
+      if (v6[0]) value.local_ipv6 = v6[0];
+      if (node.reserved) value.reserved = [...node.reserved];
+      if (node.mtu !== undefined) value.mtu = node.mtu;
+      return { wireguard: value };
+    }
+    default: return fail('egern-protocol-unsupported', `Egern 尚不支持转换节点「${node.name}」的 ${node.type} 协议`);
+  }
 }
 
 export interface EgernGeneratorOptions {
   expandNodes?: boolean;
   baseUrl?: string;
   subToken?: string;
+  ordinaryNodeIds?: ReadonlySet<string>;
+  dependencyGroupIds?: ReadonlySet<string>;
+}
+function parseTemplate(text: string): NativeEntry {
+  let document: any;
+  try { document = yaml.load(text) ?? {}; } catch { return fail('egern-template-invalid', 'Egern 模板 YAML 无法解析'); }
+  if (typeof document !== 'object' || Array.isArray(document)) return fail('egern-template-invalid', 'Egern 模板必须是原生配置对象');
+  if ('proxy-groups' in document || 'sources' in document || document.dns?.nameservers) return fail('egern-template-schema-unsupported', 'Egern 模板须使用原生 policy_groups、typed proxies/rules 和 dns.bootstrap/upstreams');
+  for (const key of ['proxies', 'policy_groups', 'rules']) {
+    if (document[key] === undefined) document[key] = [];
+    if (!Array.isArray(document[key]) || document[key].some((entry: any) => !entry || typeof entry !== 'object' || Array.isArray(entry) || Object.keys(entry).length !== 1 || typeof egernEntry(entry) !== 'object')) return fail('egern-template-schema-unsupported', `Egern 模板 ${key} 须使用原生类型对象`);
+  }
+  return document;
 }
 
-export function generateEgernConfig(
-  templateYaml: string,
-  nodes: ProxyNode[],
-  proxyGroups: ProxyGroupItem[] = [],
-  rulesList: UnifiedRuleItem[] = [],
-  sources: SubscriptionSource[] = [],
-  options?: EgernGeneratorOptions
-): string {
-  const expandNodes = Boolean(options?.expandNodes);
-  const hasSuboneRemoteSubscription = Boolean(options?.baseUrl && options?.subToken && !expandNodes);
-  let doc: any;
-  try {
-    doc = yaml.load(templateYaml);
-  } catch (e) {
-    doc = {};
-  }
-
-  if (!doc || typeof doc !== 'object') {
-    doc = {};
-  }
-
-  const allNodesMap = new Map<string, ProxyNode>();
-  nodes.forEach(n => allNodesMap.set(n.name, n));
-  sources.forEach(s => {
-    if ((s.type === 'filter' || s.type === 'custom' || !s.url || !s.url.startsWith('http')) && Array.isArray(s.nodes)) {
-      s.nodes.forEach(n => {
-        if (!allNodesMap.has(n.name)) allNodesMap.set(n.name, n);
-      });
-    }
-  });
-  const allCandidateNodes = Array.from(allNodesMap.values());
-
-  const networkSourceIds = new Set(
-    sources.filter(s => s.enabled && s.type !== 'custom' && s.type !== 'filter' && s.url && s.url.startsWith('http')).map(s => s.id)
-  );
-
-  let nodesToWrite: ProxyNode[] = [];
-  if (expandNodes) {
-    nodesToWrite = allCandidateNodes;
-  } else if (!hasSuboneRemoteSubscription) {
-    nodesToWrite = allCandidateNodes.filter(n => !n.sourceId || n.sourceId === 'custom' || n.sourceId.startsWith('custom') || !networkSourceIds.has(n.sourceId));
-  } else {
-    // 订阅化模式：由 sources 接管自建源
-    nodesToWrite = [];
-  }
-
-  const egernProxies = nodesToWrite.map(nodeToEgernProxy);
-
-  doc = injectUnifiedToEgern(doc, egernProxies, nodes, proxyGroups, rulesList, sources, options);
-
-  return yaml.dump(doc, { indent: 2, lineWidth: -1 });
+export function generateEgernDocument(templateYaml: string, nodes: ProxyNode[], proxyGroups: ProxyGroupItem[] = [], rulesList: UnifiedRuleItem[] = [], sources: SubscriptionSource[] = [], options?: EgernGeneratorOptions): NativeEntry {
+  return injectUnifiedToEgern(parseTemplate(templateYaml), nodes.map(nodeToEgernProxy), nodes, proxyGroups, rulesList, sources, options);
+}
+export function generateEgernConfig(templateYaml: string, nodes: ProxyNode[], proxyGroups: ProxyGroupItem[] = [], rulesList: UnifiedRuleItem[] = [], sources: SubscriptionSource[] = [], options?: EgernGeneratorOptions): string {
+  return yaml.dump(generateEgernDocument(templateYaml, nodes, proxyGroups, rulesList, sources, options), { indent: 2, lineWidth: -1, noRefs: true });
 }
 
-export function injectUnifiedToEgern(
-  doc: any,
-  egernProxies: any[],
-  nodes: ProxyNode[],
-  proxyGroups: ProxyGroupItem[],
-  rulesList: UnifiedRuleItem[],
-  sources: SubscriptionSource[] = [],
-  options?: { expandNodes?: boolean; baseUrl?: string; subToken?: string }
-): any {
-  if (!doc || typeof doc !== 'object') doc = {};
-
-  doc.proxies = egernProxies;
-
-  const networkSources = sources.filter(s => s.enabled && s.type !== 'custom' && s.type !== 'filter' && s.url && s.url.startsWith('http'));
-  const internalSources = sources.filter(s => s.enabled && !networkSources.some(ns => ns.id === s.id));
-  const hasSuboneRemoteSubscription = Boolean(options?.baseUrl && options?.subToken && !options?.expandNodes);
-
-  const customNodes = nodes.filter(n => n.sourceId === 'custom' || !n.sourceId);
-  const customNodeNames = customNodes.map(n => n.name);
-  const allNodeNames = nodes.map(n => n.name);
-
-  // 1. Build sources
-  const allActiveRemoteSources: SubscriptionSource[] = [];
-  if (!options?.expandNodes) {
-    if (!Array.isArray(doc.sources)) {
-      doc.sources = [];
-    }
-
-    networkSources.forEach(s => {
-      doc.sources.push({
-        name: s.name.trim(),
-        type: 'http',
-        url: sourceSubscriptionUrl(s, 'egern', options),
-      });
-      allActiveRemoteSources.push(s);
-    });
-
-    if (hasSuboneRemoteSubscription && options?.baseUrl && options?.subToken) {
-      const cleanBaseUrl = options.baseUrl.replace(/\/+$/, '');
-      const token = encodeURIComponent(options.subToken);
-      internalSources.forEach(s => {
-        doc.sources.push({
-          name: s.name.trim(),
-          type: 'http',
-          url: `${cleanBaseUrl}/s/${token}/source/${encodeURIComponent(s.id)}?target=egern`,
-        });
-        allActiveRemoteSources.push(s);
-      });
-    }
+export function injectUnifiedToEgern(doc: NativeEntry, egernProxies: NativeEntry[], nodes: ProxyNode[], proxyGroups: ProxyGroupItem[], rulesList: UnifiedRuleItem[], sources: SubscriptionSource[] = [], options?: EgernGeneratorOptions): NativeEntry {
+  const ordinary = nodes.filter(node => !options?.ordinaryNodeIds || options.ordinaryNodeIds.has(node.id));
+  doc.proxies = [...(doc.proxies || []), ...egernProxies];
+  const groups = proxyGroups.map(group => ({ ...group }));
+  const used = new Set(['DIRECT', 'REJECT', ...doc.proxies.map((entry: NativeEntry) => egernEntry(entry).name), ...(doc.policy_groups || []).map((entry: NativeEntry) => egernEntry(entry).name), ...groups.map(group => group.name)]);
+  for (const source of sources.filter(source => source.enabled)) {
+    const clean = cleanSourceOrGroupName(source.name).toLowerCase();
+    if (groups.some(group => cleanSourceOrGroupName(group.name).toLowerCase() === clean || group.id === `grp-src-${source.id}`)) continue;
+    const base = formatSourceGroupTag(source); let name = base; let suffix = 2;
+    while (used.has(name)) name = `${base} (${suffix++})`;
+    used.add(name);
+    groups.push({ id: `grp-src-${source.id}`, name, type: 'urltest', sources: [source.id], interval: 300, tolerance: 50, url: 'https://www.google.com/generate_204' });
   }
-
-  const allSourceNames = allActiveRemoteSources.map(s => s.name.trim());
-
-  const customSources = sources.filter(s => s.type === 'custom' || s.id === 'custom');
-  const customTagName = customSources[0]?.name
-    ? formatSourceGroupTag(customSources[0])
-    : '🖥️ 独立节点组';
-
-  const effectiveGroups: ProxyGroupItem[] = proxyGroups.map(g => ({
-    ...g,
-    proxies: g.proxies ? [...g.proxies] : undefined,
-    use: g.use ? [...g.use] : undefined,
-  }));
-
-  // Sanitize effectiveGroups: if there is a custom group, sync its name to customTagName and remove any stale custom group aliases
-  const customGrp = effectiveGroups.find(g =>
-    g.id === 'grp-src-custom' ||
-    g.name === customTagName ||
-    cleanSourceOrGroupName(g.name) === '独立节点组' ||
-    cleanSourceOrGroupName(g.name) === '自建节点'
-  );
-  if (customGrp) {
-    customGrp.name = customTagName;
-    customGrp.use = [cleanSourceOrGroupName(customSources[0]?.name || '独立节点组')];
-    const idx = effectiveGroups.indexOf(customGrp);
-    for (let i = effectiveGroups.length - 1; i >= 0; i--) {
-      if (i !== idx) {
-        const g = effectiveGroups[i];
-        if (g.id === 'grp-src-custom' || cleanSourceOrGroupName(g.name) === '独立节点组' || cleanSourceOrGroupName(g.name) === '自建节点') {
-          effectiveGroups.splice(i, 1);
-        }
+  const generated = groups.map(group => {
+    if (!['select', 'urltest', 'fallback', 'load-balance', 'relay', 'direct', 'reject'].includes(group.type)) return fail('egern-group-unsupported', `Egern 不支持策略组「${group.name}」的 ${group.type} 类型`);
+    if (group.type === 'relay') return fail('egern-group-unsupported', `Egern 不支持原生 Relay 策略组「${group.name}」；无法无损转换有序链`);
+    if (group.lazy !== undefined || group.strategy && !(group.type === 'load-balance' && group.strategy === 'round-robin')) return fail('egern-group-options-unsupported', `Egern 策略组「${group.name}」无法无损转换 lazy/strategy`);
+    const type = ({ urltest: 'auto_test', 'load-balance': 'load_balance', direct: 'select', reject: 'select' } as Record<string, string>)[group.type] || group.type;
+    const value: NativeEntry = { name: group.name };
+    if (group.type === 'direct' || group.type === 'reject') value.policies = [group.type === 'direct' ? 'DIRECT' : 'REJECT'];
+    else {
+      const mounted = (group.sources ?? group.use)?.length || group.filter || group.includeAll || ['♻️ 自动选择', '👉 手动选择'].includes(group.name);
+      const members = [...(group.proxies || []), ...(mounted || !group.proxies?.length ? resolveGroupNodes(group, ordinary, sources).map(node => node.name) : [])];
+      value.policies = [...new Set(members.map(name => name === '🎯 本地直连' ? 'DIRECT' : name))];
+      // Serve the selected plan through SubOne; raw upstream URLs bypass local exclusions.
+      if (!options?.expandNodes && options?.baseUrl && options?.subToken && (mounted || !group.proxies?.length)) {
+        const selected = new Set(resolveGroupNodes(group, ordinary, sources).map(node => node.sourceId));
+        value.urls = sources.filter(source => source.enabled && selected.has(source.id)).map(source => `${options.baseUrl!.replace(/\/+$/, '')}/s/${encodeURIComponent(options.subToken!)}/source/${encodeURIComponent(source.id)}?target=egern`);
+        if (!value.urls.length) delete value.urls;
+        if (group.filter && value.urls) value.filter = group.filter;
+      }
+      if (!value.policies.length) {
+        if (mounted || group.proxies?.length) return fail('egern-group-empty', `Egern 策略组「${group.name}」没有可用成员`);
+        value.policies = ['DIRECT'];
       }
     }
-    effectiveGroups.forEach(grp => {
-      if (grp !== customGrp) {
-        if (grp.use) {
-          grp.use = grp.use.map(u => (cleanSourceOrGroupName(u) === '独立节点组' || cleanSourceOrGroupName(u) === '自建节点' ? cleanSourceOrGroupName(customSources[0]?.name || '独立节点组') : u));
-        }
-        if (grp.proxies) {
-          grp.proxies = grp.proxies.map(p => (cleanSourceOrGroupName(p) === '独立节点组' || cleanSourceOrGroupName(p) === '自建节点' ? customTagName : p));
-        }
-      }
-    });
-  }
-
-  const activeSources = options?.expandNodes ? sources.filter(s => s.enabled) : allActiveRemoteSources;
-  activeSources.forEach(s => {
-    const sClean = cleanSourceOrGroupName(s.name);
-    const groupTag = formatSourceGroupTag(s);
-    const cleanLower = sClean.toLowerCase();
-
-    const exists = effectiveGroups.some(g => {
-      const gClean = cleanSourceOrGroupName(g.name).toLowerCase();
-      return g.name === groupTag || gClean === cleanLower;
-    });
-
-    if (!exists) {
-      effectiveGroups.push({
-        id: s.id === 'custom' ? 'grp-src-custom' : `grp-src-${s.id}`,
-        name: groupTag,
-        type: s.type === 'custom' ? 'select' : 'urltest',
-        use: [sClean],
-        tolerance: 50,
-        interval: 300,
-        url: 'https://www.google.com/generate_204',
-      });
-    }
+    if (group.type === 'load-balance' && group.strategy === 'round-robin') value.algorithm = 'round_robin';
+    if (group.icon) value.icon = group.icon;
+    if (group.hidden !== undefined) value.hidden = group.hidden;
+    if (group.url) value.latency_test_url = group.url;
+    if (['auto_test', 'fallback', 'load_balance'].includes(type) && group.interval !== undefined) value.interval = group.interval;
+    if (type === 'auto_test' && group.tolerance !== undefined) value.tolerance = group.tolerance;
+    return { [type]: value };
   });
-
-  const validGroupNames = new Set(effectiveGroups.map(g => g.name));
-  const validNodeNames = new Set(allNodeNames);
-  sources.forEach(s => {
-    if (Array.isArray(s.nodes)) {
-      s.nodes.forEach(n => validNodeNames.add(n.name.replace(/[=,]/g, '_')));
+  doc.policy_groups = [...(doc.policy_groups || []), ...generated];
+  const nativeRuleTypes: Record<string, string> = { DOMAIN: 'domain', 'DOMAIN-SUFFIX': 'domain_suffix', 'DOMAIN-KEYWORD': 'domain_keyword', 'IP-CIDR': 'ip_cidr', 'IP-CIDR6': 'ip_cidr6', GEOIP: 'geoip', FINAL: 'default' };
+  const additions = rulesList.filter(rule => rule.enabled).flatMap<NativeEntry>(rule => {
+    if (rule.kind === 'remote') {
+      const url = rule.clientUrls?.egern || (/\.ya?ml(?:[?#].*)?$/i.test(rule.payload) ? rule.payload : undefined);
+      if (!url) return fail('egern-ruleset-unsupported', `Egern 规则「${rule.name}」需要原生 YAML rule_set 地址`);
+      return { rule_set: { match: url, policy: rule.outbound, update_interval: 86400 } };
     }
-  });
-
-  const generatedGroups: any[] = [];
-  effectiveGroups.forEach(grp => {
-    if (grp.type === 'direct') {
-      generatedGroups.push({ name: grp.name, type: 'select', proxies: ['DIRECT'] });
-      return;
-    }
-    if (grp.type === 'reject') {
-      generatedGroups.push({ name: grp.name, type: 'select', proxies: ['REJECT'] });
-      return;
-    }
-
-    if (grp.type === 'relay') {
-      generatedGroups.push({
-        name: grp.name,
-        type: 'relay',
-        proxies: grp.proxies && grp.proxies.length > 0 ? [...grp.proxies] : ['DIRECT'],
-      });
-      return;
-    }
-
-    const groupType = grp.type === 'urltest' ? 'url-test' : (grp.type === 'load-balance' ? 'load-balance' : (grp.type || 'select'));
-
-    if (grp.filter) {
-      const cleanFilter = grp.filter.trim().replace(/^\(\?i\)/i, '').replace(/\(\?i\)/gi, '');
-      const grpObj: any = {
-        name: grp.name,
-        type: groupType,
-        url: grp.url || 'https://www.google.com/generate_204',
-        interval: grp.interval || 300,
-        tolerance: grp.tolerance || 50,
-      };
-
-      if (allSourceNames.length > 0) {
-        grpObj['filter-sources'] = allSourceNames;
-        grpObj.filter = cleanFilter;
-      }
-      if (!hasSuboneRemoteSubscription && customNodeNames.length > 0) {
-        grpObj.proxies = customNodeNames;
-      } else if (!grpObj['filter-sources']) {
-        grpObj.proxies = ['DIRECT'];
-      }
-      generatedGroups.push(grpObj);
-      return;
-    }
-
-    if (grp.name === '♻️ 自动选择') {
-      const grpObj: any = {
-        name: grp.name,
-        type: 'url-test',
-        url: grp.url || 'https://www.google.com/generate_204',
-        interval: 300,
-        tolerance: 50,
-      };
-      if (allSourceNames.length > 0) {
-        grpObj['filter-sources'] = allSourceNames;
-      } else {
-        grpObj.proxies = allNodeNames.length > 0 ? allNodeNames : ['DIRECT'];
-      }
-      generatedGroups.push(grpObj);
-      return;
-    }
-
-    if (grp.name === '👉 手动选择') {
-      const grpObj: any = {
-        name: grp.name,
-        type: 'select',
-      };
-      if (allSourceNames.length > 0) {
-        grpObj['filter-sources'] = allSourceNames;
-      } else {
-        grpObj.proxies = allNodeNames.length > 0 ? allNodeNames : ['DIRECT'];
-      }
-      generatedGroups.push(grpObj);
-      return;
-    }
-
-    const cleanName = cleanSourceOrGroupName(grp.name).toLowerCase();
-    const matchedSource = allActiveRemoteSources.find(s => {
-      const sClean = cleanSourceOrGroupName(s.name).toLowerCase();
-      return sClean === cleanName || s.id.toLowerCase() === cleanName;
+    const type = nativeRuleTypes[rule.type];
+    if (!type) return fail('egern-rule-unsupported', `Egern 尚不支持转换 ${rule.type} 规则「${rule.name}」`);
+    if (type === 'default') return { default: { policy: rule.outbound } };
+    const cidr = type === 'ip_cidr' || type === 'ip_cidr6';
+    return rule.payload.split(/[,;\n]+/).map(payload => payload.trim()).filter(Boolean).map(payload => {
+      const actualType = cidr && payload.includes(':') ? 'ip_cidr6' : type;
+      return { [actualType]: { match: cidr ? formatCidr(payload) : payload, policy: rule.outbound } };
     });
-
-    if (matchedSource && !options?.expandNodes) {
-      generatedGroups.push({
-        name: grp.name,
-        type: groupType,
-        'filter-sources': [matchedSource.name.trim()],
-      });
-      return;
-    }
-
-    if (!hasSuboneRemoteSubscription) {
-      const isCustomGrp = grp.id === 'grp-src-custom' ||
-        cleanName === '自建节点' ||
-        cleanName === '独立节点组' ||
-        cleanName === 'custom' ||
-        cleanName === '手工自建' ||
-        customSources.some(cs => cleanSourceOrGroupName(cs.name).toLowerCase() === cleanName);
-
-      if (isCustomGrp) {
-        generatedGroups.push({
-          name: grp.name,
-          type: 'select',
-          proxies: customNodeNames.length > 0 ? customNodeNames : ['DIRECT'],
-        });
-        return;
-      }
-    }
-
-    let proxies = grp.proxies ? [...grp.proxies] : [];
-    if (!hasSuboneRemoteSubscription && grp.name === '🚀 节点选择' && customNodes.length > 0 && !proxies.includes(customTagName)) {
-      proxies.unshift(customTagName);
-    }
-
-    let filterSourcesForGroup: string[] = [];
-
-    if (grp.use && grp.use.length > 0) {
-      grp.use.forEach(u => {
-        const cleanU = cleanSourceOrGroupName(u).toLowerCase();
-        const matchedSource = allActiveRemoteSources.find(s => {
-          const sClean = cleanSourceOrGroupName(s.name).toLowerCase();
-          return sClean === cleanU || s.id.trim().toLowerCase() === cleanU;
-        });
-
-        if (!options?.expandNodes && matchedSource && allSourceNames.includes(matchedSource.name.trim())) {
-          filterSourcesForGroup.push(matchedSource.name.trim());
-        } else {
-          const isCustomU = cleanU === '自建节点' || cleanU === '独立节点组' || cleanU === 'custom' || cleanU === '手工自建' || customSources.some(cs => cleanSourceOrGroupName(cs.name).toLowerCase() === cleanU);
-          if (!hasSuboneRemoteSubscription && isCustomU) {
-            if (validGroupNames.has(customTagName) && !proxies.includes(customTagName)) {
-              proxies.unshift(customTagName);
-            }
-            customNodeNames.forEach(m => {
-              if (!proxies.includes(m)) proxies.push(m);
-            });
-          } else if (matchedSource) {
-            let srcNodeList: string[] = [];
-            if (Array.isArray(matchedSource.nodes) && matchedSource.nodes.length > 0) {
-              srcNodeList = matchedSource.nodes.map(n => n.name.replace(/[=,]/g, '_'));
-            } else {
-              srcNodeList = nodes.filter(n => {
-                const sName = cleanSourceOrGroupName(n.sourceName || '').toLowerCase();
-                const sId = (n.sourceId || '').trim().toLowerCase();
-                return sName === cleanU || sId === cleanU;
-              }).map(n => n.name.replace(/[=,]/g, '_'));
-            }
-            srcNodeList.forEach(m => {
-              if (!proxies.includes(m)) proxies.push(m);
-            });
-            const grpTag = formatSourceGroupTag(matchedSource);
-            if (validGroupNames.has(grpTag) && !proxies.includes(grpTag)) {
-              proxies.push(grpTag);
-            } else if (validGroupNames.has(u) && !proxies.includes(u)) {
-              proxies.push(u);
-            }
-          }
-        }
-      });
-    }
-
-    proxies = proxies.map(p => p.trim() === '🎯 本地直连' ? 'DIRECT' : p.trim()).filter(p => {
-      if (!p || p === grp.name) return false;
-      return validGroupNames.has(p) || validNodeNames.has(p) || p === 'DIRECT' || p === 'REJECT';
-    });
-
-    const grpObj: any = {
-      name: grp.name,
-      type: groupType,
-    };
-    if (groupType === 'url-test' || groupType === 'fallback') {
-      if (grp.url) grpObj.url = grp.url;
-      if (grp.interval) grpObj.interval = grp.interval;
-      if (groupType === 'url-test' && grp.tolerance) grpObj.tolerance = grp.tolerance;
-    }
-    if (filterSourcesForGroup.length > 0) {
-      grpObj['filter-sources'] = filterSourcesForGroup;
-    }
-    if (proxies.length > 0) {
-      grpObj.proxies = proxies;
-    } else if (filterSourcesForGroup.length === 0) {
-      grpObj.proxies = ['DIRECT'];
-    }
-    generatedGroups.push(grpObj);
   });
-
-  doc['proxy-groups'] = generatedGroups;
-
-  // Rules
-  const activeRules = rulesList.filter(r => r.enabled);
-  const outRules: string[] = [];
-  activeRules.forEach(r => {
-    const target = resolveSafeOutbound(r.outbound, new Set(effectiveGroups.map(g => g.name)), '🚀 节点选择');
-    if (r.type === 'FINAL') {
-      outRules.push(`FINAL,${target}`);
-    } else if (r.kind === 'remote') {
-      const adapted = adaptRulesetForEgern(r);
-      outRules.push(`RULE-SET,${adapted.url},${target}`);
-    } else if (r.type === 'SRC-IP-CIDR') {
-      const payloads = r.payload.split(/[,;\n]+/).map(p => p.trim()).filter(Boolean);
-      payloads.forEach(p => {
-        outRules.push(`SRC-IP-CIDR,${formatCidr(p)},${target}`);
-      });
-    } else {
-      outRules.push(`${r.type},${r.payload.trim()},${target}`);
-    }
-  });
-
-  if (!outRules.some(r => r.startsWith('FINAL,') || r.startsWith('MATCH,'))) {
-    outRules.push('FINAL,DIRECT');
-  }
-
-  doc.rules = outRules;
+  const retained = (doc.rules || []) as NativeEntry[];
+  const firstDefault = retained.findIndex(rule => 'default' in rule);
+  doc.rules = firstDefault >= 0 ? [...retained.slice(0, firstDefault), ...additions, ...retained.slice(firstDefault)] : [...retained, ...additions];
+  if (!doc.rules.some((rule: NativeEntry) => 'default' in rule)) doc.rules.push({ default: { policy: 'DIRECT' } });
+  validateEgernReferences(doc);
   return doc;
+}
+
+/** Static reference checks are not real Egern loading. */
+export function validateEgernReferences(doc: NativeEntry): void {
+  const definitions: NativeEntry[] = [...(doc.proxies || []), ...(doc.policy_groups || [])].map(egernEntry);
+  const names = new Set(['DIRECT', 'REJECT']);
+  for (const entry of definitions) {
+    if (typeof entry.name !== 'string' || names.has(entry.name)) return fail('egern-reference-duplicate', `Egern 出站名称缺失或重复：${entry.name || ''}`);
+    names.add(entry.name);
+  }
+  const requireName = (name: unknown, owner: string) => {
+    if (typeof name !== 'string' || !names.has(name)) fail('egern-reference-missing', `Egern「${owner}」缺少出站：${String(name)}`);
+  };
+  const references = (entry: NativeEntry): string[] => [
+    ...(entry.policies || []), ...(entry.prev_hop ? [entry.prev_hop] : []), ...(entry.default_policy ? [entry.default_policy] : []),
+    ...(entry.rules || []).map(egernEntry).filter((rule: NativeEntry) => !rule.disabled && rule.policy).map((rule: NativeEntry) => rule.policy),
+  ];
+  for (const entry of definitions) for (const name of references(entry)) requireName(name, entry.name);
+  for (const key of ['default_proxy_group', 'default_subscription_group']) if (doc[key]) requireName(doc[key], key);
+  for (const entry of (doc.rules || []).map(egernEntry)) if (!entry.disabled) requireName(entry.policy, 'rule');
+  const visited = new Set<string>();
+  const visit = (name: string, path: string[]) => {
+    if (path.includes(name)) return fail('egern-reference-cycle', `Egern 连接依赖循环：${[...path, name].join(' → ')}`);
+    if (visited.has(name)) return;
+    const entry = definitions.find(value => value.name === name);
+    if (entry) for (const next of references(entry)) visit(next, [...path, name]);
+    visited.add(name);
+  };
+  for (const entry of definitions) visit(entry.name, []);
 }
