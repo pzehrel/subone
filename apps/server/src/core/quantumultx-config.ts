@@ -12,16 +12,20 @@ export function quantumultXEntries(document: QuantumultXDocument): QuantumultXEn
   });
 }
 const assignment = (part: string): [string, string] => { const index = part.indexOf('='); return index < 0 ? ['', part.trim()] : [part.slice(0, index).trim().toLowerCase(), part.slice(index + 1).trim()]; };
-export function quantumultXOwnedNames(document: QuantumultXDocument): Set<string> {
-  const names = new Set<string>();
+export function quantumultXDefinitionNames(document: QuantumultXDocument): string[] {
+  const names: string[] = [];
   for (const { section, parts } of quantumultXEntries(document)) {
-    if (section === 'policy') names.add(assignment(parts[0])[1]);
+    if (section === 'policy') names.push(assignment(parts[0])[1]);
     if (section === 'server_local' || (section === 'server_remote' && parts.some(part => assignment(part)[0] === 'as-policy'))) {
       const tag = parts.find(part => assignment(part)[0] === 'tag');
-      if (tag) names.add(assignment(tag)[1]);
+      if (tag) names.push(assignment(tag)[1]);
     }
   }
   return names;
+}
+export function quantumultXOwnedNames(document: QuantumultXDocument): Set<string> {
+  // The official complete sample uses the native proxy policy without declaring it.
+  return new Set(['proxy', 'PROXY', ...quantumultXDefinitionNames(document)]);
 }
 export function quantumultXReferences(document: QuantumultXDocument): QuantumultXReference[] {
   const references: QuantumultXReference[] = [];

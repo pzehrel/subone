@@ -158,6 +158,9 @@ export interface QuantumultXGeneratorOptions {
   expandNodes?: boolean;
   baseUrl?: string;
   subToken?: string;
+  ordinaryNodeIds?: ReadonlySet<string>;
+  dependencyGroupIds?: ReadonlySet<string>;
+  runtimeSources?: SubscriptionSource[];
 }
 
 export function generateQuantumultXConfig(
@@ -195,7 +198,7 @@ export function generateQuantumultXConfig(
     nodesToWrite = allCandidateNodes.filter(n => !n.sourceId || n.sourceId === 'custom' || n.sourceId.startsWith('custom') || !networkSourceIds.has(n.sourceId));
   } else {
     // 订阅化模式：由 server_remote 接管自建源
-    nodesToWrite = [];
+    nodesToWrite = allCandidateNodes.filter(node => options?.ordinaryNodeIds && !options.ordinaryNodeIds.has(node.id));
   }
 
   const generatedProxyLines = nodesToWrite.map(nodeToQuantumultXProxy);
@@ -251,9 +254,11 @@ export function injectUnifiedToQuantumultX(
   proxyGroups: ProxyGroupItem[],
   rulesList: UnifiedRuleItem[],
   sources: SubscriptionSource[] = [],
-  options?: { expandNodes?: boolean; baseUrl?: string; subToken?: string }
+  options?: QuantumultXGeneratorOptions
 ): string {
   const expandNodes = Boolean(options?.expandNodes);
+  const staticGroups = expandNodes || Boolean(options?.ordinaryNodeIds && nodes.some(node => !options.ordinaryNodeIds!.has(node.id)));
+  nodes = nodes.filter(node => !options?.ordinaryNodeIds || options.ordinaryNodeIds.has(node.id));
   const lines = templateConf.split('\n');
   const activeRules = rulesList.filter(r => r.enabled);
   const remoteRules = activeRules.filter(r => r.kind === 'remote');
@@ -396,6 +401,16 @@ export function injectUnifiedToQuantumultX(
     if (grp.type === 'relay') {
       throw new UnsupportedProxyGroupError('Quantumult X', grp.name);
     }
+    if (options?.dependencyGroupIds?.has(grp.id) && !['direct', 'reject'].includes(grp.type)) {
+      const members = [...(grp.proxies || [])];
+      if ((grp.sources ?? grp.use)?.length || grp.filter || grp.includeAll || !members.length) {
+        for (const node of resolveGroupNodes(grp, nodes, options.runtimeSources || sources).filter(isSupportedByQuantumultX)) if (!members.includes(node.name)) members.push(node.name);
+      }
+      if (!members.length && !(grp.sources ?? grp.use)?.length && !grp.proxies?.length) members.push('direct');
+      const groupType = grp.type === 'load-balance' ? (grp.strategy === 'consistent-hashing' ? 'dest-hash' : 'round-robin') : grp.type === 'urltest' ? 'url-latency-benchmark' : grp.type === 'fallback' ? 'available' : 'static';
+      addGroupLine(`${groupType}=${grp.name}${members.length ? ', ' + members.map(member => /^(DIRECT|REJECT)$/i.test(member) ? member.toLowerCase() : member).join(', ') : ''}`, grp);
+      return;
+    }
     if (grp.includeAll || ((grp.sources || grp.use || []).length > 0 && !['direct', 'reject'].includes(grp.type))) {
       const groupType = grp.type === 'load-balance'
         ? (grp.strategy === 'consistent-hashing' ? 'dest-hash' : 'round-robin')
@@ -408,7 +423,7 @@ export function injectUnifiedToQuantumultX(
         const nodeName = member.replace(/[=,]/g, '_');
         return supportedNodeNames.has(nodeName) ? [nodeName] : [];
       });
-      if (expandNodes) {
+      if (staticGroups) {
         const matchedNodes = resolveGroupNodes(grp, qxSupportedNodes, sources).map(n => n.name.replace(/[=,]/g, '_'));
         const members = Array.from(new Set([...explicitMembers, ...matchedNodes]));
         addGroupLine(`${groupType}=${grp.name}, ${members.length ? members.join(', ') : 'reject'}`, grp);
@@ -454,7 +469,7 @@ export function injectUnifiedToQuantumultX(
       if (!filterPattern.startsWith('(?i)')) {
         filterPattern = `(?i)${filterPattern}`;
       }
-      if (expandNodes) {
+      if (staticGroups) {
         let matched: string[] = [];
         try {
           const reg = new RegExp(filterPattern.replace(/^\(\?i\)/i, ''), 'i');
@@ -485,7 +500,7 @@ export function injectUnifiedToQuantumultX(
     }
 
     if (grp.name === '♻️ 自动选择') {
-      if (expandNodes) {
+      if (staticGroups) {
         const members = allNodeNames.length > 0 ? allNodeNames : ['direct'];
         addGroupLine(`url-latency-benchmark=${grp.name}, ${members.join(', ')}, check-interval=300, tolerance=${grp.tolerance || 50}`, grp);
       } else {
@@ -495,7 +510,7 @@ export function injectUnifiedToQuantumultX(
     }
 
     if (grp.name === '👉 手动选择') {
-      if (expandNodes) {
+      if (staticGroups) {
         const members = allNodeNames.length > 0 ? allNodeNames : ['direct'];
         addGroupLine(`static=${grp.name}, ${members.join(', ')}`, grp);
       } else {
@@ -547,7 +562,7 @@ export function injectUnifiedToQuantumultX(
         (grp.use && grp.use.some(u => cleanSourceOrGroupName(u).toLowerCase() === sClean));
     });
 
-    if (matchedRemote && !expandNodes) {
+    if (matchedRemote && !staticGroups) {
       const sTag = matchedRemote.name.replace(/[=,]/g, '_').trim();
       const groupType = grp.type === 'fallback' ? 'available' : (grp.type === 'load-balance' ? 'round-robin' : (grp.type === 'urltest' ? 'url-latency-benchmark' : 'static'));
       if (groupType === 'url-latency-benchmark') {

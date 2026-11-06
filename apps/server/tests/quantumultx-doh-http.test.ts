@@ -78,6 +78,7 @@ test('native template nodes, policies and single final survive managed renames a
   await api(`/nodes/${source.nodes[0].id}`, 'PUT', { name: 'Native' });
   await api(`/groups/${managed.id}`, 'PUT', { ...managed, name: 'Choice' });
   const result = await preview(profile); assert.equal(result.success, true, JSON.stringify(result));
+  if (process.env.SUBONE_QX_ARTIFACT) await writeFile(process.env.SUBONE_QX_ARTIFACT, result.data);
   assert.match(result.data, /^socks5=192\.0\.2\.8:1080, udp-relay=true, tag=Native$/m);
   assert.match(result.data, /^socks5=qx-native\.node\.example:1080,.*tag=Native \(2\)$/m);
   assert.match(result.data, /^static = Choice, Native, direct$/m);
@@ -237,4 +238,65 @@ test('a native rule cannot reference a node emitted only as an unsupported proto
   const { profile } = await profileFor([source], content);
   const result = await preview(profile); assert.equal(result.status, 422, JSON.stringify(result));
   assert.ok(result.generation.diagnostics.some((entry: any) => entry.code === 'quantumultx-reference-missing' && /Unsupported QX/.test(entry.message)));
+});
+
+test('retained native template references complete eligible omitted nodes and groups without entering ordinary candidates or usage', async () => {
+  const a = await add('/qx-closure-ordinary', [], { proxies: [{ name: 'Ordinary closure QX', type: 'socks5', server: 'ordinary.closure.example', port: 1080 }] });
+  const b = await add('/qx-closure-dependency', ['https://unused.closure.example/dns-query#Missing'], { proxies: [{ name: 'Dependency closure QX', type: 'socks5', server: 'dependency.closure.example', port: 1080 }] });
+  const dependency = (await api('/groups', 'POST', { name: 'Dependency group QX', type: 'select', proxies: ['DIRECT'] })).data;
+  const content = template.replace('[policy]\n', '[policy]\nstatic = Native closure, Dependency group QX, Dependency closure QX, direct\n').replace('final, direct', 'final, Native closure');
+  const { profile, group } = await profileFor([a], content, { mode: 'manual', selectedNodeIds: [a.nodes[0].id] });
+  const result = await preview(profile, false); assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(result.generation.nodeCount, 1); assert.equal(result.generation.dependencyNodeCount, 1);
+  assert.deepEqual(result.generation.dependencyNodes.map((node: any) => node.id), [b.nodes[0].id]);
+  assert.match(result.data, /^socks5=dependency\.closure\.example:1080,.*tag=Dependency closure QX$/m);
+  assert.match(result.data, /^static=Dependency group QX, direct(?:,|$)/m);
+  assert.match(result.data, /^static = Native closure, Dependency group QX, Dependency closure QX, direct$/m);
+  const ordinaryPolicy = result.data.split('\n').find((line: string) => line.startsWith(`static=${group.name},`)); assert.doesNotMatch(ordinaryPolicy, /Dependency closure/); assert.match(ordinaryPolicy, /, Ordinary closure QX(?:,|$)/);
+  const actual = await fetch(`${origin}/s/${profile.token}/quantumultx`); assert.equal(await actual.text(), result.data); assert.match(actual.headers.get('subscription-userinfo') || '', /total=1000/);
+  const urls = [...result.data.matchAll(/^(https?:\/\/[^,]+), tag=/gm)].map(match => match[1]).filter(url => url.includes('/source/')); assert.equal(urls.length, 1);
+  const provider = await fetch(urls[0]).then(response => response.text()); assert.match(provider, /ordinary\.closure/); assert.doesNotMatch(provider, /dependency\.closure/);
+  const previousOrigin = origin; await stopApp(); await startApp(); const reloaded = await preview(profile, false); assert.deepEqual(reloaded.generation, result.generation); assert.equal(reloaded.data.replaceAll(origin, previousOrigin), result.data);
+  await api(`/nodes/${b.nodes[0].id}`, 'PUT', { enabled: false }); const disabled = await preview(profile, false); assert.equal(disabled.status, 422, JSON.stringify(disabled));
+  assert.ok(disabled.generation.diagnostics.some((entry: any) => entry.code === 'quantumultx-reference-missing'));
+});
+
+
+test('an ordinary FINAL selector cannot pull profile-excluded mounted source nodes through template closure', async () => {
+  const a = await add('/qx-final-ordinary', [], { proxies: [{ name: 'Final ordinary QX', type: 'socks5', server: 'ordinary.final.example', port: 1080 }] });
+  const b = await add('/qx-final-excluded', [], { proxies: [{ name: 'Excluded final QX', type: 'socks5', server: 'excluded.final.example', port: 1080 }] });
+  const group = (await api('/groups', 'POST', { name: 'Empty ordinary final QX', type: 'select', sources: [b.id] })).data;
+  const content = template.replace('final, direct', 'final, Empty ordinary final QX');
+  const { profile } = await profileFor([a], content, { mode: 'manual', selectedNodeIds: [a.nodes[0].id] });
+  const result = await preview(profile, false); assert.equal(result.status, 422, JSON.stringify(result));
+  assert.equal(result.generation.nodeCount, 1); assert.equal(result.generation.dependencyNodeCount, 0);
+  assert.ok(result.generation.diagnostics.some((entry: any) => entry.code === 'quantumultx-reference-missing' && entry.message.includes(group.name)));
+  const provider = await fetch(`${origin}/s/${profile.token}/source/${a.id}?target=quantumultx`).then(response => response.text()); assert.match(provider, /ordinary.final.example/); assert.doesNotMatch(provider, /excluded.final.example/);
+});
+
+test('the official native proxy policy namespace does not retarget to a managed node named proxy', async () => {
+  const source = await add('/qx-native-proxy', [], { proxies: [{ name: 'proxy', type: 'socks5', server: 'managed.proxy.example', port: 1080 }] });
+  const { profile } = await profileFor([source], template.replace('final, direct', 'final, proxy'));
+  const result = await preview(profile); assert.equal(result.success, true, JSON.stringify(result));
+  assert.match(result.data, /^socks5=managed\.proxy\.example:1080,.*tag=proxy \(2\)$/m);
+  assert.deepEqual(result.data.match(/^final, .+$/gm), ['final, proxy']);
+});
+
+test('ambiguous native outbound definitions reject instead of silently picking a template declaration', async () => {
+  const source = await add('/qx-native-duplicate', []);
+  const content = template.replace('[server_local]\n', '[server_local]\nsocks5=192.0.2.1:1080, tag=Duplicate native\nsocks5=192.0.2.2:1080, tag=Duplicate native\n').replace('final, direct', 'final, Duplicate native');
+  const { profile } = await profileFor([source], content);
+  const result = await preview(profile); assert.equal(result.status, 422, JSON.stringify(result));
+  assert.ok(result.generation.diagnostics.some((entry: any) => entry.code === 'quantumultx-reference-ambiguous' && /Duplicate native/.test(entry.message)));
+});
+
+test('template-owned dynamic policies retain their definition and explicitly report dependency candidate isolation limits', async () => {
+  const a = await add('/qx-dynamic-ordinary', [], { proxies: [{ name: 'Dynamic ordinary QX', type: 'socks5', server: 'ordinary.dynamic.example', port: 1080 }] });
+  const b = await add('/qx-dynamic-dependency', [], { proxies: [{ name: 'Dynamic dependency QX', type: 'socks5', server: 'dependency.dynamic.example', port: 1080 }] });
+  const content = template.replace('[policy]\n', '[policy]\nstatic = Native dynamic QX, server-tag-regex=.*\nstatic = Native required QX, Dynamic dependency QX\n');
+  const { profile } = await profileFor([a], content);
+  const result = await preview(profile, false); assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(result.generation.dependencyNodeCount, 1); assert.match(result.data, /^static = Native dynamic QX, server-tag-regex=\.\*$/m);
+  assert.ok(result.generation.diagnostics.some((entry: any) => entry.code === 'quantumultx-candidate-isolation-unverified' && /Native dynamic QX/.test(entry.message)));
+  assert.equal((await api('/sources')).data.find((source: any) => source.id === b.id).nodes[0].name, 'Dynamic dependency QX');
 });
