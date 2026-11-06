@@ -264,6 +264,7 @@ export function removeGroupReferences(config: AppConfig, group: ProxyGroupItem):
   config.proxyGroups = config.proxyGroups.map(owner => normalizeGroupReferences(owner, config));
   config.templates = config.templates.map(template => prepareTemplateReferences(template, config, template));
   const target = groupReference(group.id);
+  for (const rule of config.rulesList) if (rule.outbound === group.name || rule.outbound === target) rule.outbound = `unresolved:${group.name}`;
   for (const owner of config.proxyGroups) owner.proxies = owner.proxies?.map(value => value === target ? `unresolved:${group.name}` : value);
   for (const template of config.templates) {
     for (const reference of template.connectionReferences || []) {

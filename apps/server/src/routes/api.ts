@@ -178,6 +178,8 @@ apiRouter.delete('/sources/:id', (c) => {
   if (!source) return c.json({ success: false, message: 'Source not found' }, 404);
   const removed = new Set([...(source.nodes || []), ...(source.infoNodes || [])].map(node => node.id));
   removeNodeReferences(candidate, removed);
+  const ownedGroup = candidate.proxyGroups.find(group => group.id === `grp-${source.id}`);
+  if (ownedGroup) removeGroupReferences(candidate, ownedGroup);
   candidate.sources = candidate.sources.filter(item => item.id !== source.id);
   candidate.proxyGroups = candidate.proxyGroups.filter(group => group.id !== `grp-${source.id}`);
   for (const group of candidate.proxyGroups) {
@@ -450,6 +452,10 @@ apiRouter.put('/groups/:id', (c) => {
     const candidate = structuredClone(appConfig);
     candidate.templates = candidate.templates.map(template => prepareTemplateReferences(template, candidate, template));
     candidate.proxyGroups = candidate.proxyGroups.map(group => normalizeGroupReferences(group, candidate));
+    const previousGroup = candidate.proxyGroups[idx];
+    if (previousGroup.name !== updated.name && candidate.proxyGroups.filter(group => group.name === previousGroup.name).length === 1) {
+      for (const rule of candidate.rulesList) if (rule.outbound === previousGroup.name) rule.outbound = updated.name;
+    }
     candidate.proxyGroups[idx] = normalizeGroupReferences(updated, candidate);
     commitConfig(candidate);
     return c.json({ success: true, data: candidate.proxyGroups[idx] });

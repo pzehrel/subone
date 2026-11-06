@@ -49,6 +49,17 @@ export function GenerationPreview({ result, clientType }: { result: GenerationPr
         <span>{generation ? '普通节点' : '节点'} <strong className="text-ui-text">{generation?.nodeCount ?? result.nodeCount}</strong></span>
         {generation && <span>DoH 依赖节点 <strong className="text-ui-text">{generation.dependencyNodeCount}</strong></span>}
       </div>
+      {!!generation?.dependencyNodes?.length && (
+        <ul aria-label="DoH 依赖节点" className="divide-y divide-ui-border rounded-xl border border-ui-border px-3">
+          {generation.dependencyNodes.map(node => (
+            <li key={node.id} className="py-2">
+              <span className="font-medium text-ui-text">{node.name}</span>
+              {node.sourceName && <span className="ml-2">{node.sourceName}</span>}
+              {!!node.reason.length && <span className="mt-1 block break-words text-ui-muted">{node.reason.join(' → ')}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
       {generation?.target.mode === 'nodes' && (
         <p className="m-0 text-ui-text">纯节点输出不承载 DoH。</p>
       )}

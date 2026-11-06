@@ -1,4 +1,4 @@
-import type { RuntimeInventory, RuntimePathEntry } from './runtime-dependencies';
+import type { RuntimeInventory, RuntimePathEntry, RuntimeNodeRequirement } from './runtime-dependencies';
 import type { ClientType, ConfigTemplate, ProxyGroupItem, ProxyNode, SourceDohService, SubscriptionProfile, SubscriptionSource, UnifiedRuleItem } from '../../types';
 
 export interface GenerationDiagnostic {
@@ -39,6 +39,8 @@ export interface GenerationPlan {
   template?: ConfigTemplate;
   ordinaryNodes: ProxyNode[];
   dependencyNodes: ProxyNode[];
+  dependencyGroupIds: string[];
+  dependencyReasons?: RuntimeNodeRequirement[];
   groups: ProxyGroupItem[];
   rules: UnifiedRuleItem[];
   sources: SubscriptionSource[];
@@ -51,12 +53,19 @@ export interface GenerationMetadata {
   target: GenerationPlan['target'];
   nodeCount: number;
   dependencyNodeCount: number;
+  dependencyNodes: { id: string; name: string; sourceId?: string; sourceName?: string; bindingSourceId?: string; reason: string[] }[];
   bindings: (Omit<GenerationBinding, 'services'> & { services: { id: string; url: string }[] })[];
   diagnostics: GenerationDiagnostic[];
 }
 export function generationMetadata(plan: GenerationPlan): GenerationMetadata {
   return {
     target: plan.target, nodeCount: plan.ordinaryNodes.length, dependencyNodeCount: plan.dependencyNodes.length,
+    dependencyNodes: plan.dependencyNodes.map(node => {
+      const requirement = plan.dependencyReasons?.find(value => value.nodeId === node.id);
+      return { id: node.id, name: node.name, sourceId: node.sourceId, sourceName: plan.inventory.sources.find(source => source.id === node.sourceId)?.name, bindingSourceId: requirement?.bindingSourceId, reason: (requirement?.reason || []).map(label => {
+        try { const url = new URL(label); return `${url.protocol}//${url.hostname}${url.pathname}`; } catch { return label; }
+      }) };
+    }),
     bindings: plan.bindings.map(binding => ({ ...binding, services: binding.services.map(({ id, url }) => ({ id, url })) })),
     diagnostics: plan.bindings.flatMap(binding => binding.diagnostics),
   };

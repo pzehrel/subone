@@ -99,6 +99,7 @@ export interface GenerationMetadata {
   target: { type: ClientType; version?: string; mode: 'complete' | 'nodes' };
   nodeCount: number;
   dependencyNodeCount: number;
+  dependencyNodes: { id: string; name: string; sourceId?: string; sourceName?: string; bindingSourceId?: string; reason: string[] }[];
   bindings: GenerationBinding[];
   diagnostics: GenerationDiagnostic[];
 }
