@@ -20,7 +20,7 @@ export function adaptSingboxDns(doc: Document, plan: GenerationPlan, nodeTags: R
 
   for (const binding of plan.bindings) {
     const service = binding.services[0];
-    const source = plan.sources.find(source => source.id === binding.sourceId)!;
+    const source = plan.inventory.sources.find(source => source.id === binding.sourceId)!;
     const imports: Document[] = [];
     const outboundImports: Document[] = [];
     let committedOutboundCount = 0;

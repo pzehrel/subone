@@ -5,7 +5,7 @@ import { defaultMihomoDohEgress } from '../../../core/parser/source-doh';
 import { mihomoDnsFragment, safeMihomoDnsRoute, withMihomoDnsRoute } from '../../../core/mihomo-dns';
 import { nodeToMihomoProxy } from '../../../core/generators/mihomo-generator';
 import type { SourceDohReference, SourceDohService, SubscriptionSource } from '../../../types';
-import { needsHostnameLookup } from '../runtime-dependencies';
+import { needsHostnameLookup, registerRuntimeDependencyCollector } from '../runtime-dependencies';
 
 type Document = Record<string, any>;
 class ConnectionIssue extends Error {
@@ -131,7 +131,7 @@ export function adaptMihomoDns(doc: Document, plan: GenerationPlan): void {
 }
 
 function isolateMihomoCandidates(doc: Document, plan: GenerationPlan): void {
-  const dependencyGroups = new Set((plan as GenerationPlan & { dependencyGroupIds?: string[] }).dependencyGroupIds || []);
+  const dependencyGroups = new Set(plan.dependencyGroupIds);
   const ordinaryNames = new Set(plan.ordinaryNodes.map(node => node.name));
   const ordinaryGroups = new Set(plan.groups.filter(group => !dependencyGroups.has(group.id)).map(group => group.name));
   let template: Document = {};
@@ -275,7 +275,7 @@ export function collectMihomoRuntimeDependencies(plan: GenerationPlan): import('
     if (!group || ['direct', 'reject'].includes(group.type)) return;
     for (const member of group.proxies || []) templateOutbound(member, owner, [...reason, group.name]);
     const mounts = group.sources ?? group.use;
-    let candidates = plan.groups.some(value => value.id === id) && !(plan as GenerationPlan & { dependencyGroupIds?: string[] }).dependencyGroupIds?.includes(id)
+    let candidates = plan.groups.some(value => value.id === id) && !plan.dependencyGroupIds.includes(id)
       ? plan.ordinaryNodes : plan.inventory.nodes.filter(entry => entry.state === 'enabled').map(entry => entry.node);
     if (mounts?.length) candidates = candidates.filter(node => { const source = sourceOf(node.sourceId); return !!source && (mounts.includes(source.id) || mounts.includes(source.name)); });
     if (group.filter) { try { const regex = new RegExp(group.filter.replace(/\(\?i\)/gi, ''), 'i'); candidates = candidates.filter(node => regex.test(node.name)); } catch { return; } }
@@ -313,3 +313,5 @@ export function collectMihomoRuntimeDependencies(plan: GenerationPlan): import('
   for (const binding of plan.bindings) for (const id of binding.nodeIds) node(id, binding.sourceId, [binding.sourceName]);
   return result;
 }
+
+registerRuntimeDependencyCollector('mihomo', collectMihomoRuntimeDependencies);

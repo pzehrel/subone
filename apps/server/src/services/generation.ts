@@ -7,8 +7,8 @@ import { generateQuantumultXConfig, nodeToQuantumultXProxy } from '../core/gener
 import { generateEgernConfig, nodeToEgernProxy } from '../core/generators/egern-generator';
 import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../core/generators/shadowrocket-generator';
 import { getEffectiveNodes, getEffectiveNodesForProfile, getEffectiveGroupsForProfile, getEffectiveRulesForProfile, getEffectiveSourcesForProfile } from './profile-service';
-import { requiresExpandedNodes, resolveOutputReferences, prepareTemplateReferences, resolveTemplateReferences, templateOutboundNames } from './node-references';
-import { createRuntimeInventory, validateSingboxRuntime } from './generation/runtime-dependencies';
+import { requiresExpandedNodes, resolveOutputReferences, prepareTemplateReferences, resolveTemplateReferences, templateOutboundNames, nodeReference, groupReference } from './node-references';
+import { createRuntimeInventory, collectRuntimeDependencies, validateSingboxRuntime } from './generation/runtime-dependencies';
 import { adaptSingboxDns } from './generation/adapters/singbox';
 import { adaptMihomoDns, validateMihomoRuntime } from './generation/adapters/mihomo';
 import { retainTemplateDns } from './generation/adapters/unsupported';
@@ -24,27 +24,64 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
   const sources = options.profile ? getEffectiveSourcesForProfile(options.profile, ordinary) : config.sources;
   const savedTemplate = config.templates.find(template => template.id === (options.templateId || options.profile?.templates?.[options.target])) || config.templates.find(template => template.type === options.target && template.content === options.templateContent);
   const template = prepareTemplateReferences({ ...(savedTemplate || { id: 'unsaved', name: '', type: options.target }), content: options.templateContent }, config, savedTemplate);
-  const resolved = resolveOutputReferences(ordinary, groups, sources, options.target, templateOutboundNames(template));
+  const stableTemplate = (nodes: typeof ordinary, selectedGroups: typeof groups) => resolveTemplateReferences(template, nodes.map(node => ({ ...node, name: nodeReference(node.id) })), selectedGroups.map(group => ({ ...group, name: groupReference(group.id) })));
   const nodeOnly = options.target === 'shadowrocket' && ['base64', 'b64'].includes(options.format || '');
-  return {
+  const plan: GenerationPlan = {
     target: { type: options.target, ...(options.target === 'singbox' ? { version: '1.14.4' } : options.target === 'mihomo' ? { version: '1.19.33' } : {}), mode: nodeOnly ? 'nodes' : 'complete' },
-    templateContent: resolveTemplateReferences(template, resolved.nodes, resolved.groups), template, inventory: createRuntimeInventory(config),
-    ordinaryNodes: resolved.nodes, dependencyNodes: [], groups: resolved.groups,
-    rules: (options.profile ? getEffectiveRulesForProfile(options.profile) : config.rulesList).map(rule => {
-      const matches = groups.filter(group => group.name === rule.outbound);
-      return { ...rule, outbound: matches.length === 1 ? resolved.groups.find(group => group.id === matches[0].id)?.name || rule.outbound : rule.outbound };
-    }),
-    sources: resolved.sources,
-    bindings: resolved.sources.flatMap(source => {
-      const nodeIds = resolved.nodes.filter(node => node.sourceId === source.id).map(node => node.id);
+    templateContent: stableTemplate(ordinary, groups), template, inventory: createRuntimeInventory(config),
+    ordinaryNodes: structuredClone(ordinary), dependencyNodes: [], dependencyGroupIds: [], dependencyReasons: [], groups: structuredClone(groups),
+    rules: structuredClone(options.profile ? getEffectiveRulesForProfile(options.profile) : config.rulesList),
+    sources: structuredClone(sources.filter(source => source.enabled && (ordinary.some(node => node.sourceId === source.id) || options.profile?.nodeFilter?.sourceIds?.includes(source.id) || groups.some(group => (group.sources ?? group.use)?.some(mount => mount === source.id || mount === source.name))))),
+    bindings: [],
+    expandNodes: requiresExpandedNodes(groups) || (options.expandNodes ?? (options.target === 'shadowrocket')),
+    baseUrl: options.baseUrl || '', subToken: options.subToken || options.profile?.token || 'preview-token',
+  };
+  const bindNodes = () => {
+    const nodes = [...plan.ordinaryNodes, ...plan.dependencyNodes];
+    plan.bindings = plan.inventory.sources.flatMap(source => {
+      const nodeIds = nodes.filter(node => node.sourceId === source.id).map(node => node.id);
       if (!nodeIds.length) return [];
       return [{ sourceId: source.id, sourceName: source.name, batchId: source.doh?.batchId, updatedAt: source.doh?.updatedAt,
         nodeIds, services: structuredClone(source.doh?.services || []), status: nodeOnly ? 'ignored' as const : 'template' as const,
         method: nodeOnly ? 'nodes-only' : 'template-dns', appliedServiceIds: [], diagnostics: [] }];
-    }),
-    expandNodes: requiresExpandedNodes(groups) || (options.expandNodes ?? (options.target === 'shadowrocket')),
-    baseUrl: options.baseUrl || '', subToken: options.subToken || options.profile?.token || 'preview-token',
+    });
   };
+  // Completion works on stable identities, before allocating any client-facing names.
+  // Each newly required source can introduce its own DNS/bootstrap connections.
+  let changed: boolean;
+  do {
+    bindNodes();
+    changed = false;
+    const required = collectRuntimeDependencies(plan);
+    const included = new Set([...plan.ordinaryNodes, ...plan.dependencyNodes].map(node => node.id));
+    for (const requirement of required.nodes) {
+      if (requirement.state !== 'omitted' || included.has(requirement.nodeId)) continue;
+      const entry = plan.inventory.nodes.find(entry => entry.node.id === requirement.nodeId);
+      if (!entry || entry.state !== 'enabled') continue;
+      plan.dependencyNodes.push(structuredClone(entry.node));
+      plan.dependencyReasons!.push(requirement);
+      included.add(entry.node.id); changed = true;
+    }
+    for (const requirement of required.groups) {
+      if (plan.groups.some(group => group.id === requirement.groupId)) continue;
+      const group = plan.inventory.groups.find(group => group.id === requirement.groupId);
+      if (!group) continue;
+      plan.groups.push(structuredClone(group)); plan.dependencyGroupIds.push(group.id); changed = true;
+    }
+    plan.templateContent = stableTemplate([...plan.ordinaryNodes, ...plan.dependencyNodes], plan.groups);
+  } while (changed);
+  const resolved = resolveOutputReferences([...plan.ordinaryNodes, ...plan.dependencyNodes], plan.groups, plan.inventory.sources, options.target, templateOutboundNames(template));
+  const ordinaryIds = new Set(plan.ordinaryNodes.map(node => node.id));
+  plan.ordinaryNodes = resolved.nodes.filter(node => ordinaryIds.has(node.id));
+  plan.dependencyNodes = resolved.nodes.filter(node => !ordinaryIds.has(node.id));
+  plan.groups = resolved.groups;
+  plan.sources = plan.sources.map(source => ({ ...source, nodes: plan.ordinaryNodes.filter(node => node.sourceId === source.id) }));
+  plan.templateContent = resolveTemplateReferences(template, resolved.nodes, resolved.groups);
+  plan.rules = plan.rules.map(rule => {
+    const matches = groups.filter(group => group.name === rule.outbound);
+    return { ...rule, outbound: matches.length === 1 ? resolved.groups.find(group => group.id === matches[0].id)?.name || rule.outbound : rule.outbound };
+  });
+  return plan;
 }
 
 export function renderGeneration(input: GenerationPlan) {
@@ -52,13 +89,13 @@ export function renderGeneration(input: GenerationPlan) {
   const plan = structuredClone(input);
   const nodes = [...plan.ordinaryNodes, ...plan.dependencyNodes];
   const { groups, rules, sources, templateContent } = plan;
-  const options = { expandNodes: plan.expandNodes, baseUrl: plan.baseUrl, subToken: plan.subToken, ordinaryNodeIds: new Set(plan.ordinaryNodes.map(node => node.id)), dependencyGroupIds: new Set((plan as GenerationPlan & { dependencyGroupIds?: string[] }).dependencyGroupIds || []) };
+  const options = { expandNodes: plan.expandNodes, baseUrl: plan.baseUrl, subToken: plan.subToken, ordinaryNodeIds: new Set(plan.ordinaryNodes.map(node => node.id)), dependencyGroupIds: new Set(plan.dependencyGroupIds) };
   let output: string;
   let contentType = 'text/plain; charset=utf-8';
   if (plan.target.mode === 'nodes') {
     output = generateShadowrocketBase64(plan.ordinaryNodes);
   } else if (plan.target.type === 'singbox') {
-    const { document, nodeTags } = generateSingboxDocument(templateContent, nodes, groups, rules, sources, new Set(plan.ordinaryNodes.map(node => node.id)));
+    const { document, nodeTags } = generateSingboxDocument(templateContent, nodes, groups, rules, sources, new Set(plan.ordinaryNodes.map(node => node.id)), new Set(plan.groups.filter(group => !plan.dependencyGroupIds.includes(group.id)).map(group => group.id)));
     adaptSingboxDns(document, plan, nodeTags);
     validateSingboxRuntime(document, plan, nodeTags);
     output = JSON.stringify(document, null, 2);
