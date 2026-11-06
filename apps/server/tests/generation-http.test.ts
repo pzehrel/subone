@@ -185,7 +185,10 @@ test('all six complete outputs share preview and dispatch while unsupported adap
     assert.equal(actual.status, 200, target);
     assert.equal(await actual.text(), preview.data, target);
     assert.equal(preview.generation.bindings.length, 2);
-    if (target !== 'singbox') {
+    if (target === 'loon') {
+      assert.deepEqual(preview.generation.bindings.map((binding: any) => binding.status), ['degraded', 'degraded']);
+      assert.ok(preview.generation.diagnostics.every((entry: any) => ['loon-doh-transport-unverified', 'loon-doh-bootstrap-unverified'].includes(entry.code)));
+    } else if (target !== 'singbox') {
       assert.deepEqual(preview.generation.bindings.map((binding: any) => binding.status), ['unapplied', 'unapplied']);
       assert.deepEqual(preview.generation.diagnostics.map((entry: any) => entry.sourceId), [a.id, b.id]);
       assert.ok(preview.generation.diagnostics.every((entry: any) => entry.code === 'source-doh-unsupported'));
