@@ -1,6 +1,6 @@
 import yaml from 'js-yaml';
 import { getAppConfig } from '../context';
-import { generateMihomoConfig, nodeToMihomoProxy } from '../core/generators/mihomo-generator';
+import { generateMihomoConfig } from '../core/generators/mihomo-generator';
 import { generateSingboxDocument } from '../core/generators/singbox-generator';
 import { generateLoonConfig, nodeToLoonProxy } from '../core/generators/loon-generator';
 import { generateQuantumultXConfig, nodeToQuantumultXProxy } from '../core/generators/quantumultx-generator';
@@ -11,6 +11,7 @@ import { requiresExpandedNodes, resolveOutputReferences, prepareTemplateReferenc
 import { createRuntimeInventory, collectRuntimeDependencies, validateSingboxRuntime } from './generation/runtime-dependencies';
 import { adaptSingboxDns } from './generation/adapters/singbox';
 import { adaptLoonDns, validateLoonRuntime } from './generation/adapters/loon';
+import { adaptMihomoDns, renderMihomoSource, validateMihomoRuntime } from './generation/adapters/mihomo';
 import { retainTemplateDns } from './generation/adapters/unsupported';
 import { GenerationError, generationMetadata, type GenerationOptions, type GenerationPlan } from './generation/types';
 export { GenerationError } from './generation/types';
@@ -27,7 +28,7 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
   const stableTemplate = (nodes: typeof ordinary, selectedGroups: typeof groups) => resolveTemplateReferences(template, nodes.map(node => ({ ...node, name: nodeReference(node.id) })), selectedGroups.map(group => ({ ...group, name: groupReference(group.id) })));
   const nodeOnly = options.target === 'shadowrocket' && ['base64', 'b64'].includes(options.format || '');
   const plan: GenerationPlan = {
-    target: { type: options.target, ...(options.target === 'singbox' ? { version: '1.14.4' } : options.target === 'loon' ? { version: '3.5.3' } : {}), mode: nodeOnly ? 'nodes' : 'complete' },
+    target: { type: options.target, ...(options.target === 'singbox' ? { version: '1.14.4' } : options.target === 'mihomo' ? { version: '1.19.33' } : options.target === 'loon' ? { version: '3.5.3' } : {}), mode: nodeOnly ? 'nodes' : 'complete' },
     templateContent: stableTemplate(ordinary, groups), template, inventory: createRuntimeInventory(config),
     ordinaryNodes: structuredClone(ordinary), dependencyNodes: [], dependencyGroupIds: [], dependencyReasons: [], groups: structuredClone(groups),
     rules: structuredClone(options.profile ? getEffectiveRulesForProfile(options.profile) : config.rulesList),
@@ -100,13 +101,18 @@ export function renderGeneration(input: GenerationPlan) {
     validateSingboxRuntime(document, plan, nodeTags);
     output = JSON.stringify(document, null, 2);
     contentType = 'application/json; charset=utf-8';
+  } else if (plan.target.type === 'mihomo') {
+    const document = yaml.load(generateMihomoConfig(templateContent, nodes, groups, rules, sources, options)) as Record<string, any>;
+    adaptMihomoDns(document, plan);
+    validateMihomoRuntime(document, plan);
+    output = yaml.dump(document, { indent: 2, lineWidth: -1, noRefs: true });
+    contentType = 'text/yaml; charset=utf-8';
   } else if (plan.target.type === 'loon') {
     output = generateLoonConfig(templateContent, nodes, groups, rules, sources, { ...options, nodeServerDns: adaptLoonDns(plan), runtimeSources: plan.inventory.sources });
     validateLoonRuntime(output, plan);
   } else {
     retainTemplateDns(plan);
     switch (plan.target.type) {
-      case 'mihomo': output = generateMihomoConfig(templateContent, nodes, groups, rules, sources, options); contentType = 'text/yaml; charset=utf-8'; break;
       case 'quantumultx': output = generateQuantumultXConfig(templateContent, nodes, groups, rules, sources, options); break;
       case 'egern': output = generateEgernConfig(templateContent, nodes, groups, rules, sources, options); contentType = 'text/yaml; charset=utf-8'; break;
       case 'shadowrocket': output = generateShadowrocketConfig(templateContent, nodes, groups, rules, sources, options); break;
@@ -121,7 +127,7 @@ export function renderGeneration(input: GenerationPlan) {
 export function renderSourceGeneration(plan: GenerationPlan, sourceId: string) {
   const nodes = plan.ordinaryNodes.filter(node => node.sourceId === sourceId);
   switch (plan.target.type) {
-    case 'mihomo': return { output: yaml.dump({ proxies: nodes.map(nodeToMihomoProxy) }, { indent: 2, lineWidth: -1, noRefs: true }), contentType: 'text/yaml; charset=utf-8' };
+    case 'mihomo': return renderMihomoSource(plan, sourceId);
     case 'loon': {
       renderGeneration(plan);
       const serverDns = adaptLoonDns(structuredClone(plan));
