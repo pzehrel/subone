@@ -21,6 +21,10 @@ export type ProxyType =
 export interface ProxyNode {
   id: string;
   name: string;
+  originalName?: string;
+  localName?: string;
+  enabled?: boolean;
+  detourRef?: string;
   type: ProxyType;
   server: string;
   port: number;
