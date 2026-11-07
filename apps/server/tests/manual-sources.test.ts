@@ -224,8 +224,10 @@ test('storage failure publishes no manual candidate or failed raw, including aft
   assert.deepEqual((await api('/config')).data.sources, before.sources);
 });
 
-test('manual sources generate representative downstream nodes and DoH, respect local settings and remove source references on deletion', async () => {
-  const initial = await add(valid.replace('custom: preserved', ''));
+test('file sources generate representative downstream nodes and DoH, respect local settings and remove source references on deletion', async () => {
+  const result = await api('/sources', 'POST', { acquisition: 'manual', name: 'File downstream', ...fileInput(valid.replace('custom: preserved', '')) });
+  assert.equal(result.status, 200, result.message);
+  const initial = result.data;
   const node = initial.nodes[0];
   await api(`/nodes/${node.id}`, 'PUT', { name: 'Local downstream' });
   const group = (await api('/groups', 'POST', { name: 'Manual group', type: 'select', sources: [initial.id] })).data;
@@ -248,4 +250,111 @@ test('manual sources generate representative downstream nodes and DoH, respect l
   assert.equal(config.sources.some((item: any) => item.id === initial.id), false);
   assert.equal(config.proxyGroups.some((item: any) => item.sources?.includes(initial.id)), false);
   assert.equal(config.profiles.find((item: any) => item.id === profile.id).nodeFilter.sourceIds.includes(initial.id), false);
+});
+
+function fileInput(content: string | Buffer, name = 'subscription.json') {
+  return { contentFile: { name, base64: Buffer.from(content).toString('base64') } };
+}
+
+test('file upload preserves BOM and exact raw, matches paste, replaces the same source and survives restart', async () => {
+  const content = '\uFEFF' + valid;
+  const pasted = await add(content);
+  const result = await api('/sources', 'POST', { acquisition: 'manual', name: 'File', ...fileInput(content), createGroup: true });
+  assert.equal(result.status, 200, result.message);
+  const uploaded = result.data;
+  assert.equal(uploaded.acquisition, 'manual');
+  assert.equal(uploaded.detectedFormat, 'mihomo'); // YAML content despite .json filename
+  const connection = (node: any) => ({ type: node.type, server: node.server, port: node.port, cipher: node.cipher, password: node.password });
+  assert.deepEqual(connection(uploaded.nodes[0]), connection(pasted.nodes[0]));
+  assert.equal(uploaded.nodes[0].server, 'one.example');
+  const services = (source: any) => source.doh.services.map(({ id: _id, ...service }: any) => service);
+  assert.deepEqual(services(uploaded), services(pasted));
+  assert.equal((await api(`/sources/${uploaded.id}/raw`)).data.content, content);
+  await api(`/nodes/${uploaded.nodes[0].id}`, 'PUT', { name: 'File local', enabled: false });
+  const replaced = await api(`/sources/${uploaded.id}`, 'PUT', { content: valid.replace('First', 'Renamed') });
+  assert.equal(replaced.status, 200, replaced.message);
+  const fromPaste = await api(`/sources/${pasted.id}`, 'PUT', fileInput(valid));
+  assert.equal(fromPaste.status, 200, fromPaste.message);
+  assert.equal(fromPaste.data.nodes[0].id, pasted.nodes[0].id);
+  const uploadedAgain = await api(`/sources/${uploaded.id}`, 'PUT', fileInput(content));
+  assert.equal(uploadedAgain.data.nodes[0].id, uploaded.nodes[0].id);
+  assert.equal(uploadedAgain.data.nodes[0].name, 'File local');
+  assert.equal(uploadedAgain.data.nodes[0].enabled, false);
+  const group = (await api('/config')).data.proxyGroups.find((item: any) => item.id === `grp-${uploaded.id}`);
+  assert.deepEqual(group.sources, [uploaded.id]);
+  await stopApp(); await startApp();
+  assert.deepEqual(await source(uploaded.id), uploadedAgain.data);
+  assert.equal((await api(`/sources/${uploaded.id}/raw`)).data.content, content);
+});
+
+test('file original-byte limit includes BOM and permits exactly 1 MiB without counting JSON wrapping', async () => {
+  const prefix = '\uFEFFproxies: []\n#';
+  const exact = prefix + '中'.repeat(349520); // BOM + 13 ASCII + 1,048,560 UTF-8 bytes
+  assert.equal(Buffer.byteLength(exact), 1_048_576);
+  const added = await api('/sources', 'POST', { acquisition: 'manual', ...fileInput(exact) });
+  assert.equal(added.status, 200, added.message);
+  assert.equal((await api(`/sources/${added.data.id}/raw`)).data.content, exact);
+  for (const content of [exact + 'x', exact + '中']) {
+    assert.equal((await api('/sources', 'POST', { acquisition: 'manual', ...fileInput(content) })).status, 400);
+    assert.equal((await api(`/sources/${added.data.id}`, 'PUT', fileInput(content))).status, 400);
+    assert.equal((await api(`/sources/${added.data.id}/raw`)).data.content, exact);
+  }
+});
+
+test('invalid file reads and unsupported file inputs leave saved raw and effective state unchanged', async () => {
+  const initial = await add();
+  const before = (await api('/config')).data;
+  const invalid = [
+    fileInput(Buffer.from([0xff, 0xfe, 0x70, 0x00])),
+    fileInput(Buffer.from([0xc3, 0x28])),
+    fileInput(Buffer.from('504b030400000000', 'hex'), 'archive.zip'),
+    fileInput(Buffer.from('1f8b0800', 'hex'), 'archive.txt'),
+    fileInput(Buffer.concat([Buffer.alloc(257), Buffer.from('ustar'), Buffer.alloc(10)]), 'archive.tar'),
+    fileInput(valid, 'folder/subscription.yaml'),
+    { contentFile: [fileInput(valid).contentFile, fileInput(valid).contentFile] },
+    { contentFile: { name: 'input.txt', base64: 'not base64!' } },
+    { contentFile: { name: 'input.txt', base64: 'YR==' } },
+    { ...fileInput(valid), content: valid },
+  ];
+  for (const input of invalid) {
+    const first = await api('/sources', 'POST', { acquisition: 'manual', createGroup: true, ...input });
+    assert.equal(first.status, 400, JSON.stringify(input));
+    assert.ok(first.message);
+    const replacement = await api(`/sources/${initial.id}`, 'PUT', input);
+    assert.equal(replacement.status, 400, replacement.message);
+    assert.deepEqual((await api('/config')).data.sources, before.sources);
+    assert.deepEqual((await api('/config')).data.proxyGroups, before.proxyGroups);
+  }
+  await stopApp(); await startApp();
+  assert.deepEqual(await source(initial.id), initial);
+});
+
+test('file parse failures retain effective results and diagnostics, empty results clear, and storage failure publishes nothing', async () => {
+  const before = (await api('/config')).data;
+  const broken = valid.replace('password: secret', 'password: ""');
+  assert.equal((await api('/sources', 'POST', { acquisition: 'manual', createGroup: true, ...fileInput(broken) })).status, 422);
+  assert.deepEqual((await api('/config')).data.sources, before.sources);
+  assert.deepEqual((await api('/config')).data.proxyGroups, before.proxyGroups);
+  const initial = await add();
+  assert.equal((await api(`/sources/${initial.id}`, 'PUT', fileInput(broken))).status, 422);
+  const failed = await source(initial.id);
+  assert.deepEqual(failed.nodes, initial.nodes);
+  assert.deepEqual(failed.doh, initial.doh);
+  const raw = (await api(`/sources/${initial.id}/raw`)).data;
+  assert.equal(raw.content, broken);
+  assert.equal(raw.parseStatus, 'failed');
+  await stopApp(); await startApp();
+  assert.deepEqual((await api(`/sources/${initial.id}/raw`)).data, raw);
+  await chmod(join(directory, 'data'), 0o500);
+  try {
+    assert.equal((await api(`/sources/${initial.id}`, 'PUT', fileInput(valid))).status, 500);
+    assert.equal((await api('/sources', 'POST', { acquisition: 'manual', ...fileInput(valid) })).status, 500);
+    assert.deepEqual(await source(initial.id), failed);
+  } finally { await chmod(join(directory, 'data'), 0o700); }
+  await stopApp(); await startApp();
+  assert.deepEqual(await source(initial.id), failed);
+  const empty = await api(`/sources/${initial.id}`, 'PUT', fileInput('proxies: []\n'));
+  assert.equal(empty.status, 200, empty.message);
+  assert.deepEqual(empty.data.nodes, []);
+  assert.deepEqual(empty.data.doh.services, []);
 });
