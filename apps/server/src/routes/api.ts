@@ -151,15 +151,20 @@ apiRouter.put('/sources/:id', async (c) => {
   const current = appConfig.sources.find(s => s.id === c.req.param('id'));
   if (!current) return c.json({ success: false, message: 'Source not found' }, 404);
   try { validateInfoRegex(body); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
-  const manual = current.acquisition === 'manual';
-  if (body.acquisition !== undefined && body.acquisition !== (current.acquisition || 'url')) return c.json({ success: false, message: '暂不支持切换输入方式' }, 400);
+  if (body.acquisition !== undefined && !['url', 'manual'].includes(body.acquisition)) return c.json({ success: false, message: '输入方式无效' }, 400);
+  const acquisition = body.acquisition ?? current.acquisition ?? 'url';
+  const manual = acquisition === 'manual';
+  const switching = acquisition !== (current.acquisition || 'url');
   if (!manual && (body.content !== undefined || body.contentFile !== undefined)) return c.json({ success: false, message: '请先选择手动输入' }, 400);
   if (manual && body.url !== undefined) return c.json({ success: false, message: '手动上游无需订阅地址' }, 400);
-  const { content, error: inputError } = readManualInput(body);
+  const { content, error: inputError } = readManualInput(body, switching && manual);
   if (inputError) return c.json({ success: false, message: inputError }, 400);
   if (['manual', 'custom'].includes(body.type)) return c.json({ success: false, message: '节点必须来自上游订阅' }, 400);
   if (body.url !== undefined && (typeof body.url !== 'string' || !/^https?:\/\//.test(body.url.trim()))) return c.json({ success: false, message: '请填写 HTTP 订阅链接' }, 400);
+  if (switching && !manual && (typeof body.url !== 'string' || !/^https?:\/\//.test(body.url.trim()))) return c.json({ success: false, message: '请填写 HTTP 订阅链接' }, 400);
   const candidate = structuredClone(current);
+  candidate.acquisition = acquisition;
+  if (manual) candidate.url = undefined;
   if (typeof body.name === 'string' && body.name.trim()) candidate.name = cleanSourceOrGroupName(body.name.trim());
   if (typeof body.url === 'string') candidate.url = body.url.trim();
   if (typeof body.type === 'string') candidate.type = body.type;
@@ -169,7 +174,7 @@ apiRouter.put('/sources/:id', async (c) => {
   if (typeof body.expiryNodeRegex === 'string') candidate.expiryNodeRegex = body.expiryNodeRegex.trim();
   try {
     let updated: SubscriptionSource;
-    if (content !== undefined || (!manual && (candidate.url !== current.url || candidate.type !== current.type || candidate.customUserAgent !== current.customUserAgent))) {
+    if (switching || content !== undefined || (!manual && (candidate.url !== current.url || candidate.type !== current.type || candidate.customUserAgent !== current.customUserAgent))) {
       updated = await refreshSource(current.id, candidate, content);
     } else {
       candidate.nodes = applySubscriptionInfo(candidate, [...(candidate.nodes || []), ...(candidate.infoNodes || [])]);

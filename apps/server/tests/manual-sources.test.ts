@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,7 +14,9 @@ let upstreamOrigin: string;
 let body = '';
 let status = 200;
 const responses = new Map<string, { status: number; body: string; truncated?: boolean }>();
+const requests: string[] = [];
 const upstream = createServer((request, response) => {
+  requests.push(request.url || '');
   const selected = responses.get(request.url || '');
   response.writeHead(selected?.status ?? status, { 'Subscription-Userinfo': 'upload=10; download=20; total=100', 'Content-Type': 'text/yaml; charset=utf-8', ...(selected?.truncated ? { 'Content-Length': '100000' } : {}) });
   if (selected?.truncated) {
@@ -56,6 +58,8 @@ before(async () => {
   const address = upstream.address();
   assert.ok(address && typeof address !== 'string');
   upstreamOrigin = `http://127.0.0.1:${address.port}`;
+  await mkdir(join(directory, 'data'));
+  await writeFile(join(directory, 'data', 'config.json'), JSON.stringify({ sources: [{ id: 'legacy-switch', name: 'Legacy address', url: upstreamOrigin + '/legacy-switch', type: 'manual', enabled: true }] }));
   await startApp();
 });
 after(async () => {
@@ -74,7 +78,7 @@ test('pasted upstream retains its exact content, parsed DoH and source identity 
   assert.equal(added.data.doh.services.length, 1);
   assert.equal((await api(`/sources/${added.data.id}/raw`)).data.content, valid);
   await stopApp(); await startApp();
-  assert.deepEqual((await api('/sources')).data[0], added.data);
+  assert.deepEqual(await source(added.data.id), added.data);
 });
 
 async function source(id: string) { return (await api('/sources')).data.find((item: any) => item.id === id); }
@@ -357,4 +361,174 @@ test('file parse failures retain effective results and diagnostics, empty result
   assert.equal(empty.status, 200, empty.message);
   assert.deepEqual(empty.data.nodes, []);
   assert.deepEqual(empty.data.doh.services, []);
+});
+
+test('address switches through paste and file without changing source, node settings or group references, and resumes address updates', async () => {
+  const path = '/switch-success';
+  responses.set(path, { status: 200, body: valid });
+  const added = await api('/sources', 'POST', { name: 'Switch source', url: upstreamOrigin + path, createGroup: true });
+  assert.equal(added.status, 200, added.message);
+  const initial = added.data;
+  const node = initial.nodes[0];
+  await api(`/nodes/${node.id}`, 'PUT', { name: 'Switch local', enabled: false });
+  const group = (await api('/groups', 'POST', { name: 'Switch references', type: 'select', sources: [initial.id], proxies: [`node:${node.id}`] })).data;
+  for (const input of [{ content: valid }, fileInput(valid)]) {
+    const manual = await api(`/sources/${initial.id}`, 'PUT', { acquisition: 'manual', ...input });
+    assert.equal(manual.status, 200, manual.message);
+    assert.equal(manual.data.id, initial.id);
+    assert.equal(manual.data.acquisition, 'manual');
+    assert.equal(manual.data.url, undefined);
+    assert.equal(manual.data.nodes[0].id, node.id);
+    assert.equal(manual.data.nodes[0].name, 'Switch local');
+    assert.equal(manual.data.nodes[0].enabled, false);
+    const beforeRequests = requests.filter(url => url === path).length;
+    const batch = await api('/sources/refresh-all', 'POST', {});
+    assert.equal(batch.results.some((item: any) => item.sourceId === initial.id), false);
+    assert.equal((await api(`/sources/${initial.id}/refresh`, 'POST', {})).status, 400);
+    assert.equal(requests.filter(url => url === path).length, beforeRequests);
+    await stopApp(); await startApp();
+    assert.deepEqual(await source(initial.id), manual.data);
+    const config = (await api('/config')).data;
+    assert.deepEqual(config.proxyGroups.find((item: any) => item.id === group.id), group);
+    assert.equal(config.sources.filter((item: any) => item.id === initial.id).length, 1);
+    const remote = await api(`/sources/${initial.id}`, 'PUT', { acquisition: 'url', url: upstreamOrigin + path });
+    assert.equal(remote.status, 200, remote.message);
+    assert.equal(remote.data.nodes[0].id, node.id);
+    assert.equal(remote.data.nodes[0].name, 'Switch local');
+    assert.equal(remote.data.nodes[0].enabled, false);
+    assert.equal(remote.data.url, upstreamOrigin + path);
+    assert.equal(remote.data.acquisition, 'url');
+    assert.equal((await api('/sources/refresh-all', 'POST', {})).results.find((item: any) => item.sourceId === initial.id).success, true);
+    assert.equal(requests.filter(url => url === path).length, beforeRequests + 2);
+    await api(`/sources/${initial.id}`, 'PUT', { enabled: false });
+    const disabledRequests = requests.filter(url => url === path).length;
+    assert.equal((await api('/sources/refresh-all', 'POST', {})).results.some((item: any) => item.sourceId === initial.id), false);
+    assert.equal(requests.filter(url => url === path).length, disabledRequests);
+    await api(`/sources/${initial.id}`, 'PUT', { enabled: true });
+    await stopApp(); await startApp();
+    assert.equal((await source(initial.id)).acquisition, 'url');
+  }
+});
+
+test('failed cross-mode reads, validation and parses preserve active intent and references separately from diagnostic raw after reboot', async () => {
+  const path = '/switch-failure';
+  responses.set(path, { status: 200, body: valid });
+  const remote = (await api('/sources', 'POST', { url: upstreamOrigin + path, name: 'Keep address', createGroup: true })).data;
+  const manual = await add(valid, { name: 'Keep manual', createGroup: true });
+  const effective = (item: any) => Object.fromEntries(['id', 'name', 'acquisition', 'url', 'nodes', 'infoNodes', 'doh', 'lastUpdated', 'parsedConfig'].map(field => [field, item[field]]));
+  const groups = (await api('/config')).data.proxyGroups;
+  for (const input of [
+    { acquisition: 'manual' },
+    { acquisition: 'manual', content: 'x'.repeat(1_048_577) },
+    { acquisition: 'manual', ...fileInput(Buffer.from([0xc3, 0x28])) },
+    { acquisition: 'url', url: 'file:///invalid' },
+    { acquisition: 'invalid', content: valid },
+  ]) {
+    assert.equal((await api(`/sources/${remote.id}`, 'PUT', input)).status, 400);
+    assert.deepEqual(await source(remote.id), remote);
+  }
+  for (const input of [{ acquisition: 'url' }, { acquisition: 'url', url: 'invalid' }, { acquisition: 'url', url: upstreamOrigin + path, content: valid }]) {
+    assert.equal((await api(`/sources/${manual.id}`, 'PUT', input)).status, 400);
+    assert.deepEqual(await source(manual.id), manual);
+  }
+  const broken = valid.replace('https://dns.example/dns-query', 'https://');
+  for (const input of [{ content: broken }, fileInput(broken)]) {
+    const result = await api(`/sources/${remote.id}`, 'PUT', { acquisition: 'manual', name: 'Rejected manual', ...input });
+    assert.equal(result.status, 422, result.message);
+    assert.deepEqual(effective(await source(remote.id)), effective(remote));
+    const raw = (await api(`/sources/${remote.id}/raw`)).data;
+    assert.equal(raw.content, broken);
+    assert.equal(raw.parseStatus, 'failed');
+    assert.equal(raw.lastSuccessfulUpdate, remote.lastUpdated);
+    await stopApp(); await startApp();
+    assert.deepEqual(effective(await source(remote.id)), effective(remote));
+    assert.deepEqual((await api(`/sources/${remote.id}/raw`)).data, raw);
+  }
+  responses.set(path, { status: 503, body: 'offline' });
+  assert.equal((await api(`/sources/${manual.id}`, 'PUT', { acquisition: 'url', url: upstreamOrigin + path, name: 'Rejected address' })).status, 500);
+  assert.deepEqual(effective(await source(manual.id)), effective(manual));
+  assert.deepEqual((await source(manual.id)).rawSubscription, manual.rawSubscription);
+  responses.set(path, { status: 200, body: broken });
+  assert.equal((await api(`/sources/${manual.id}`, 'PUT', { acquisition: 'url', url: upstreamOrigin + path })).status, 422);
+  assert.deepEqual(effective(await source(manual.id)), effective(manual));
+  const failedManual = await source(manual.id);
+  const raw = (await api(`/sources/${manual.id}/raw`)).data;
+  assert.equal(raw.content, broken);
+  assert.equal(raw.parseStatus, 'failed');
+  // Settings-only edits remain possible despite a failed diagnostic document.
+  const metadata = await api(`/sources/${manual.id}`, 'PUT', { acquisition: 'manual', name: 'Manual metadata' });
+  assert.equal(metadata.status, 200, metadata.message);
+  assert.equal(metadata.data.lastUpdated, manual.lastUpdated);
+  assert.deepEqual(metadata.data.rawSubscription, failedManual.rawSubscription);
+  await stopApp(); await startApp();
+  assert.deepEqual(await source(manual.id), metadata.data);
+  assert.deepEqual((await api('/config')).data.proxyGroups, groups);
+});
+
+test('storage failures do not publish either direction of acquisition switching or its diagnostic document', async () => {
+  responses.set('/switch-save', { status: 200, body: valid });
+  const remote = (await api('/sources', 'POST', { url: upstreamOrigin + '/switch-save', name: 'Saved URL', createGroup: true })).data;
+  const manual = await add(valid, { name: 'Saved manual', createGroup: true });
+  const before = (await api('/config')).data;
+  await chmod(join(directory, 'data'), 0o500);
+  try {
+    for (const input of [{ content: valid }, fileInput(valid), { content: 'unknown' }]) {
+      assert.equal((await api(`/sources/${remote.id}`, 'PUT', { acquisition: 'manual', ...input })).status, 500);
+    }
+    assert.equal((await api(`/sources/${manual.id}`, 'PUT', { acquisition: 'url', url: upstreamOrigin + '/switch-save' })).status, 500);
+    responses.set('/switch-save', { status: 200, body: 'unknown' });
+    assert.equal((await api(`/sources/${manual.id}`, 'PUT', { acquisition: 'url', url: upstreamOrigin + '/switch-save' })).status, 500);
+    assert.deepEqual((await api('/config')).data.sources, before.sources);
+    assert.deepEqual((await api('/config')).data.proxyGroups, before.proxyGroups);
+  } finally { await chmod(join(directory, 'data'), 0o700); }
+  await stopApp(); await startApp();
+  assert.deepEqual((await api('/config')).data.sources, before.sources);
+  assert.deepEqual((await api('/config')).data.proxyGroups, before.proxyGroups);
+});
+
+test('switched file content and then address content replace the effective DoH batch used by representative downstream output', async () => {
+  const path = '/switch-output';
+  responses.set(path, { status: 200, body: valid });
+  const initial = (await api('/sources', 'POST', { url: upstreamOrigin + path, name: 'Switch output' })).data;
+  const group = (await api('/groups', 'POST', { name: 'Switch output group', type: 'select', sources: [initial.id], proxies: [`node:${initial.nodes[0].id}`] })).data;
+  const template = (await api('/templates', 'POST', { name: 'Switch output template', type: 'mihomo', content: 'proxies: []\nproxy-groups: []\ndns:\n  enable: true\n  nameserver: [https://template.example/dns-query]\n  default-nameserver: [1.1.1.1]\n  proxy-server-nameserver: [1.1.1.1]\nrules: ["MATCH,DIRECT"]\n' })).data;
+  const profile = (await api('/profiles', 'POST', { name: 'Switch output profile', nodeFilter: { mode: 'all', sourceIds: [initial.id] }, selectedGroupIds: [group.id], templates: { mihomo: template.id } })).data;
+  await api(`/nodes/${initial.nodes[0].id}`, 'PUT', { name: 'Stable output local' });
+  const switched = await api(`/sources/${initial.id}`, 'PUT', { acquisition: 'manual', ...fileInput(valid.replace('dns.example', 'new-dns.example').replace('custom: preserved', '')) });
+  assert.equal(switched.status, 200, switched.message);
+  assert.equal(switched.data.nodes[0].id, initial.nodes[0].id);
+  assert.equal(switched.data.doh.services.length, 1);
+  await stopApp(); await startApp();
+  const output = await fetch(`${origin}/s/${profile.token}/mihomo?expand=true`).then(response => response.text());
+  assert.match(output, /Stable output local/);
+  assert.match(output, /new-dns.example\/dns-query/);
+  assert.doesNotMatch(output, /https:\/\/dns.example\/dns-query/);
+  responses.set(path, { status: 200, body: 'proxies:\n - {name: Changed upstream name, type: ss, server: one.example, port: 443, cipher: aes-128-gcm, password: secret}\n' });
+  const address = await api(`/sources/${initial.id}`, 'PUT', { acquisition: 'url', url: upstreamOrigin + path });
+  assert.equal(address.status, 200, address.message);
+  assert.deepEqual(address.data.doh.services, []);
+  assert.equal(address.data.nodes[0].id, initial.nodes[0].id);
+  await stopApp(); await startApp();
+  const resumed = await fetch(`${origin}/s/${profile.token}/mihomo?expand=true`).then(response => response.text());
+  assert.match(resumed, /Stable output local/);
+  assert.doesNotMatch(resumed, /new-dns.example/);
+  assert.match(resumed, /template.example\/dns-query/);
+});
+
+
+test('legacy source without acquisition remains an address regardless of format hint until a successful switch', async () => {
+  const legacy = await source('legacy-switch');
+  assert.equal(legacy.acquisition, undefined);
+  assert.equal(legacy.type, 'manual');
+  responses.set('/legacy-switch', { status: 200, body: valid });
+  const refreshed = await api('/sources/legacy-switch/refresh', 'POST', {});
+  assert.equal(refreshed.status, 200, refreshed.message);
+  const switched = await api('/sources/legacy-switch', 'PUT', { acquisition: 'manual', content: valid });
+  assert.equal(switched.status, 200, switched.message);
+  assert.equal(switched.data.id, legacy.id);
+  assert.equal(switched.data.acquisition, 'manual');
+  assert.equal(switched.data.url, undefined);
+  assert.equal(switched.data.nodes[0].id, refreshed.source.nodes[0].id);
+  await stopApp(); await startApp();
+  assert.deepEqual(await source(legacy.id), switched.data);
 });
