@@ -3,17 +3,13 @@ import { nodeToEgernProxy, generateEgernConfig, EgernConfigError, egernEntry } f
 import { nodeReferenceId, groupReferenceId } from '../../node-references';
 import { registerRuntimeDependencyCollector, type RuntimeDependencyCollection } from '../runtime-dependencies';
 import { GenerationError, generationMetadata, type GenerationPlan } from '../types';
+import { renderEgernDomainDns } from '../native-domain-dns';
 
-/** Proxy DNS is shared/direct; node-server lookup semantics remain unproven. */
+/** Domain forward rules select the source's native encrypted upstream group. */
 export function renderEgern(plan: GenerationPlan): string {
-  for (const binding of plan.bindings) {
-    if (!binding.services.length) continue;
-    binding.status = 'unapplied';
-    binding.method = 'template-dns';
-    binding.diagnostics.push({ code: 'source-doh-unsupported', severity: 'warning', sourceId: binding.sourceId, message: 'Egern 保留模板 DNS；proxy_nameservers 是共享且强制直连的 Proxy DNS，尚未证实可分别解析各来源节点服务器域名；来源 DoH 及其出站均未采用' });
-  }
   try {
-    return generateEgernConfig(plan.templateContent, [...plan.ordinaryNodes, ...plan.dependencyNodes], plan.groups, plan.rules, plan.sources, { expandNodes: plan.expandNodes, baseUrl: plan.baseUrl, subToken: plan.subToken, ordinaryNodeIds: new Set(plan.ordinaryNodes.map(node => node.id)), dependencyGroupIds: new Set(plan.dependencyGroupIds), ordinaryGroupIds: new Set(plan.ordinaryGroupIds), inventorySources: plan.inventory.sources });
+    const output = generateEgernConfig(plan.templateContent, [...plan.ordinaryNodes, ...plan.dependencyNodes], plan.groups, plan.rules, plan.sources, { expandNodes: plan.expandNodes, baseUrl: plan.baseUrl, subToken: plan.subToken, ordinaryNodeIds: new Set(plan.ordinaryNodes.map(node => node.id)), dependencyGroupIds: new Set(plan.dependencyGroupIds), ordinaryGroupIds: new Set(plan.ordinaryGroupIds), inventorySources: plan.inventory.sources });
+    return plan.target.mode === 'nodes' ? output : renderEgernDomainDns(output, plan);
   } catch (error) {
     throwEgernGenerationError(plan, error);
   }

@@ -20,6 +20,8 @@ export interface GenerationBinding {
   status: 'applied' | 'degraded' | 'unapplied' | 'template' | 'ignored';
   method: string;
   appliedServiceIds: string[];
+  effectiveServices?: { sourceId: string; serviceId: string; url: string }[];
+  domainRanges?: string[];
   diagnostics: GenerationDiagnostic[];
 }
 export interface GenerationOptions {

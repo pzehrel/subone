@@ -13,6 +13,7 @@ import { adaptLoonDns, validateLoonRuntime } from './generation/adapters/loon';
 import { adaptMihomoDns, renderMihomoSource, validateMihomoRuntime } from './generation/adapters/mihomo';
 import { adaptShadowrocketDns, diagnosePureNodes, validateShadowrocketRuntime } from './generation/adapters/shadowrocket';
 import { renderQuantumultX, renderQuantumultXSource } from './generation/adapters/quantumultx';
+import { renderIniDomainDns } from './generation/native-domain-dns';
 import { GenerationError, generationMetadata, type GenerationMetadata, type GenerationOptions, type GenerationPlan } from './generation/types';
 export { GenerationError } from './generation/types';
 export type { GenerationPlan, GenerationMetadata, GenerationBinding, GenerationDiagnostic } from './generation/types';
@@ -119,13 +120,15 @@ export function renderGeneration(input: GenerationPlan) {
     output = yaml.dump(document, { indent: 2, lineWidth: -1, noRefs: true });
     contentType = 'text/yaml; charset=utf-8';
   } else if (plan.target.type === 'loon') {
-    output = generateLoonConfig(templateContent, nodes, groups, rules, sources, { ...options, nodeServerDns: adaptLoonDns(plan), runtimeSources: plan.inventory.sources });
+    const nodeServerDns = adaptLoonDns(plan);
+    output = generateLoonConfig(plan.templateContent, nodes, groups, rules, sources, { ...options, nodeServerDns, runtimeSources: plan.inventory.sources });
     validateLoonRuntime(output, plan);
   } else if (plan.target.type === 'quantumultx') {
     output = renderQuantumultX(plan);
   } else {
     adaptShadowrocketDns(plan);
     output = generateShadowrocketConfig(templateContent, nodes, groups, rules, sources, { ...options, runtimeSources: plan.inventory.sources });
+    output = renderIniDomainDns(output, plan, 'shadowrocket');
     validateShadowrocketRuntime(output, plan);
   }
   const generation = generationMetadata(plan);

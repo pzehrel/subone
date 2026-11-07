@@ -3,17 +3,10 @@ import { generateQuantumultXConfig, nodeToQuantumultXProxy, isSupportedByQuantum
 import { quantumultXReferences, quantumultXOwnedNames, quantumultXEntries, quantumultXDefinitionNames } from '../../../core/quantumultx-config';
 import { registerRuntimeDependencyCollector } from '../runtime-dependencies';
 import { GenerationError, generationMetadata, type GenerationPlan, type GenerationDiagnostic } from '../types';
+import { renderIniDomainDns } from '../native-domain-dns';
 
-/** Generic/domain DNS rules do not establish a resolver for proxy server hostnames. */
+/** Source server domains use native scoped DoH entries. */
 export function renderQuantumultX(plan: GenerationPlan): string {
-  for (const binding of plan.bindings) {
-    if (!binding.services.length) continue;
-    binding.status = 'unapplied';
-    binding.method = 'template-dns';
-    binding.appliedServiceIds = [];
-    binding.diagnostics.push({ code: 'source-doh-node-resolver-unverified', severity: 'warning', sourceId: binding.sourceId,
-      message: 'Quantumult X 1.8.1 未证实来源节点服务器解析、逐 DoH 出站及独立引导能力；此来源绑定未生效，保留模板 DNS' });
-  }
   validateNodeChains(plan);
   if (plan.dependencyNodes.length) {
     const template = { quantumultxLines: plan.templateContent.split('\n') };
@@ -28,7 +21,7 @@ export function renderQuantumultX(plan: GenerationPlan): string {
   const output = generateQuantumultXConfig(plan.templateContent, [...plan.ordinaryNodes, ...plan.dependencyNodes], plan.groups, plan.rules, plan.sources,
     { expandNodes: plan.expandNodes, baseUrl: plan.baseUrl, subToken: plan.subToken, ordinaryNodeIds: new Set(plan.ordinaryNodes.map(node => node.id)), dependencyGroupIds: new Set(plan.dependencyGroupIds), runtimeSources: plan.inventory.sources });
   validateQuantumultXReferences(output, plan);
-  return output;
+  return renderIniDomainDns(output, plan, 'quantumultx');
 }
 
 function validateQuantumultXReferences(output: string, plan: GenerationPlan): void {

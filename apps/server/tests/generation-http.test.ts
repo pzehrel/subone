@@ -174,7 +174,7 @@ test('missing independent bootstrap rejects adopted binding in both HTTP paths w
   assert.equal(explicitPreview.generation.diagnostics[0].code, 'source-doh-bootstrap-missing');
 });
 
-test('all six complete outputs share preview and dispatch while unsupported adapters report every source binding', async () => {
+test('all six complete outputs share preview and dispatch with source node DNS', async () => {
   const a = await addSource('/adapters-a', [{ type: 'https', server: 'dns.adapters-a.example' }], 'node.adapters-a.example');
   const b = await addSource('/adapters-b', [{ type: 'https', server: 'dns.adapters-b.example' }], 'node.adapters-b.example');
   const profile = await profileFor([a, b]);
@@ -194,16 +194,42 @@ test('all six complete outputs share preview and dispatch while unsupported adap
     assert.equal(actual.status, 200, target);
     assert.equal(await actual.text(), preview.data, target);
     assert.equal(preview.generation.bindings.length, 2);
-    if (target === 'loon') {
-      assert.deepEqual(preview.generation.bindings.map((binding: any) => binding.status), ['degraded', 'degraded']);
-      assert.ok(preview.generation.diagnostics.every((entry: any) => ['loon-doh-transport-unverified', 'loon-doh-bootstrap-unverified'].includes(entry.code)));
-    } else if (!['singbox', 'mihomo'].includes(target)) {
-      assert.deepEqual(preview.generation.bindings.map((binding: any) => binding.status), ['unapplied', 'unapplied']);
-      assert.deepEqual(preview.generation.diagnostics.map((entry: any) => entry.sourceId), [a.id, b.id]);
-      assert.ok(preview.generation.diagnostics.every((entry: any) => entry.code === (target === 'quantumultx' ? 'source-doh-node-resolver-unverified' : 'source-doh-unsupported')));
-    }
-    if (target === 'mihomo') assert.deepEqual(preview.generation.bindings.map((binding: any) => binding.status), ['applied', 'applied']);
+    assert.deepEqual(preview.generation.bindings.map((binding: any) => binding.status), ['applied', 'applied'], target);
+    assert.equal(preview.generation.diagnostics.length, 0, target);
   }
+});
+
+test('URL-list targets diagnose an inherited source bootstrap instead of silently replacing it with the template resolver', async () => {
+  const path = '/inherited-bootstrap';
+  const document = {
+    outbounds: [{ type: 'socks', tag: 'Bootstrap node', server: 'node.bootstrap.example', server_port: 1080, version: '5' }],
+    dns: { servers: [{ type: 'udp', tag: 'private-bootstrap', server: '192.0.2.99' }, { type: 'https', server: 'doh.bootstrap.example', path: '/dns-query' }] },
+    route: { default_domain_resolver: { server: 'private-bootstrap' } },
+  };
+  bodies.set(path, JSON.stringify(document));
+  const added = await api('/sources', 'POST', { name: 'Inherited bootstrap', url: upstreamOrigin + path });
+  assert.equal(added.success, true, added.message);
+  const source = added.data;
+  const templates = {
+    quantumultx: '[dns]\nserver = 192.0.2.53\n[server_local]\n[policy]\n[filter_local]\nfinal,direct\n',
+    shadowrocket: '[General]\ndns-server = 192.0.2.53\n[Host]\n[Proxy]\n[Proxy Group]\n[Rule]\nFINAL,DIRECT\n',
+    loon: '[General]\ndns-server = 192.0.2.53\n[Host]\n[Proxy]\n[Proxy Group]\n[Rule]\nFINAL,DIRECT\n',
+    egern: 'dns:\n  bootstrap: [192.0.2.53]\nproxies: []\npolicy_groups: []\nrules:\n  - default: {policy: DIRECT}\n',
+  };
+  for (const [target, content] of Object.entries(templates)) {
+    const tpl = (await api('/templates', 'POST', { name: `${target} inherited bootstrap`, type: target, content })).data;
+    const profile = (await api('/profiles', 'POST', { name: `${target} inherited bootstrap`, nodeFilter: { mode: 'all', sourceIds: [source.id] }, selectedGroupIds: ['none'], selectedRuleIds: ['none'], templates: { [target]: tpl.id } })).data;
+    const preview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: target, expandNodes: true });
+    assert.equal(preview.success, true, JSON.stringify(preview));
+    const binding = preview.generation.bindings[0];
+    assert.equal(binding.status, 'unapplied', target);
+    assert.deepEqual(binding.appliedServiceIds, [], target);
+    assert.ok(binding.diagnostics.some((entry: any) => entry.code === 'source-doh-bootstrap-unapplied'), target);
+    assert.doesNotMatch(preview.data, /https:\/\/doh\.bootstrap\.example|192\.0\.2\.99/);
+    assert.match(preview.data, /192\.0\.2\.53/);
+    assert.equal(await fetch(`${origin}/s/${profile.token}/${target}?expand=true`).then(response => response.text()), preview.data);
+  }
+  assert.deepEqual((await api('/sources')).data.find((entry: any) => entry.id === source.id).parsedConfig, document);
 });
 
 test('pure Base64 output ignores DoH and DNS-only dependencies while retaining profile node selection', async () => {

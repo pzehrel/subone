@@ -50,7 +50,7 @@ async function profileFor(sources: any[], content = template, extra: Record<stri
 }
 function decoded(content: string): string { return Buffer.from(content, 'base64').toString('utf8'); }
 
-test('Shadowrocket reports every source binding against the preserved template DNS and verified target version', async () => {
+test('Shadowrocket adopts each source DoH list in native Host mappings', async () => {
   const a = await addSource('/rocket-a', ['https://192.0.2.1/dns-query', 'https://192.0.2.2/second'], 'node.a.example');
   const b = await addSource('/rocket-b', ['https://192.0.2.3/dns-query'], 'node.b.example');
   const profile = await profileFor([a, b]);
@@ -58,13 +58,14 @@ test('Shadowrocket reports every source binding against the preserved template D
   assert.equal(preview.success, true, preview.message);
   assert.deepEqual(preview.generation.target, { type: 'shadowrocket', version: '2.2.93', mode: 'complete' });
   assert.deepEqual(preview.generation.bindings.map((binding: any) => [binding.sourceId, binding.batchId, binding.status, binding.method, binding.services.map((service: any) => service.url), binding.appliedServiceIds]), [
-    [a.id, a.doh.batchId, 'unapplied', 'template-dns', a.doh.services.map((service: any) => service.url), []],
-    [b.id, b.doh.batchId, 'unapplied', 'template-dns', b.doh.services.map((service: any) => service.url), []],
+    [a.id, a.doh.batchId, 'applied', 'shadowrocket-domain-doh', a.doh.services.map((service: any) => service.url), a.doh.services.map((service: any) => service.id)],
+    [b.id, b.doh.batchId, 'applied', 'shadowrocket-domain-doh', b.doh.services.map((service: any) => service.url), b.doh.services.map((service: any) => service.id)],
   ]);
-  assert.ok(preview.data.includes(template.split('[Proxy]')[0]));
+  assert.ok(preview.data.includes(template.split('[Host]')[0]));
   assert.doesNotMatch(preview.data, /server-dns=|domain_resolver|dns-egress=|bootstrap=/);
   assert.equal(preview.generation.dependencyNodeCount, 0);
-  assert.deepEqual(preview.generation.diagnostics.map((diagnostic: any) => [diagnostic.code, diagnostic.sourceId]), [['source-doh-unsupported', a.id], ['source-doh-unsupported', b.id]]);
+  assert.equal(preview.generation.diagnostics.length, 0);
+  assert.match(preview.data, /node\.a\.example = server:https:\/\/192.0.2.1\/dns-query,https:\/\/192.0.2.2\/second/);
   if (process.env.SUBONE_SHADOWROCKET_ARTIFACT) await writeFile(process.env.SUBONE_SHADOWROCKET_ARTIFACT, preview.data);
   const actual = await fetch(`${origin}/s/${profile.token}/shadowrocket`);
   assert.equal(actual.status, 200); assert.equal(await actual.text(), preview.data);
@@ -125,7 +126,7 @@ test('complete Shadowrocket preserves native namespaces and stable managed templ
   assert.match(preview.data, /^DOMAIN,managed.example,Managed Renamed$/m);
   assert.match(preview.data, /^FINAL,Native$/m);
   assert.equal((preview.data.match(/^FINAL,/gm) || []).length, 1);
-  assert.ok(preview.data.includes(template.split('[Proxy]')[0]));
+  assert.ok(preview.data.includes(template.split('[Host]')[0]));
   assert.equal((await api('/templates')).data.find((entry: any) => entry.id === profile.templates.shadowrocket).content, content);
   await stopApp(); await startApp();
   assert.equal(await fetch(`${origin}/s/${profile.token}/shadowrocket?expand=false`).then(response => response.text()), preview.data);
@@ -140,7 +141,7 @@ test('unsupported Shadowrocket DNS cannot hide ordinary node chains while pure e
   const complete = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'shadowrocket' });
   assert.equal(complete.status, 422);
   assert.ok(complete.generation.diagnostics.some((diagnostic: any) => diagnostic.code === 'shadowrocket-node-route-unapplied' && diagnostic.severity === 'error'));
-  assert.ok(complete.generation.diagnostics.some((diagnostic: any) => diagnostic.code === 'source-doh-unsupported'));
+  assert.ok(complete.generation.diagnostics.some((diagnostic: any) => diagnostic.code === 'source-doh-bootstrap-missing' && diagnostic.severity === 'warning'));
   assert.equal((await fetch(`${origin}/s/${profile.token}/shadowrocket`)).status, 422);
   const pure = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'shadowrocket', format: 'b64' });
   assert.equal(pure.success, true, pure.message);

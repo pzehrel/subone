@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { mihomoDnsFragment } from '../mihomo-dns';
 import { isIP } from 'node:net';
-import type { SourceDohOutbound, SourceDohReference, SourceDohResult, SourceDohService, SourceFormat, SubscriptionSource } from '../../types';
+import type { SourceDohOutbound, SourceDohReference, SourceDohResult, SourceDohService, SourceFormat, SourceRawRecord, SubscriptionSource } from '../../types';
 
 const mihomoLists = new Set(['nameserver', 'fallback', 'default-nameserver', 'proxy-server-nameserver', 'direct-nameserver']);
 const mihomoPolicies = new Set(['nameserver-policy', 'proxy-server-nameserver-policy']);
 const looksLikeHttps = (value: string) => /^https(?:[:/]|$)/i.test(value);
 
-function splitQuanxValues(value: string): string[] {
+export function splitQuanxDnsValues(value: string): string[] {
   const values: string[] = [];
   let quote = '';
   let current = '';
@@ -37,7 +37,7 @@ function extractQuanxDoh(content: string): SourceDohService[] {
       if (/^doh-server(?:\s|$)/i.test(trimmed)) throw new Error('QuanX DoH 配置不完整');
       return;
     }
-    const values = splitQuanxValues(match[1]);
+    const values = splitQuanxDnsValues(match[1]);
     const optionIndex = values.findIndex(value => /^(?:included_ssids|excluded_ssids)\s*=/i.test(value));
     const options = optionIndex < 0 ? [] : values.slice(optionIndex);
     for (const option of options) {
@@ -144,6 +144,7 @@ export function sourceDohResult(sourceId: string, format: SourceFormat, updatedA
 export function bindSourceDoh(source: SubscriptionSource): void {
   const doh = source.doh;
   if (!doh) return;
+  preserveSourceDomainAliases(source);
   const document = source.parsedConfig;
   const rawGroups = doh.format === 'mihomo' ? document?.['proxy-groups'] : doh.format === 'singbox' ? document?.outbounds : [];
   const groups: SourceDohOutbound[] = (Array.isArray(rawGroups) ? rawGroups : [])
@@ -189,4 +190,24 @@ export function bindSourceDoh(source: SubscriptionSource): void {
     if (typeof detour === 'string') group.references.push(resolve(detour));
   }
   doh.outbounds = groups.filter(group => neededGroups.has(group.id));
+}
+
+/** Shared raw-content parser for successful snapshots and generation fallback. */
+export function extractQuanxDomainAliases(raw: Pick<SourceRawRecord, 'content' | 'encoding'>): Record<string, string> {
+  const content = raw.encoding === 'base64' ? Buffer.from(raw.content, 'base64').toString('utf8') : raw.content;
+  const aliases: Record<string, string> = {}; let section = '';
+  for (const line of content.split(/\r?\n/)) {
+    const header = /^\s*\[\s*([^\]]+)\s*\]/.exec(line);
+    if (header) { section = header[1].trim().toLowerCase(); continue; }
+    if (section !== 'dns') continue;
+    const match = /^\s*alias\s*=\s*\/([^/]+)\/([^,\s]+)\s*$/i.exec(line);
+    if (match && !/[\s*?\\]/.test(match[1] + match[2])) aliases[match[1]] = match[2];
+  }
+  return aliases;
+}
+
+/** Keep aliases with the successful DNS snapshot, never with a later failed response. */
+export function preserveSourceDomainAliases(source: SubscriptionSource): void {
+  if (source.doh?.format !== 'quantumultx' || source.doh.domainAliases || source.rawSubscription?.parseStatus !== 'success') return;
+  source.doh.domainAliases = extractQuanxDomainAliases(source.rawSubscription);
 }

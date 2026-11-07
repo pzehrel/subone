@@ -1,21 +1,20 @@
 import { managedReferenceTraversal } from '../managed-references';
 import type { SourceDohService, SubscriptionSource } from '../../../types';
 import { splitLoonParameters } from '../../node-references';
-import { registerRuntimeDependencyCollector, needsHostnameLookup, resolverTag } from '../runtime-dependencies';
+import { registerRuntimeDependencyCollector } from '../runtime-dependencies';
 import { GenerationError, generationMetadata, type GenerationDiagnostic, type GenerationPlan } from '../types';
+
+import { portableDohBootstrapIssue, portableDohUrl, rangePattern, recordDomainDns, resolveNodeDns, templateHostConflict } from '../node-domain-ranges';
+import { prependIniSection } from '../native-domain-dns';
 
 type Document = Record<string, any>;
 function unsupportedService(service: SourceDohService, source: SubscriptionSource): Pick<GenerationDiagnostic, 'code' | 'message'> | undefined {
   if (service.outbound && service.outbound.kind !== 'direct') return { code: 'source-doh-egress-unapplied', message: 'Loon server-dns 未证实可表达此 DoH 出站；保留模板 DNS' };
+  const bootstrapIssue = portableDohBootstrapIssue({ source, service });
+  if (bootstrapIssue) return bootstrapIssue;
   const raw = service.raw;
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
     const value = raw as Document;
-    const bootstrap = resolverTag(value.domain_resolver ?? value.address_resolver ?? (source.parsedConfig?.route as Document | undefined)?.default_domain_resolver);
-    if (bootstrap) {
-      const pool = (source.parsedConfig?.dns as Document | undefined)?.servers;
-      const exists = Array.isArray(pool) && pool.filter(server => server.tag === bootstrap).length === 1;
-      return { code: exists ? 'source-doh-bootstrap-unapplied' : 'source-doh-bootstrap-missing', message: exists ? 'Loon server-dns 没有已证实的独立引导字段；保留模板 DNS' : '来源 DoH 指定的独立引导解析器不存在或名称不唯一；保留模板 DNS' };
-    }
     const plainQuanx = source.doh?.format === 'quantumultx' && !value.scope && Array.isArray(value.options) && !value.options.length && Object.keys(value).every(key => ['line', 'value', 'options'].includes(key));
     if (!plainQuanx && (value.type !== 'https' || Object.keys(value).some(key => !['type', 'tag', 'server', 'server_port', 'path'].includes(key)))) return { code: 'source-doh-options-unapplied', message: '此 DoH 的连接选项尚不能完整映射到 Loon；保留模板 DNS' };
   } else if (typeof raw === 'string') {
@@ -28,44 +27,39 @@ function unsupportedService(service: SourceDohService, source: SubscriptionSourc
   return undefined;
 }
 
-/** Loon 3.5.2 (996)+ node-server DNS. Do not infer transport/bootstrap from General DNS. */
+/** Loon's node DNS field carries the complete native URL list selected by the ranges. */
 export function adaptLoonDns(plan: GenerationPlan): Map<string, readonly string[]> {
   const result = new Map<string, readonly string[]>();
-  const hostPatterns: string[] = []; let section = '';
-  for (const line of plan.templateContent.split('\n')) {
-    const header = /^\s*\[([^\]]+)\]/.exec(line);
-    if (header) { section = header[1].toLowerCase(); continue; }
-    if (section !== 'host' || /^\s*[#;]/.test(line)) continue;
-    const mapping = /^\s*([^=]+?)\s*=\s*(.+)/.exec(line);
-    if (mapping && !/^ip-mode:/i.test(mapping[2]) && !/^ssid:/i.test(mapping[1])) hostPatterns.push(mapping[1].toLowerCase());
-  }
-  const hasHostMapping = (server: string) => hostPatterns.some(pattern => pattern === server.toLowerCase() || pattern.startsWith('*.') && server.toLowerCase().endsWith(pattern.slice(1)));
-  for (const binding of plan.bindings) {
-    const nodes = [...plan.ordinaryNodes, ...plan.dependencyNodes].filter(node => binding.nodeIds.includes(node.id));
-    if (nodes.some(node => node.detourRef || node.detour || node.raw && typeof node.raw === 'object' && (node.raw.detour || node.raw['dialer-proxy']))) {
-      binding.status = 'unapplied';
-      binding.diagnostics.push({ code: 'loon-node-route-unapplied', severity: 'error', sourceId: binding.sourceId, message: 'Loon 节点连接出站尚不能完整映射；请使用受支持的目标客户端' });
+  const resolved = resolveNodeDns(plan, true);
+  for (const node of [...plan.ordinaryNodes, ...plan.dependencyNodes]) {
+    const binding = plan.bindings.find(binding => binding.nodeIds.includes(node.id));
+    if (node.detourRef || node.detour || node.raw && typeof node.raw === 'object' && (node.raw.detour || node.raw['dialer-proxy'])) {
+      binding?.diagnostics.push({ code: 'loon-node-route-unapplied', severity: 'error', sourceId: node.sourceId, message: 'Loon 节点连接出站尚不能完整映射' });
       continue;
     }
-    if (!binding.services.length) continue;
-    const source = plan.inventory.sources.find(source => source.id === binding.sourceId)!;
-    const unsupported = binding.services.flatMap(service => {
-      const issue = unsupportedService(service, source);
-      return issue ? [{ ...issue, severity: 'warning' as const, sourceId: binding.sourceId, serviceId: service.id }] : [];
-    });
-    if (unsupported.length) {
-      binding.status = 'unapplied'; binding.method = 'template-dns'; binding.diagnostics.push(...unsupported); continue;
+    const services = resolved.forNode.get(node.id) || [];
+    if (!services.length) continue;
+    const urls = services.map(portableDohUrl);
+    if (urls.some(url => !url)) {
+      for (const entry of services.filter(entry => !portableDohUrl(entry))) {
+        const issue = unsupportedService(entry.service, entry.source);
+        binding?.diagnostics.push({ ...(issue || { code: 'source-doh-options-unapplied', message: 'DoH 连接参数无法转换为 Loon 节点 DNS' }), severity: 'warning', sourceId: node.sourceId, serviceId: entry.service.id });
+      }
+      continue;
     }
-    const mappedNodes = nodes.filter(node => !hasHostMapping(node.server));
-    if (mappedNodes.length !== nodes.length) binding.diagnostics.push({ code: 'loon-node-dns-host-override', severity: 'warning', sourceId: binding.sourceId, message: '模板 Host 映射优先于节点 server-dns；匹配节点保留 Host 解析方式' });
-    if (!mappedNodes.length) { binding.status = 'unapplied'; binding.method = 'template-host-map'; continue; }
-    const urls = binding.services.map(service => service.url);
-    for (const node of mappedNodes) result.set(node.id, urls);
-    binding.status = 'degraded'; binding.method = 'loon-server-dns';
-    binding.appliedServiceIds = binding.services.map(service => service.id);
-    binding.diagnostics.push({ code: 'loon-doh-transport-unverified', severity: 'warning', sourceId: binding.sourceId, message: '已映射节点 server-dns；Loon 的 DoH 原生出站方式未证实，未确认采用来源的连接路径' });
-    if (urls.some(url => needsHostnameLookup(new URL(url).hostname))) binding.diagnostics.push({ code: 'loon-doh-bootstrap-unverified', severity: 'warning', sourceId: binding.sourceId, message: 'DoH 域名所需的独立引导解析方式未证实；仅映射 server-dns，未确认连接可建立' });
+    result.set(node.id, [...new Set(urls as string[])]);
   }
+  const owned = new Set([...result.keys()].map(id => [...plan.ordinaryNodes, ...plan.dependencyNodes].find(node => node.id === id)!.server.toLowerCase()));
+  const aliases = [...resolved.aliases].filter(([from]) => owned.has(from));
+  const appliedRanges = resolved.ranges.filter(range => range.nodeIds.some(id => result.has(id)));
+  plan.templateContent = prependIniSection(plan.templateContent, 'Host', aliases.map(([from, to]) => `${from} = ${to}`), line => {
+    const key = /^\s*([^#;][^=]+?)\s*=/.exec(line)?.[1].trim().toLowerCase();
+    if (!key || key.startsWith('ssid:')) return line;
+    if (owned.has(key) || appliedRanges.some(range => rangePattern(range) === key)) return;
+    templateHostConflict(plan, key, appliedRanges);
+    return line;
+  });
+  recordDomainDns(plan, resolved.ranges, 'loon-server-dns', new Map(appliedRanges.map(range => [range, new Set(range.services.map(({ service }) => service.id))])));
   return result;
 }
 

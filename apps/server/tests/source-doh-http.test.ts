@@ -38,6 +38,19 @@ before(async () => {
 });
 after(async () => { await stopApp(); await new Promise<void>(resolve => upstream.close(() => resolve())); await rm(directory, { recursive: true, force: true }); });
 
+test('QuanX domain aliases remain part of the successful DNS snapshot after a failed update', async () => {
+  const raw = '[server_local]\nsocks5=one.zone.example:1080,tag=Alias node\n[dns]\nalias=/one.zone.example/two.zone.example\ndoh-server=https://192.0.2.53/dns-query\n';
+  bodies.set('/alias-snapshot', Buffer.from(raw).toString('base64'));
+  const added = await api('/sources', 'POST', { name: 'Alias snapshot', url: upstreamOrigin + '/alias-snapshot' });
+  assert.equal(added.success, true, added.message);
+  assert.deepEqual(added.data.doh.domainAliases, { 'one.zone.example': 'two.zone.example' });
+  bodies.set('/alias-snapshot', raw.replace('two.zone.example', 'failed.zone.example').replace('https://192.0.2.53', 'https:/broken'));
+  assert.equal((await api(`/sources/${added.data.id}/refresh`, 'POST', {})).success, false);
+  assert.deepEqual((await source(added.data.id)).doh, added.data.doh);
+  await stopApp(); await startApp();
+  assert.deepEqual((await source(added.data.id)).doh, added.data.doh);
+});
+
 test('Mihomo source keeps every DoH in input order and automatically binds all source nodes after reload', async () => {
   const raw = `# full upstream\nproxies:\n${node}dns:\n fallback: ['https://second.example/dns-query#DIRECT', tls://dot.example]\n nameserver: [192.0.2.53, 'https://first.example/custom?token=kept#DIRECT', 'https://second.example/dns-query#DIRECT']\n nameserver-policy:\n  '+.example': https://policy.example/dns-query\nproxy-groups:\n - {name: Ordinary, type: select, proxies: [DIRECT]}\n`;
   bodies.set('/mihomo', raw);

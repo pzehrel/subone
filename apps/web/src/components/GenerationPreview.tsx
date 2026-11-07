@@ -22,6 +22,9 @@ const methodNames: Record<string, string> = {
   'singbox-native-domain-resolver': '节点 domain_resolver',
   'mihomo-server-domain-policy': '节点域名 DNS 策略',
   'loon-server-dns': '节点 server-dns',
+  'quantumultx-domain-doh': '域名 DoH',
+  'shadowrocket-domain-doh': '域名 DoH',
+  'egern-domain-doh': '域名 DoH',
   'template-host-map': '模板 Host 映射',
   'template-dns': '模板 DNS',
   'nodes-only': '纯节点',
@@ -70,6 +73,7 @@ export function GenerationPreview({ result, clientType }: { result: GenerationPr
         <div className="divide-y divide-ui-border rounded-xl border border-ui-border">
           {generation.bindings.map(binding => {
             const status = bindingStatus[binding.status];
+            const shared = (binding.effectiveServices || []).filter(service => !binding.services.some(own => own.url === service.url));
             const mappedWithoutOutput = !result.success && (binding.status === 'applied' || binding.status === 'degraded');
             return (
               <details key={binding.sourceId} className="group px-3 py-2.5">
@@ -88,6 +92,7 @@ export function GenerationPreview({ result, clientType }: { result: GenerationPr
                 <div className="mt-2.5 space-y-2 border-t border-ui-border pt-2.5 pl-3.5 text-[11px]">
                   <div className="break-all">来源 ID：<code>{binding.sourceId}</code></div>
                   {binding.batchId && <div className="break-all">批次 ID：<code>{binding.batchId}</code></div>}
+                  {!!binding.domainRanges?.length && <div className="break-all">域名：<code>{binding.domainRanges.join('、')}</code></div>}
                   {binding.services.length > 0 && (
                     <ul aria-label={`${binding.sourceName} 的 DoH`} className="space-y-1.5">
                       {binding.services.map(service => (
@@ -98,6 +103,11 @@ export function GenerationPreview({ result, clientType }: { result: GenerationPr
                           <span className="min-w-0 break-all">{service.url}</span>
                         </li>
                       ))}
+                    </ul>
+                  )}
+                  {shared.length > 0 && (
+                    <ul aria-label={`${binding.sourceName} 的共享 DoH`} className="space-y-1.5">
+                      {shared.map(service => <li key={`${service.sourceId}-${service.serviceId}`} className="break-all"><Badge tone="success">共享 DoH</Badge> {service.url}</li>)}
                     </ul>
                   )}
                 </div>

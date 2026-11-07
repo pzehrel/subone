@@ -3,6 +3,8 @@ import type { SourceDohReference } from '../../../types';
 import type { GenerationPlan } from '../types';
 import { needsHostnameLookup, resolverTag, singboxStrategyIssue } from '../runtime-dependencies';
 
+import { portableDohUrl, recordDomainDns, resolveNodeDns } from '../node-domain-ranges';
+
 type Document = Record<string, any>;
 class ConnectionIssue extends Error {
   constructor(public code: string, message: string, public severity: 'error' | 'warning' = 'error', public dependencyState?: string) { super(message); }
@@ -18,8 +20,11 @@ export function adaptSingboxDns(doc: Document, plan: GenerationPlan, nodeTags: R
   const usedOutboundTags = new Set<string>((doc.outbounds || []).map((outbound: Document) => outbound.tag));
   const allocate = (base: string, used: Set<string>): string => { let tag = base; let index = 2; while (used.has(tag)) tag = `${base}-${index++}`; used.add(tag); return tag; };
 
+  const resolved = resolveNodeDns(plan, true);
+  const needed = new Set([...resolved.forNode.values()].flatMap(services => services[0] ? [services[0].service.id] : []));
+  const adoptedServices = new Map<string, string>();
   for (const binding of plan.bindings) {
-    const service = binding.services[0];
+    const service = binding.services.find(service => needed.has(service.id));
     const source = plan.inventory.sources.find(source => source.id === binding.sourceId)!;
     const imports: Document[] = [];
     const outboundImports: Document[] = [];
@@ -122,12 +127,12 @@ export function adaptSingboxDns(doc: Document, plan: GenerationPlan, nodeTags: R
       let adopted: Document;
       if (service.raw && typeof service.raw === 'object' && !Array.isArray(service.raw) && (service.raw as Document).type === 'https') {
         adopted = structuredClone(service.raw as Document); delete adopted.tag; delete adopted.detour;
-      } else if (typeof service.raw === 'string' && (!service.raw.includes('#') || service.raw.slice(service.raw.indexOf('#') + 1).split('&').length === 1)) {
+      } else if (portableDohUrl({ source, service }) || typeof service.raw === 'string' && (!service.raw.includes('#') || service.raw.slice(service.raw.indexOf('#') + 1).split('&').length === 1)) {
         const url = new URL(service.url);
         if (url.username || url.password) throw new ConnectionIssue('source-doh-options-unapplied', '此 DoH 的认证参数尚不能完整映射；保留模板 DNS', 'warning');
         adopted = { type: 'https', server: url.hostname.replace(/^\[(.*)\]$/, '$1'), ...(url.port ? { server_port: Number(url.port) } : {}), path: url.pathname + url.search };
       } else throw new ConnectionIssue('source-doh-options-unapplied', '此 DoH 的连接选项尚不能完整映射；保留模板 DNS', 'warning');
-      const egress = service.outbound ?? (source.doh?.format === 'mihomo' ? defaultMihomoDohEgress(service.path, source.parsedConfig || {}) : undefined);
+      const egress = service.outbound ?? (source.doh?.format === 'mihomo' ? defaultMihomoDohEgress(service.path, source.parsedConfig || {}) : source.doh?.format === 'quantumultx' ? { kind: 'direct' as const } : undefined);
       if (!egress) throw new ConnectionIssue('source-doh-egress-unapplied', '此 DoH 的原生默认出站尚不能映射；保留模板 DNS', 'warning');
       const detour = materializeOutbound(egress);
       if (detour) adopted.detour = detour;
@@ -148,8 +153,7 @@ export function adaptSingboxDns(doc: Document, plan: GenerationPlan, nodeTags: R
       if (!Array.isArray(doc.dns.servers)) doc.dns.servers = servers;
       servers.push(...imports, adopted);
       doc.outbounds.push(...outboundImports.slice(committedOutboundCount));
-      const names = new Set(binding.nodeIds.flatMap(id => nodeTags.get(id) || []));
-      for (const outbound of doc.outbounds) if (names.has(outbound.tag)) outbound.domain_resolver = { server: adopted.tag };
+      adoptedServices.set(service.id, adopted.tag);
       binding.appliedServiceIds = [service.id]; binding.status = binding.services.length > 1 ? 'degraded' : 'applied'; binding.method = 'singbox-native-domain-resolver';
       if (binding.services.length > 1) binding.diagnostics.push({ code: 'source-doh-first-only', severity: 'warning', sourceId: binding.sourceId, message: `sing-box 节点解析仅采用首项 DoH；其余 ${binding.services.length - 1} 项未生效` });
     } catch (error) {
@@ -157,5 +161,19 @@ export function adaptSingboxDns(doc: Document, plan: GenerationPlan, nodeTags: R
       binding.status = 'unapplied'; binding.method = 'template-dns';
       binding.diagnostics.push({ code: error.code, severity: error.severity, message: error.message, sourceId: binding.sourceId, serviceId: service?.id, ...(error.dependencyState ? { dependencyState: error.dependencyState } : {}) });
     }
+  }
+  for (const [id, services] of resolved.forNode) {
+    const service = services[0]?.service;
+    const tag = service && adoptedServices.get(service.id);
+    if (!tag) continue;
+    for (const name of nodeTags.get(id) || []) {
+      const outbound = doc.outbounds.find((outbound: Document) => outbound.tag === name);
+      if (outbound) outbound.domain_resolver = { server: tag };
+    }
+  }
+  recordDomainDns(plan, resolved.ranges, 'singbox-native-domain-resolver', new Map(resolved.ranges.map(range => [range,
+    new Set(range.services[0] && adoptedServices.has(range.services[0].service.id) ? [range.services[0].service.id] : [])])));
+  for (const binding of plan.bindings) if (binding.status === 'degraded' && !binding.diagnostics.some(entry => entry.code === 'source-doh-first-only')) {
+    binding.diagnostics.push({ code: 'source-doh-first-only', severity: 'warning', sourceId: binding.sourceId, message: 'sing-box 节点解析采用合并后的首项 DoH，其余项未采用' });
   }
 }

@@ -227,7 +227,7 @@ test('unknown dynamic strategy members remain an honest capacity diagnostic with
   assert.deepEqual((await source(added.data.id)).doh, added.data.doh);
   const unsupported = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'quantumultx' });
   assert.equal(unsupported.success, true);
-  assert.equal(unsupported.generation.diagnostics[0].code, 'source-doh-node-resolver-unverified');
+  assert.equal(unsupported.generation.diagnostics[0].code, 'source-doh-options-unapplied');
 });
 
 test('recursive source bootstrap cycles preserve both private resolvers in the concrete dependency chain', async () => {
