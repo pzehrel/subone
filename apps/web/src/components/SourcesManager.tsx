@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { CheckCircle2, Edit2, FileText, Plus, RefreshCw, Trash2, XCircle } from 'lucide-react';
 import type { SubscriptionSource } from '../types';
@@ -37,8 +37,8 @@ function previewInfoMatches(source: SubscriptionSource | null, pattern: string) 
 
 interface SourcesManagerProps {
   sources: SubscriptionSource[];
-  onAddSource: (source: { name: string; url?: string; acquisition?: 'url' | 'manual'; content?: string; type: string; trafficNodeRegex?: string; expiryNodeRegex?: string }) => Promise<void>;
-  onUpdateSource: (id: string, updates: Partial<SubscriptionSource> & { content?: string }) => Promise<void>;
+  onAddSource: (source: { name: string; url?: string; acquisition?: 'url' | 'manual'; content?: string; contentFile?: { name: string; base64: string }; type: string; trafficNodeRegex?: string; expiryNodeRegex?: string }) => Promise<void>;
+  onUpdateSource: (id: string, updates: Partial<SubscriptionSource> & { content?: string; contentFile?: { name: string; base64: string } }) => Promise<void>;
   onDeleteSource: (id: string) => Promise<void>;
   onRefreshSource: (id: string) => Promise<void>;
   onRefreshAllSources: () => Promise<void>;
@@ -52,12 +52,17 @@ export function SourcesManager({ sources, onAddSource, onUpdateSource, onDeleteS
   const [editingSource, setEditingSource] = useState<SubscriptionSource | null>(null);
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
-  const [acquisition, setAcquisition] = useState<'url' | 'manual'>('url');
+  const [inputMode, setInputMode] = useState<'url' | 'paste' | 'file'>('url');
+  const acquisition: 'url' | 'manual' = inputMode === 'url' ? 'url' : 'manual';
+  const [contentFile, setContentFile] = useState<{ name: string; base64: string; size: number } | null>(null);
+  const [fileError, setFileError] = useState('');
+  const [readingFile, setReadingFile] = useState(false);
+  const fileRead = useRef(0);
   const [content, setContent] = useState('');
   const [replaceContent, setReplaceContent] = useState(false);
-  const submitsContent = acquisition === 'manual' && (!editingSource || replaceContent || content !== editingSource.rawSubscription?.content);
+  const submitsContent = acquisition === 'manual' && (inputMode === 'file' || !editingSource || replaceContent || content !== editingSource.rawSubscription?.content);
   const contentBytes = new TextEncoder().encode(content).byteLength;
-  const contentError = contentBytes > 1_048_576 ? '订阅原文不能超过 1 MiB（1,048,576 字节）' : '';
+  const contentError = inputMode === 'paste' && submitsContent && contentBytes > 1_048_576 ? '订阅原文不能超过 1 MiB（1,048,576 字节）' : '';
   const [type, setType] = useState('auto');
   const [trafficNodeRegex, setTrafficNodeRegex] = useState('');
   const [expiryNodeRegex, setExpiryNodeRegex] = useState('');
@@ -71,7 +76,11 @@ export function SourcesManager({ sources, onAddSource, onUpdateSource, onDeleteS
   const openForm = (source: SubscriptionSource | null = null, replace = false) => {
     setEditingSource(source);
     setReplaceContent(replace);
-    setAcquisition(source?.acquisition || 'url');
+    setInputMode(source?.acquisition === 'manual' ? 'paste' : 'url');
+    fileRead.current++;
+    setContentFile(null);
+    setFileError('');
+    setReadingFile(false);
     setContent(source?.rawSubscription?.content || '');
     setName(source?.name || '');
     setUrl(source?.url || '');
@@ -82,12 +91,57 @@ export function SourcesManager({ sources, onAddSource, onUpdateSource, onDeleteS
     setShowForm(true);
   };
 
+  const changeInputMode = (value: string) => {
+    fileRead.current++;
+    setInputMode(value as 'url' | 'paste' | 'file');
+    setContentFile(null);
+    setFileError('');
+    setReadingFile(false);
+  };
+
+  const selectFile = async (files: FileList | null) => {
+    const request = ++fileRead.current;
+    setContentFile(null);
+    setFileError('');
+    setReadingFile(false);
+    if (!files?.length) return;
+    if (files.length !== 1 || files[0].webkitRelativePath || /[/\\]/.test(files[0].name)) {
+      setFileError('请选择单个 UTF-8 文本文件，不支持文件夹');
+      return;
+    }
+    const file = files[0];
+    if (file.size > 1_048_576) {
+      setFileError('订阅原文不能超过 1 MiB（1,048,576 字节）');
+      return;
+    }
+    setReadingFile(true);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (request !== fileRead.current) return;
+      if (bytes.byteLength > 1_048_576) throw new Error('订阅原文不能超过 1 MiB（1,048,576 字节）');
+      const hex = Array.from(bytes.subarray(0, 8), byte => byte.toString(16).padStart(2, '0')).join('');
+      if (['504b0304', '504b0506', '504b0708', '1f8b', '425a68', 'fd377a585a00', '377abcaf271c', '526172211a07'].some(signature => hex.startsWith(signature)) || String.fromCharCode(...bytes.subarray(257, 262)) === 'ustar') {
+        throw new Error('不支持压缩包，请选择 UTF-8 文本文件');
+      }
+      let text: string;
+      try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+      catch { throw new Error('文件必须使用 UTF-8 编码'); }
+      let binary = '';
+      for (let offset = 0; offset < bytes.length; offset += 8192) binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
+      setContentFile({ name: file.name, base64: btoa(binary), size: bytes.byteLength });
+      setContent(text);
+      setReplaceContent(true);
+    } catch (cause) {
+      if (request === fileRead.current) setFileError(cause instanceof DOMException ? '无法读取文件，请重新选择' : cause instanceof Error ? cause.message : '无法读取文件，请重新选择');
+    } finally { if (request === fileRead.current) setReadingFile(false); }
+  };
+
   const saveSource = async (event: FormEvent) => {
     event.preventDefault();
-    if (submitting || !name.trim() || (acquisition === 'url' ? !url.trim() : submitsContent && (!content.trim() || !!contentError)) || trafficMatches.error || expiryMatches.error) return;
+    if (submitting || readingFile || (inputMode === 'file' && (!contentFile || !!fileError)) || !name.trim() || (inputMode === 'url' ? !url.trim() : inputMode === 'paste' && submitsContent && (!content.trim() || !!contentError)) || trafficMatches.error || expiryMatches.error) return;
     setSubmitting(true);
     setFormError('');
-    const updates = { name: name.trim(), acquisition, ...(acquisition === 'url' ? { url: url.trim() } : (submitsContent ? { content } : {})), type, trafficNodeRegex: trafficNodeRegex.trim(), expiryNodeRegex: expiryNodeRegex.trim() };
+    const updates = { name: name.trim(), acquisition, ...(acquisition === 'url' ? { url: url.trim() } : (submitsContent ? (inputMode === 'file' && contentFile ? { contentFile: { name: contentFile.name, base64: contentFile.base64 } } : { content }) : {})), type, trafficNodeRegex: trafficNodeRegex.trim(), expiryNodeRegex: expiryNodeRegex.trim() };
     try {
       if (editingSource) await onUpdateSource(editingSource.id, updates);
       else await onAddSource(updates);
@@ -174,8 +228,8 @@ export function SourcesManager({ sources, onAddSource, onUpdateSource, onDeleteS
         <ModalBody>
           {formError && <p role="alert" className="text-xs text-ui-danger">{formError}</p>}
           <Field><Label>订阅名称</Label><Input required value={name} onChange={event => setName(event.target.value)} /></Field>
-          {!editingSource && <Field><Label>输入方式</Label><Select value={acquisition} onValueChange={value => setAcquisition(value as 'url' | 'manual')}><SelectItem value="url">订阅地址</SelectItem><SelectItem value="manual">粘贴原文</SelectItem></Select></Field>}
-          {acquisition === 'manual' ? <Field><Label>订阅原文</Label><Textarea required={submitsContent} rows={9} value={content} onChange={event => setContent(event.target.value)} aria-invalid={!!contentError} className="font-mono" /><p className={`mt-1 text-[11px] ${contentError ? 'text-ui-danger' : 'text-ui-muted'}`} role={contentError ? 'alert' : undefined}>{contentError || `${contentBytes.toLocaleString()} / 1,048,576 字节`}</p></Field> : <>
+          {(!editingSource || acquisition === 'manual') && <Field><Label>输入方式</Label><Select value={inputMode} onValueChange={changeInputMode}>{!editingSource && <SelectItem value="url">订阅地址</SelectItem>}<SelectItem value="paste">粘贴原文</SelectItem><SelectItem value="file">订阅文件</SelectItem></Select></Field>}
+          {acquisition === 'manual' ? inputMode === 'file' ? <Field><Label>订阅文件</Label><Input type="file" required={!contentFile} disabled={readingFile || submitting} onChange={event => { void selectFile(event.target.files); event.target.value = ''; }} /><p className={`mt-1 text-[11px] ${fileError ? 'text-ui-danger' : 'text-ui-muted'}`} role={fileError ? 'alert' : undefined}>{fileError || (readingFile ? '读取中…' : contentFile ? `${contentFile.name} · ${contentFile.size.toLocaleString()} 字节` : '单个 UTF-8 文本文件，最大 1 MiB')}</p></Field> : <Field><Label>订阅原文</Label><Textarea required={submitsContent} rows={9} value={content} onChange={event => setContent(event.target.value)} aria-invalid={!!contentError} className="font-mono" /><p className={`mt-1 text-[11px] ${contentError ? 'text-ui-danger' : 'text-ui-muted'}`} role={contentError ? 'alert' : undefined}>{contentError || `${contentBytes.toLocaleString()} / 1,048,576 字节`}</p></Field> : <>
           <Field><Label>订阅地址</Label><Input type="url" required placeholder="https://example.com/subscription" value={url} onChange={event => setUrl(event.target.value)} /></Field>
           <Field><Label>内容格式</Label><Select value={type} onValueChange={setType}>
             <SelectItem value="auto">自动识别</SelectItem><SelectItem value="clash">Mihomo / Clash YAML</SelectItem><SelectItem value="singbox">sing-box JSON</SelectItem><SelectItem value="quantumultx">Quantumult X</SelectItem><SelectItem value="base64">Base64 节点串</SelectItem>
@@ -193,7 +247,7 @@ export function SourcesManager({ sources, onAddSource, onUpdateSource, onDeleteS
             </div>
           </Field>)}
         </ModalBody>
-        <ModalFooter><button type="button" className="ui-button-secondary" disabled={submitting} onClick={() => setShowForm(false)}>取消</button><button type="submit" className="ui-button-primary" disabled={submitting || !!contentError || !!trafficMatches.error || !!expiryMatches.error}>{submitting ? '保存中…' : editingSource ? '保存更改' : acquisition === 'manual' ? '添加' : '添加并拉取'}</button></ModalFooter>
+        <ModalFooter><button type="button" className="ui-button-secondary" disabled={submitting} onClick={() => setShowForm(false)}>取消</button><button type="submit" className="ui-button-primary" disabled={submitting || readingFile || (inputMode === 'file' && (!contentFile || !!fileError)) || !!contentError || !!trafficMatches.error || !!expiryMatches.error}>{submitting ? '保存中…' : editingSource ? '保存更改' : acquisition === 'manual' ? '添加' : '添加并拉取'}</button></ModalFooter>
       </ModalForm>
     </Modal>
   </div>;
