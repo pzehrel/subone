@@ -169,6 +169,7 @@ export interface SourceDohResult {
 
 
 export interface SubscriptionSource {
+  acquisition?: 'url' | 'manual';
   id: string;
   name: string;
   type: SourceType | string;

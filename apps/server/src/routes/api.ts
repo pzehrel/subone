@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import yaml from 'js-yaml';
 import { appConfig, getBaseUrl, setGlobalNodesCache, getGlobalNodesCache, setAppConfig } from '../context';
 import { saveConfig, saveServerConfig, generateRandomSubToken } from '../storage/db';
-import { fetchAndParseSource, parseRawContent } from '../core/parser/fetcher';
+import { fetchAndParseSource, receiveSourceContent, parseRawContent } from '../core/parser/fetcher';
 import { applySubscriptionInfo, validateInfoRegex } from '../core/parser/subscription-info';
 import {
   parseProxyGroupsText,
@@ -109,20 +109,32 @@ apiRouter.get('/sources/:id/raw', (c) => {
   return c.json({ success: true, data: { ...source.rawSubscription, lastSuccessfulUpdate: source.lastUpdated } });
 });
 
+const MANUAL_CONTENT_LIMIT = 1_048_576;
+function manualInputError(body: Record<string, any>, required = false): string | undefined {
+  if (body.content === undefined) return required ? '请粘贴订阅原文' : undefined;
+  if (typeof body.content !== 'string') return '订阅原文必须是文本';
+  if (Buffer.byteLength(body.content, 'utf8') > MANUAL_CONTENT_LIMIT) return '订阅原文不能超过 1 MiB（1,048,576 字节）';
+}
+
 apiRouter.post('/sources', async (c) => {
   const body = c.get('body');
   try {
     if (['manual', 'custom'].includes(body.type)) return c.json({ success: false, message: '节点必须来自上游订阅' }, 400);
+    const manual = body.acquisition === 'manual';
+    if (body.acquisition !== undefined && !['url', 'manual'].includes(body.acquisition)) return c.json({ success: false, message: '输入方式无效' }, 400);
+    const inputError = manualInputError(body, manual);
+    if (inputError) return c.json({ success: false, message: inputError }, 400);
+    if (!manual && body.content !== undefined) return c.json({ success: false, message: '请先选择粘贴输入' }, 400);
     const url = typeof body.url === 'string' ? body.url.trim() : '';
-    if (!/^https?:\/\//.test(url)) return c.json({ success: false, message: '请填写 HTTP 订阅链接' }, 400);
+    if (!manual && !/^https?:\/\//.test(url)) return c.json({ success: false, message: '请填写 HTTP 订阅链接' }, 400);
     try { validateInfoRegex(body); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
     const source: SubscriptionSource = {
-      id: `src-${crypto.randomUUID()}`, name: (body.name || '新订阅').trim(), url,
+      id: `src-${crypto.randomUUID()}`, name: cleanSourceOrGroupName((body.name || '新订阅').trim()), url: manual ? undefined : url, acquisition: manual ? 'manual' : 'url',
       enabled: body.enabled !== false, type: body.type || 'auto',
       trafficNodeRegex: body.trafficNodeRegex?.trim(), expiryNodeRegex: body.expiryNodeRegex?.trim(),
     };
     try {
-      source.nodes = await fetchAndParseSource(source, appConfig.countryRules);
+      source.nodes = manual ? receiveSourceContent(source, body.content, appConfig.countryRules) : await fetchAndParseSource(source, appConfig.countryRules);
     } catch (error: any) { return c.json({ success: false, message: error.message || '上游更新失败' }, 422); }
     prepareSourceNodes(source);
     bindSourceDoh(source);
@@ -145,6 +157,12 @@ apiRouter.put('/sources/:id', async (c) => {
   const current = appConfig.sources.find(s => s.id === c.req.param('id'));
   if (!current) return c.json({ success: false, message: 'Source not found' }, 404);
   try { validateInfoRegex(body); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
+  const manual = current.acquisition === 'manual';
+  if (body.acquisition !== undefined && body.acquisition !== (current.acquisition || 'url')) return c.json({ success: false, message: '暂不支持切换输入方式' }, 400);
+  if (!manual && body.content !== undefined) return c.json({ success: false, message: '请先选择粘贴输入' }, 400);
+  if (manual && body.url !== undefined) return c.json({ success: false, message: '手动上游无需订阅地址' }, 400);
+  const inputError = manualInputError(body);
+  if (inputError) return c.json({ success: false, message: inputError }, 400);
   if (['manual', 'custom'].includes(body.type)) return c.json({ success: false, message: '节点必须来自上游订阅' }, 400);
   if (body.url !== undefined && (typeof body.url !== 'string' || !/^https?:\/\//.test(body.url.trim()))) return c.json({ success: false, message: '请填写 HTTP 订阅链接' }, 400);
   const candidate = structuredClone(current);
@@ -157,8 +175,8 @@ apiRouter.put('/sources/:id', async (c) => {
   if (typeof body.expiryNodeRegex === 'string') candidate.expiryNodeRegex = body.expiryNodeRegex.trim();
   try {
     let updated: SubscriptionSource;
-    if (candidate.url !== current.url || candidate.type !== current.type || candidate.customUserAgent !== current.customUserAgent) {
-      updated = await refreshSource(current.id, candidate);
+    if (body.content !== undefined || (!manual && (candidate.url !== current.url || candidate.type !== current.type || candidate.customUserAgent !== current.customUserAgent))) {
+      updated = await refreshSource(current.id, candidate, body.content);
     } else {
       candidate.nodes = applySubscriptionInfo(candidate, [...(candidate.nodes || []), ...(candidate.infoNodes || [])]);
       candidate.nodeCount = candidate.nodes.length;
@@ -200,6 +218,7 @@ apiRouter.delete('/sources/:id', (c) => {
 });
 
 apiRouter.post('/sources/:id/refresh', async (c) => {
+  if (appConfig.sources.find(s => s.id === c.req.param('id'))?.acquisition === 'manual') return c.json({ success: false, message: '请重新粘贴订阅原文' }, 400);
   if (!appConfig.sources.some(s => s.id === c.req.param('id'))) return c.json({ success: false, message: 'Source not found' }, 404);
   try {
     const source = await refreshSource(c.req.param('id'));
