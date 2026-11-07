@@ -1,7 +1,9 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { CheckCircle2, Edit2, FileText, Plus, RefreshCw, Trash2, XCircle } from 'lucide-react';
 import type { SubscriptionSource } from '../types';
+import { decodeManualFile, MANUAL_CONTENT_LIMIT, MANUAL_CONTENT_SIZE_ERROR } from '../../../../shared/manual-input';
+import { isUpstreamSource } from '../utils/upstreamSource';
 import { formatSubscriptionExpiry, formatSubscriptionTraffic } from '../utils/subscriptionInfo';
 import { HelpTooltip } from './HelpTooltip';
 import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
@@ -21,6 +23,10 @@ const formatLabels: Record<string, string> = {
   base64: 'Base64', uri: 'URI',
 };
 
+function editableType(source: SubscriptionSource | null) {
+  return source?.type && !['remote', 'manual', 'custom', 'filter'].includes(source.type) ? source.type : 'auto';
+}
+
 function previewInfoMatches(source: SubscriptionSource | null, pattern: string) {
   if (!pattern.trim()) return { names: [] as string[], error: '' };
   try {
@@ -37,6 +43,8 @@ function previewInfoMatches(source: SubscriptionSource | null, pattern: string) 
 
 interface SourcesManagerProps {
   sources: SubscriptionSource[];
+  updateSourceId?: string | null;
+  onUpdateSourceOpened: () => void;
   onAddSource: (source: { name: string; url?: string; acquisition?: 'url' | 'manual'; content?: string; contentFile?: { name: string; base64: string }; type: string; trafficNodeRegex?: string; expiryNodeRegex?: string }) => Promise<void>;
   onUpdateSource: (id: string, updates: Partial<SubscriptionSource> & { content?: string; contentFile?: { name: string; base64: string } }) => Promise<void>;
   onDeleteSource: (id: string) => Promise<void>;
@@ -46,26 +54,29 @@ interface SourcesManagerProps {
   onViewRaw: (source: SubscriptionSource) => void;
 }
 
-export function SourcesManager({ sources, onAddSource, onUpdateSource, onDeleteSource, onRefreshSource, onRefreshAllSources, onOpenNodes, onViewRaw }: SourcesManagerProps) {
-  const upstreams = sources.filter(source => source.acquisition === 'manual' || /^https?:\/\//i.test(source.url || ''));
-  const [showForm, setShowForm] = useState(false);
-  const [editingSource, setEditingSource] = useState<SubscriptionSource | null>(null);
-  const [name, setName] = useState('');
-  const [url, setUrl] = useState('');
-  const [inputMode, setInputMode] = useState<'url' | 'paste' | 'file'>('url');
+export function SourcesManager({ sources, updateSourceId, onUpdateSourceOpened, onAddSource, onUpdateSource, onDeleteSource, onRefreshSource, onRefreshAllSources, onOpenNodes, onViewRaw }: SourcesManagerProps) {
+  const upstreams = sources.filter(isUpstreamSource);
+  const initialSource = sources.find(source => source.id === updateSourceId) || null;
+  const [showForm, setShowForm] = useState(!!initialSource);
+  const [editingSource, setEditingSource] = useState<SubscriptionSource | null>(initialSource);
+  const [name, setName] = useState(initialSource?.name || '');
+  const [url, setUrl] = useState(initialSource?.url || '');
+  const [inputMode, setInputMode] = useState<'url' | 'paste' | 'file'>(initialSource?.acquisition === 'manual' ? 'paste' : 'url');
   const acquisition: 'url' | 'manual' = inputMode === 'url' ? 'url' : 'manual';
   const [contentFile, setContentFile] = useState<{ name: string; base64: string; size: number } | null>(null);
   const [fileError, setFileError] = useState('');
   const [readingFile, setReadingFile] = useState(false);
   const fileRead = useRef(0);
-  const [content, setContent] = useState('');
-  const [replaceContent, setReplaceContent] = useState(false);
+  const [content, setContent] = useState(initialSource?.rawSubscription?.content || '');
+  const [replaceContent, setReplaceContent] = useState(!!initialSource);
   const submitsContent = acquisition === 'manual' && (inputMode === 'file' || !editingSource || editingSource.acquisition !== 'manual' || replaceContent || content !== editingSource.rawSubscription?.content);
   const contentBytes = new TextEncoder().encode(content).byteLength;
-  const contentError = inputMode === 'paste' && submitsContent && contentBytes > 1_048_576 ? '订阅原文不能超过 1 MiB（1,048,576 字节）' : '';
-  const [type, setType] = useState('auto');
-  const [trafficNodeRegex, setTrafficNodeRegex] = useState('');
-  const [expiryNodeRegex, setExpiryNodeRegex] = useState('');
+  const contentError = inputMode === 'paste' && submitsContent
+    ? !content.trim() ? '请粘贴订阅原文' : contentBytes > MANUAL_CONTENT_LIMIT ? MANUAL_CONTENT_SIZE_ERROR : ''
+    : '';
+  const [type, setType] = useState(editableType(initialSource));
+  const [trafficNodeRegex, setTrafficNodeRegex] = useState(initialSource?.trafficNodeRegex || '');
+  const [expiryNodeRegex, setExpiryNodeRegex] = useState(initialSource?.expiryNodeRegex || '');
   const [submitting, setSubmitting] = useState(false);
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -84,12 +95,16 @@ export function SourcesManager({ sources, onAddSource, onUpdateSource, onDeleteS
     setContent(source?.rawSubscription?.content || '');
     setName(source?.name || '');
     setUrl(source?.url || '');
-    setType(source?.type && !['remote', 'manual', 'custom', 'filter'].includes(source.type) ? source.type : 'auto');
+    setType(editableType(source));
     setTrafficNodeRegex(source?.trafficNodeRegex || '');
     setExpiryNodeRegex(source?.expiryNodeRegex || '');
     setFormError('');
     setShowForm(true);
   };
+
+  useEffect(() => {
+    if (updateSourceId) onUpdateSourceOpened();
+  }, [updateSourceId, onUpdateSourceOpened]);
 
   const changeInputMode = (value: string) => {
     fileRead.current++;
@@ -110,26 +125,20 @@ export function SourcesManager({ sources, onAddSource, onUpdateSource, onDeleteS
       return;
     }
     const file = files[0];
-    if (file.size > 1_048_576) {
-      setFileError('订阅原文不能超过 1 MiB（1,048,576 字节）');
+    if (file.size > MANUAL_CONTENT_LIMIT) {
+      setFileError(MANUAL_CONTENT_SIZE_ERROR);
       return;
     }
     setReadingFile(true);
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (request !== fileRead.current) return;
-      if (bytes.byteLength > 1_048_576) throw new Error('订阅原文不能超过 1 MiB（1,048,576 字节）');
-      const hex = Array.from(bytes.subarray(0, 8), byte => byte.toString(16).padStart(2, '0')).join('');
-      if (['504b0304', '504b0506', '504b0708', '1f8b', '425a68', 'fd377a585a00', '377abcaf271c', '526172211a07'].some(signature => hex.startsWith(signature)) || String.fromCharCode(...bytes.subarray(257, 262)) === 'ustar') {
-        throw new Error('不支持压缩包，请选择 UTF-8 文本文件');
-      }
-      let text: string;
-      try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
-      catch { throw new Error('文件必须使用 UTF-8 编码'); }
+      const result = decodeManualFile(bytes);
+      if (result.error !== undefined) throw new Error(result.error);
       let binary = '';
       for (let offset = 0; offset < bytes.length; offset += 8192) binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
       setContentFile({ name: file.name, base64: btoa(binary), size: bytes.byteLength });
-      setContent(text);
+      setContent(result.content);
       setReplaceContent(true);
     } catch (cause) {
       if (request === fileRead.current) setFileError(cause instanceof DOMException ? '无法读取文件，请重新选择' : cause instanceof Error ? cause.message : '无法读取文件，请重新选择');
@@ -229,7 +238,7 @@ export function SourcesManager({ sources, onAddSource, onUpdateSource, onDeleteS
           {formError && <p role="alert" className="text-xs text-ui-danger">{formError}</p>}
           <Field><Label>订阅名称</Label><Input required value={name} onChange={event => setName(event.target.value)} /></Field>
           <Field><Label>输入方式</Label><Select value={inputMode} onValueChange={changeInputMode}><SelectItem value="url">订阅地址</SelectItem><SelectItem value="paste">粘贴原文</SelectItem><SelectItem value="file">订阅文件</SelectItem></Select></Field>
-          {acquisition === 'manual' ? inputMode === 'file' ? <Field><Label>订阅文件</Label><Input type="file" required={!contentFile} disabled={readingFile || submitting} onChange={event => { void selectFile(event.target.files); event.target.value = ''; }} /><p className={`mt-1 text-[11px] ${fileError ? 'text-ui-danger' : 'text-ui-muted'}`} role={fileError ? 'alert' : undefined}>{fileError || (readingFile ? '读取中…' : contentFile ? `${contentFile.name} · ${contentFile.size.toLocaleString()} 字节` : '单个 UTF-8 文本文件，最大 1 MiB')}</p></Field> : <Field><Label>订阅原文</Label><Textarea required={submitsContent} rows={9} value={content} onChange={event => setContent(event.target.value)} aria-invalid={!!contentError} className="font-mono" /><p className={`mt-1 text-[11px] ${contentError ? 'text-ui-danger' : 'text-ui-muted'}`} role={contentError ? 'alert' : undefined}>{contentError || `${contentBytes.toLocaleString()} / 1,048,576 字节`}</p></Field> : <>
+          {acquisition === 'manual' ? inputMode === 'file' ? <Field error={fileError} hint={readingFile ? '读取中…' : contentFile ? `${contentFile.name} · ${contentFile.size.toLocaleString()} 字节` : '单个 UTF-8 文本文件，最大 1 MiB'}><Label>订阅文件</Label><Input type="file" required={!contentFile} disabled={readingFile || submitting} onChange={event => { void selectFile(event.target.files); event.target.value = ''; }} /></Field> : <Field error={contentError} hint={`${contentBytes.toLocaleString()} / 1,048,576 字节`}><Label>订阅原文</Label><Textarea required={submitsContent} variant="code" rows={9} value={content} onChange={event => setContent(event.target.value)} /></Field> : <>
           <Field><Label>订阅地址</Label><Input type="url" required placeholder="https://example.com/subscription" value={url} onChange={event => setUrl(event.target.value)} /></Field>
           <Field><Label>内容格式</Label><Select value={type} onValueChange={setType}>
             <SelectItem value="auto">自动识别</SelectItem><SelectItem value="clash">Mihomo / Clash YAML</SelectItem><SelectItem value="singbox">sing-box JSON</SelectItem><SelectItem value="quantumultx">Quantumult X</SelectItem><SelectItem value="base64">Base64 节点串</SelectItem>

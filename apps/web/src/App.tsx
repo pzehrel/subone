@@ -33,6 +33,7 @@ export function App() {
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [focusedSourceId, setFocusedSourceId] = useState<string | null>(null);
+  const [pendingSourceUpdateId, setPendingSourceUpdateId] = useState<string | null>(null);
   const [rawSource, setRawSource] = useState<SubscriptionSource | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -569,6 +570,8 @@ export function App() {
 
         {activeTab === 'sources' && (
           <SourcesManager
+            updateSourceId={pendingSourceUpdateId}
+            onUpdateSourceOpened={() => setPendingSourceUpdateId(null)}
             sources={config?.sources || []}
             onAddSource={handleAddSource}
             onUpdateSource={handleUpdateSource}
@@ -585,6 +588,7 @@ export function App() {
           key={focusedSourceId || 'nodes'}
           sources={config?.sources || []}
           focusSourceId={focusedSourceId}
+          onUpdateManualSource={sourceId => { setPendingSourceUpdateId(sourceId); setActiveTab('sources'); }}
           onUpdateNode={handleUpdateNode}
           onRefreshSource={handleRefreshSource}
         />}
