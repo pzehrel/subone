@@ -5,7 +5,7 @@ import { saveConfig } from '../storage/db';
 import type { AppConfig, SubscriptionSource } from '../types';
 import { prepareTemplateReferences, removeNodeReferences } from './node-references';
 import { prepareSourceNodes } from './node-identity';
-import { bindSourceDoh } from '../core/parser/source-doh';
+import { bindSourceDoh, preserveSourceDomainAliases } from '../core/parser/source-doh';
 import { collectNodesFromSources } from './profile-service';
 
 /** Publish only after the complete application candidate has been durably saved. */
@@ -51,6 +51,7 @@ export async function refreshSource(id: string, changes: Partial<SubscriptionSou
     const latest = getAppConfig().sources.find(source => source.id === id);
     if (!latest) throw new SourceUpdateError(message, error instanceof SourceParseError ? 422 : 500);
     const diagnostic = structuredClone(latest);
+    preserveSourceDomainAliases(diagnostic);
     diagnostic.lastUpdateError = message;
     if (error instanceof SourceParseError) {
       diagnostic.rawSubscription = { content: error.content, fetchedAt: error.fetchedAt, contentType: error.contentType, format: error.format, encoding: error.encoding, parseStatus: 'failed', error: message };

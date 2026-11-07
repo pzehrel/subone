@@ -1,3 +1,4 @@
+import { portableDohUrl, resolveNodeDns } from './node-domain-ranges';
 import { defaultMihomoDohEgress } from '../../core/parser/source-doh';
 import { isIP } from 'node:net';
 import type { AppConfig, ClientType, ProxyGroupItem, ProxyNode, SourceDohReference, SubscriptionSource } from '../../types';
@@ -116,6 +117,7 @@ export function collectRuntimeDependencies(plan: GenerationPlan): RuntimeDepende
 function collectSingboxRuntimeDependencies(plan: GenerationPlan): RuntimeDependencyCollection {
   const result: RuntimeDependencyCollection = { nodes: [], groups: [] };
   if (plan.target.mode === 'nodes' || plan.target.type !== 'singbox') return result;
+  const nodeDns = resolveNodeDns(plan).forNode;
   let template: Document;
   try { template = JSON.parse(plan.templateContent); } catch { return result; }
   const included = new Set([...plan.ordinaryNodes, ...plan.dependencyNodes].map(node => node.id));
@@ -200,21 +202,23 @@ function collectSingboxRuntimeDependencies(plan: GenerationPlan): RuntimeDepende
     const value = entry.node;
     const detour = value.raw && typeof value.raw === 'object' ? value.raw.detour ?? value.raw['dialer-proxy'] : undefined;
     if (typeof detour === 'string') outbound(source, sourceReference(source, detour), owner, reason);
-    const service = source.doh?.services[0];
+    const selected = nodeDns.get(id)?.[0];
+    const dnsSource = selected?.source || source;
+    const service = selected?.service || dnsSource.doh?.services[0];
     if (!needsHostnameLookup(value.server)) return;
     if (!service) return resolver(undefined, resolverTag(template.route?.default_domain_resolver), owner, reason);
     if (typeof service.raw === 'string') {
       const url = new URL(service.url);
       if (url.username || url.password || service.raw.includes('#') && service.raw.slice(service.raw.indexOf('#') + 1).split('&').length > 1) return;
-    } else if (!(service.raw && typeof service.raw === 'object' && (service.raw as Document).type === 'https')) return;
-    const egress = service.outbound ?? (source.doh?.format === 'mihomo' ? defaultMihomoDohEgress(service.path, source.parsedConfig || {}) : undefined);
+    } else if (!(service.raw && typeof service.raw === 'object' && (service.raw as Document).type === 'https') && !portableDohUrl({ source: dnsSource, service })) return;
+    const egress = service.outbound ?? (dnsSource.doh?.format === 'mihomo' ? defaultMihomoDohEgress(service.path, dnsSource.parsedConfig || {}) : dnsSource.doh?.format === 'quantumultx' ? { kind: 'direct' as const } : undefined);
     if (!egress || ['routing', 'ambiguous', 'unresolved'].includes(egress.kind)) return;
     const nextReason = [...reason, service.url];
-    outbound(source, egress, owner, nextReason);
-    const raw = typeof service.raw === 'object' ? service.raw as Document : { server: new URL(service.url).hostname };
+    outbound(dnsSource, egress, owner, nextReason);
+    const raw = typeof service.raw === 'object' && (service.raw as Document)?.type === 'https' ? service.raw as Document : { server: new URL(service.url).hostname };
     if (!needsHostnameLookup(raw.server)) return;
-    const ownResolver = raw.domain_resolver ?? (source.parsedConfig?.route as Document | undefined)?.default_domain_resolver;
-    if (resolverTag(ownResolver)) resolver(source, resolverTag(ownResolver), owner, nextReason);
+    const ownResolver = raw.domain_resolver ?? (dnsSource.parsedConfig?.route as Document | undefined)?.default_domain_resolver;
+    if (resolverTag(ownResolver)) resolver(dnsSource, resolverTag(ownResolver), owner, nextReason);
     else resolver(undefined, resolverTag(template.route?.default_domain_resolver), owner, nextReason);
   };
   const ordinaryOwner = plan.bindings[0]?.sourceId || '';

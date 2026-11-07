@@ -164,6 +164,7 @@ export interface SourceDohResult {
   format: SourceFormat;
   services: SourceDohService[];
   outbounds: SourceDohOutbound[];
+  domainAliases?: Record<string, string>;
 }
 
 

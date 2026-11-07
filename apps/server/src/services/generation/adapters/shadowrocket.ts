@@ -4,7 +4,6 @@ import { registerRuntimeDependencyCollector } from '../runtime-dependencies';
 import { nodeToUri } from '../../../core/generators/shadowrocket-generator';
 import type { ProxyNode } from '../../../types';
 import { GenerationError, generationMetadata, type GenerationDiagnostic, type GenerationPlan } from '../types';
-import { retainTemplateDns } from './unsupported';
 
 function hasNodeRoute(node: ProxyNode): boolean {
   return !!(node.detourRef || node.detour || node.raw && typeof node.raw === 'object' && (node.raw.detour || node.raw['dialer-proxy']));
@@ -15,9 +14,8 @@ function diagnose(plan: GenerationPlan, diagnostic: GenerationDiagnostic): void 
   else throw new GenerationError('Shadowrocket 出站引用需修复', { ...generationMetadata(plan), diagnostics: [diagnostic] });
 }
 
-/** Shadowrocket2.2.93: generic DoH is proven, source-specific node DNS is not. */
+/** DNS is rendered in native Host mappings after proxy declarations are generated. */
 export function adaptShadowrocketDns(plan: GenerationPlan): void {
-  retainTemplateDns(plan);
   for (const group of plan.groups) if (!['select', 'urltest', 'fallback', 'relay', 'direct', 'reject'].includes(group.type)) {
     diagnose(plan, { code: 'shadowrocket-strategy-unapplied', severity: 'error',
       message: `Shadowrocket 完整输出尚未证实 ${group.type} 策略组的写法：${group.name}` });

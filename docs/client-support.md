@@ -1,6 +1,6 @@
 # 客户端支持与验证
 
-核验日期：2026-11-06。输入格式、输出目标与真实客户端加载是三项不同的支持范围。
+配置资料复核日期：2026-11-07；运行验证记录日期：2026-11-07。输入格式、输出目标与真实客户端加载是三项不同的支持范围。
 
 ## 上游输入
 
@@ -20,18 +20,22 @@ Base64 原文保留编码与内层格式信息；查看、复制和下载均使�
 
 ## 完整输出与来源 DoH
 
-来源 DoH 属于一次成功更新的结果，自动绑定该来源全部解析节点。全部服务按输入顺序保存，客户端降级不改写来源意图。无 DoH 或成功更新移除 DoH 后保留模板 DNS；模板未接管的 DNS、DoT、规则和选项继续保留。
+来源 DoH 属于一次成功更新的结果，自动绑定该来源全部解析节点，全部服务按输入顺序保存。六种完整输出按节点服务器域名汇总、去重合并上游 DoH，同域名节点共享，包括自身来源无 DoH 的节点；该域名没有任何上游 DoH 时沿用模板 DNS。决定见 [ADR 0001](adr/0001-source-doh-bindings.md)。
 
-| 目标与核验版本 | 来源节点解析 DoH 的映射 |
+节点域名范围由程序自动生成：按 DNS 标签归并使用相同 DoH 组合的同层子域，公共后缀及私有后缀作为边界，检查已知的其他解析意图、DoH 服务和引导域名。父域本身单独处理，无法归并时保留完整域名。范围不会改写保存的来源绑定。决定见 [ADR 0002](adr/0002-node-domain-ranges.md)。
+
+| 目标与核验版本 | 配置能力与输出方式 |
 | --- | --- |
-| [sing-box 1.14.4](https://github.com/SagerNet/sing-box/releases/tag/v1.14.4) | 节点 `domain_resolver` 指向 typed HTTPS DNS。该引用为单项，采用首项并报告其余服务未映射；已证实的出站与引导参数受最终依赖检查约束。[字段](https://sing-box.sagernet.org/configuration/shared/dial/#domain_resolver)、[HTTPS DNS](https://sing-box.sagernet.org/configuration/dns/server/https/) |
-| [Mihomo 1.19.33](https://github.com/MetaCubeX/mihomo/releases/tag/v1.19.33) | 使用 `dns.proxy-server-nameserver-policy` 的域名键和有序服务数组。相同服务器域名的来源意图冲突时，保留该域名的模板 DNS 并逐项诊断；其他不冲突域名仍可映射。模板须具备明确且有效的基础 DNS 与引导配置。[DNS](https://wiki.metacubex.one/config/dns/) |
-| [Loon 3.5.3](https://apps.apple.com/hk/app/loon/id1373567447) | 文档确认 3.5.2 (996)+ 的节点 `server-dns` URL 列表。仅在可表达时输出，状态为降级：原生 DoH 传输和独立引导仍未证实。显式不支持的出站、引导、TLS/headers、列表语法或优先 Host 映射使相关来源绑定不生效，并保留模板路径。[节点 DNS](https://nsloon.app/docs/Node/#节点-dns)、[Host Map](https://nsloon.app/docs/DNS/hostmap/) |
-| [Quantumult X 1.8.1](https://apps.apple.com/us/app/quantumult-x/id1443988620) | 官方样例的普通域名 DoH 不足以证明节点服务器解析、专用出站或独立引导能力。保留模板 `[dns]`，逐项报告来源绑定未生效，不生成猜测字段。[官方样例](https://raw.githubusercontent.com/crossutility/Quantumult-X/master/sample.conf) |
-| [Egern 2.21.0](https://apps.apple.com/us/app/egern/id1616105820) | `proxy_nameservers` 是已证实的共享直连能力，但官方“代理目标域名”的表述不足以证明来源节点服务器绑定。保留模板 DNS 并逐项报告绑定未生效。完整输出使用原生 typed `proxies`、`policy_groups`、`rules`。[DNS](https://egernapp.com/docs/configuration/dns/)、[完整示例](https://egernapp.com/docs/configuration/example/) |
-| [Shadowrocket 2.2.93](https://apps.apple.com/us/app/shadowrocket/id932747118) | 开发者确认通用加密 DNS；来源节点服务器解析、专用出站、独立引导和多服务语义未获一手字段证据。保留模板 DNS 并逐项报告来源绑定未生效，不生成猜测字段。 |
+| [sing-box 1.14.4](https://github.com/SagerNet/sing-box/releases/tag/v1.14.4) | 程序按域名范围为节点分配 `domain_resolver`，引用同域合并后的首项 DoH，并明确报告其余未采用项。使用 typed HTTPS DNS，保留已有出站、引导和连接选项处理。DNS 规则使用域名、后缀或正则字段，没有直接填写 glob 的字段。[节点解析](https://sing-box.sagernet.org/configuration/shared/dial/#domain_resolver)、[DNS 规则](https://sing-box.sagernet.org/configuration/dns/rule/) |
+| [Mihomo 1.19.33](https://github.com/MetaCubeX/mihomo/releases/tag/v1.19.33) | 将范围及完整 DoH 列表写入 `dns.proxy-server-nameserver-policy`。`*.example.com` 匹配单级子域；父域及多级子域另有原生语法。模板需提供有效的基础 DNS 和引导配置。合并后的规则参与必要连接及循环检查。[DNS](https://wiki.metacubex.one/config/dns/)、[通配语法](https://wiki.metacubex.one/en/handbook/syntax/#domain-wildcards) |
+| [Loon 3.5.3](https://apps.apple.com/hk/app/loon/id1373567447) | 节点通过 `server-dns="https://a/dns-query,https://b/dns-query"` 使用完整 DoH 列表；3.5.2 (996)+ 支持并发查询并采用首个有效结果。Host Map 支持 `*`、`?`。[节点 DNS](https://nsloon.app/en/docs/Node/#node-dns)、[Host 通配](https://nsloon.app/en/docs/Node/subscription/#host) |
+| [Quantumult X 1.8.1](https://apps.apple.com/us/app/quantumult-x/id1443988620) | 在 `[dns]` 输出域名限定的 `doh-server` 列表，每个 URL 显式携带范围；保留未被接管的模板 DNS。官方样例分别确认域名限定及同行多 DoH，Apple 客户端实际加载单独记录。[官方样例](https://raw.githubusercontent.com/crossutility/Quantumult-X/master/sample.conf) |
+| [Egern 2.21.0](https://apps.apple.com/us/app/egern/id1616105820) | `forward` 的精确域名或 `domain_wildcard` 指向 `upstreams` 多 DoH 组。配置 `proxy_nameservers` 会绕过这些规则，因此要求先修复模板；不擅自修改其他域名的解析路径。代理 DNS 的原生上游连接为直连。[DNS](https://egernapp.com/docs/configuration/dns/) |
+| [Shadowrocket 2.2.93](https://apps.apple.com/us/app/shadowrocket/id932747118) | 在 `[Host]` 输出 `*.example.com = server:https://a/dns-query,https://b/dns-query`：一个 `server:` 前缀，URL 用逗号连接，无引号。官方 2.2.92 确认 Host 多服务器；具体写法由配置作者发布的完整原始配置交叉核对，后者属于社区资料。[官方公告](https://t.me/s/ShadowrocketNews?before=1650)、[原始配置第 308 行](https://github.com/budaobu/rules/blob/b97b9f322c23be5ad0dad096d9bafc9b3e124304/conf/lazy_rocket.conf#L308) |
 
-只采用上游及模板明确提供的连接参数，不提供独立 DoH 服务库、手工覆盖或额外出站编辑入口。目标不能分别表达来源绑定时，保留模板 DNS 并列出未生效项；不任意选择另一来源覆盖。
+官方文档及配置样例作为能力依据，真实客户端加载单独记录。各客户端通配符的层级、父域匹配及字段不同，不将同一个 glob 字符串直接复制为所有目标的配置。与来源范围完全对应的模板 Host 映射由来源 DNS 接管；更宽的 Host 覆盖无法保留其他域名行为时明确要求修复。
+
+来源指定的 DoH 出站、引导解析器及其他连接参数仅在目标能够完整表达时采用；无法转换时保留模板 DNS 并报告未生效。DoH 出站没有独立编辑入口，也不提供独立 DoH 服务库或手工覆盖。
 
 ## 依赖、来源输出与纯节点
 
@@ -49,13 +53,13 @@ Mihomo 的 `include-all`、`include-all-proxies` 与额外依赖节点组合时�
 
 | 验证层 | 已有证据及限制 |
 | --- | --- |
-| HTTP 与持久化 | 最终审查修复检查：246/246 服务端测试通过，零跳过。使用真实本地应用、可控上游、临时存储和重启，验证来源事务、稳定身份、策略组及 YAML、绑定、诊断、必要依赖、普通候选隔离和来源输出边界。新增覆盖编码原文、端口诊断、原生动态成员循环与隔离、不支持的节点连接出站。 |
-| 浏览器 | 真实 HTTP 下完成策略组桌面与手机的 17 项行为检查；上游、节点和六目标预览另有贯穿检查。覆盖错误保留、重试、稳定选择、禁用、Relay、YAML 与重载，无页面异常或横向溢出。 |
+| HTTP 与持久化 | 271/271 服务端测试通过，零跳过；同时启用 sing-box 和 Mihomo 原生校验。使用真实本地应用、可控上游、临时存储和重启，验证来源事务、稳定身份、策略组及 YAML、绑定、诊断、必要依赖、普通候选隔离和来源输出边界。覆盖自动范围归并、公共及私有后缀、同域多来源去重与共享、别名成功快照、按范围记录采用结果、模板覆盖、同一行内多个 DNS 作用域的保留、来源默认引导诊断及生成通配规则的循环检查。 |
+| 浏览器 | 2026-11-06 已有记录：真实 HTTP 下完成策略组桌面与手机的 17 项行为检查；上游、节点和六目标预览另有贯穿检查。覆盖错误保留、重试、稳定选择、禁用、Relay、YAML 与重载，无页面异常或横向溢出。 |
 | 格式与引用 | 对目标结构、命名、原生引用、模板保留和不支持能力做自动检查。文件可解析、HTTP 200 或引用检查通过不代表真实客户端已加载。 |
-| sing-box 原生验证 | 官方 Linux 1.14.4 对实际 HTTP 生成配置执行 `check -c` 及隔离的短时启动，已通过。 |
-| Mihomo 原生验证 | 本机 `verge-mihomo` 1.19.33 对实际 HTTP 生成配置执行 `-t` 及隔离的短时启动，已通过。 |
+| sing-box 原生验证 | 官方 Linux 1.14.4 对 HTTP 生成配置执行 `check -c` 及隔离短时启动，已通过；IMM 106 节点输出另通过原生检查。 |
+| Mihomo 原生验证 | 本机 `verge-mihomo` 1.19.33 对 HTTP 生成配置执行 `-t` 及隔离短时启动，已通过；IMM 106 节点输出另通过原生检查。 |
 | Apple 客户端加载 | Loon、Quantumult X、Egern、Shadowrocket 在本 Linux 环境没有可用客户端，真实应用加载均为 **UNVERIFIED**。 |
 
-本轮执行 `pnpm typecheck`、`pnpm lint`、`pnpm test` 与 `pnpm build`，均通过。原生测试通过 `SUBONE_SINGBOX_BINARY` 和 `SUBONE_TEST_MIHOMO` 指定可用核心；本轮同时启用两项检查。
+已执行 `pnpm typecheck`、`pnpm lint`、`pnpm test` 与 `pnpm build`；类型检查、测试和构建通过，lint 保留已有告警。原生测试通过 `SUBONE_SINGBOX_BINARY` 和 `SUBONE_TEST_MIHOMO` 指定可用核心，两项检查均已启用。
 
 原生校验和短时启动只证明所测配置的解析、引用及初始化；没有验证外部 DNS 应答、代理握手或生产网络连通。不会把生成成功写成实机可用。

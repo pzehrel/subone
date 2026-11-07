@@ -67,17 +67,19 @@ test('Mihomo applies ordered source DoH by server domain and preserves native te
   assert.deepEqual(await preview(profile), result);
 });
 
-test('same server domain with incompatible sources keeps template policy and reports every unapplied binding', async () => {
+test('same server domain merges both sources and replaces only its template policy', async () => {
   const a = await add('/conflict-a', 'shared.node.example', ['https://a.conflict.example/dns-query']);
   const b = await add('/conflict-b', 'shared.node.example', ['https://b.conflict.example/dns-query']);
   const content = structuredClone(template); content.dns['proxy-server-nameserver-policy']['shared.node.example'] = ['tls://192.0.2.55'];
   const { profile } = await profileFor([a, b], content);
   const result = await preview(profile); assert.equal(result.success, true, JSON.stringify(result));
-  assert.deepEqual((yaml.load(result.data) as any).dns, content.dns);
+  const expectedDns = structuredClone(content.dns);
+  expectedDns['proxy-server-nameserver-policy']['shared.node.example'] = ['https://a.conflict.example/dns-query#DIRECT', 'https://b.conflict.example/dns-query#DIRECT'];
+  assert.deepEqual((yaml.load(result.data) as any).dns, expectedDns);
   assert.equal(result.generation.bindings.length, 2);
   for (const binding of result.generation.bindings) {
-    assert.equal(binding.status, 'unapplied'); assert.equal(binding.method, 'template-dns'); assert.deepEqual(binding.appliedServiceIds, []);
-    assert.ok(binding.diagnostics.some((entry: any) => entry.code === 'source-doh-domain-conflict' && /shared.node.example/.test(entry.message)));
+    assert.equal(binding.status, 'applied'); assert.equal(binding.method, 'mihomo-server-domain-policy'); assert.equal(binding.appliedServiceIds.length, 2);
+    assert.equal(binding.diagnostics.length, 0);
   }
   assert.equal(await fetch(`${origin}/s/${profile.token}/mihomo?expand=true`).then(response => response.text()), result.data);
   assert.equal((await api('/sources')).data.find((entry: any) => entry.id === a.id).doh.services[0].url, 'https://a.conflict.example/dns-query');
@@ -334,15 +336,13 @@ test('a capacity-limited binding does not add any unused DNS exit from another s
   assert.equal((yaml.load(result.data) as any).proxies.some((entry: any) => entry.server === '192.0.2.55'), false);
 });
 
-test('prospective bootstrap dependencies with conflicting server-domain bindings degrade before adding unused nodes', async () => {
+test('merged prospective bootstrap bindings expose actual dependency cycles', async () => {
   const source = await add('/prospective-a', 'shared.prospective.example', ['https://dns.prospective.example/dns-query']);
   const other = await add('/prospective-b', 'shared.prospective.example', ['https://other.prospective.example/dns-query']);
   const managed = (await api('/groups', 'POST', { name: 'Prospective bootstrap', type: 'select', sources: [other.id] })).data;
   const content = structuredClone(template); content.dns['default-nameserver'] = [`https://127.0.0.1/dns-query#${encodeURIComponent(managed.name)}`];
   const { profile } = await profileFor([source], content);
-  const result = await preview(profile); assert.equal(result.success, true, JSON.stringify(result));
-  assert.equal(result.generation.bindings[0].status, 'unapplied'); assert.equal(result.generation.dependencyNodeCount, 0);
-  assert.ok(result.generation.diagnostics.some((entry: any) => entry.code === 'source-doh-domain-conflict'));
-  assert.deepEqual((yaml.load(result.data) as any).dns['proxy-server-nameserver-policy'], content.dns['proxy-server-nameserver-policy']);
-  assert.equal((yaml.load(result.data) as any)['proxy-groups'].some((entry: any) => entry.name === managed.name), false);
+  const result = await preview(profile); assert.equal(result.status, 422);
+  assert.equal(result.generation.dependencyNodeCount, 1);
+  assert.ok(result.generation.diagnostics.some((entry: any) => entry.code === 'source-doh-cycle'));
 });

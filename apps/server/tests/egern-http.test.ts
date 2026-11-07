@@ -44,7 +44,7 @@ after(async () => { await stopApp(); await new Promise<void>(resolve => upstream
 
 const nativeTemplate = {
   ipv6: false, http_port: 8081,
-  dns: { bootstrap: ['127.0.0.1'], upstreams: { ordinary: ['https://template.dns.example/query', 'tls://template.dot.example'] }, forward: [{ domain_suffix: { match: 'kept.example', value: 'ordinary' } }], proxy_nameservers: ['https://template.proxy.example/query'] },
+  dns: { bootstrap: ['127.0.0.1'], upstreams: { ordinary: ['https://template.dns.example/query', 'tls://template.dot.example'] }, forward: [{ domain_suffix: { match: 'kept.example', value: 'ordinary' } }] },
   proxies: [{ socks5: { name: 'Template node', server: '192.0.2.90', port: 1080 } }],
   policy_groups: [{ select: { name: 'Template group', policies: ['Template node', 'DIRECT'] } }],
   rules: [{ domain: { match: 'kept.example', policy: 'Template group' } }, { default: { policy: 'DIRECT' } }],
@@ -98,7 +98,7 @@ test('the packaged Egern workflow generates native groups and protected provider
   if (process.env.SUBONE_EGERN_RULES_VERIFY) for (const url of urls) { const provider = await fetch(url); assert.equal(provider.status, 200, url); const data: any = yaml.load(await provider.text()); assert.ok(Object.keys(data).some(key => key.endsWith('_set')), url); }
 });
 
-test('Egern HTTP output uses native typed nodes, groups and rules while every source DNS intent remains unapplied', async () => {
+test('Egern HTTP output uses native typed nodes, groups and rules with native source DNS forwarding', async () => {
   const source = await addSource('/native-four', [
     { name: 'SS', type: 'ss', server: 'ss.native.example', port: 8388, cipher: 'aes-256-gcm', password: 'dummy', udp: true },
     { name: 'SOCKS', type: 'socks5', server: 'socks.native.example', port: 1080, username: 'user', password: 'dummy' },
@@ -110,7 +110,9 @@ test('Egern HTTP output uses native typed nodes, groups and rules while every so
   assert.equal(result.success, true, result.message);
   assert.equal(result.generation.target.version, '2.21.0');
   const doc: any = yaml.load(result.data);
-  assert.deepEqual(doc.dns, nativeTemplate.dns); assert.equal(doc.http_port, 8081);
+  assert.deepEqual(doc.dns.bootstrap, nativeTemplate.dns.bootstrap);
+  assert.deepEqual(doc.dns.upstreams.ordinary, nativeTemplate.dns.upstreams.ordinary);
+  assert.deepEqual(doc.dns.forward.at(-1), nativeTemplate.dns.forward[0]); assert.equal(doc.http_port, 8081);
   assert.deepEqual(doc.proxies.find((entry: any) => entry.shadowsocks)?.shadowsocks, { name: 'SS', server: 'ss.native.example', port: 8388, method: 'aes-256-gcm', password: 'dummy', udp_relay: true });
   assert.deepEqual(doc.proxies.find((entry: any) => entry.socks5?.server === 'socks.native.example')?.socks5, { name: 'SOCKS', server: 'socks.native.example', port: 1080, username: 'user', password: 'dummy', udp_relay: true });
   assert.deepEqual(doc.proxies.find((entry: any) => entry.vmess)?.vmess, { name: 'VMess', server: 'vmess.native.example', port: 443, user_id: '11111111-1111-4111-8111-111111111111', security: 'auto', udp_relay: true, transport: { tls: { sni: 'tls.native.example', skip_tls_verify: false } } });
@@ -121,9 +123,10 @@ test('Egern HTTP output uses native typed nodes, groups and rules while every so
   assert.deepEqual(doc.rules, [nativeTemplate.rules[0], { domain_suffix: { match: 'native.example', policy: groups[0].name } }, nativeTemplate.rules[1]]);
   assertNativeReferences(doc);
   const binding = result.generation.bindings[0];
-  assert.equal(binding.status, 'unapplied'); assert.deepEqual(binding.appliedServiceIds, []);
+  assert.equal(binding.status, 'applied'); assert.deepEqual(binding.appliedServiceIds, source.doh.services.map((entry: any) => entry.id));
   assert.equal(binding.batchId, source.doh.batchId); assert.deepEqual(binding.services.map((service: any) => service.url), ['https://first.dns.example/query', 'https://second.dns.example/query']);
-  assert.match(binding.diagnostics[0].message, /proxy_nameservers/); assert.match(binding.diagnostics[0].message, /直连/);
+  assert.equal(binding.diagnostics.length, 0);
+  assert.ok(doc.dns.forward.some((rule: any) => rule.domain_wildcard?.match === '*.native.example'));
   const actual = await fetch(`${origin}/s/${profile.token}/egern?expand=true`); assert.equal(actual.status, 200); assert.equal(await actual.text(), result.data);
   await stopApp(); await startApp();
   assert.equal((await preview(profile)).data, result.data);
@@ -154,8 +157,10 @@ test('native provider mounts share profile selection, names and source lifecycle
   assert.deepEqual(new Set(providers.map(node => node.server)), new Set(['a.provider.example', 'b.provider.example']));
   assert.equal(new Set(providers.map(node => node.name)).size, 2);
   for (const node of providers) assert.ok(typedValues(doc.proxies).some(full => full.name === node.name && full.server === node.server));
-  assert.deepEqual(result.generation.bindings.map((binding: any) => [binding.sourceId, binding.status, binding.appliedServiceIds]), [[a.id, 'unapplied', []], [b.id, 'unapplied', []]]);
-  assert.deepEqual(doc.dns, nativeTemplate.dns);
+  assert.deepEqual(result.generation.bindings.map((binding: any) => [binding.sourceId, binding.status, binding.appliedServiceIds]), [[a.id, 'unapplied', []], [b.id, 'applied', b.doh.services.map((entry: any) => entry.id)]]);
+  assert.deepEqual(doc.dns.bootstrap, nativeTemplate.dns.bootstrap);
+  assert.deepEqual(doc.dns.upstreams.ordinary, nativeTemplate.dns.upstreams.ordinary);
+  assert.deepEqual(doc.dns.forward.at(-1), nativeTemplate.dns.forward[0]);
   assert.equal(await fetch(`${origin}/s/${profile.token}/egern`).then(response => response.text()), result.data);
   const previousOrigin = origin; await stopApp(); await startApp();
   assert.equal((await preview(profile, false)).data, result.data.replaceAll(previousOrigin, origin));

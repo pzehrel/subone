@@ -45,7 +45,7 @@ async function profileFor(sources: any[], content = template, extra: Record<stri
 }
 function proxyLines(content: string): string[] { return content.split('\n').filter(line => / = SOCKS5,/.test(line)); }
 
-test('Loon projects separate source node DNS lists in order with partial transport evidence across HTTP and reload', async () => {
+test('Loon projects separate source node DNS lists in order with native DoH lists across HTTP and reload', async () => {
   const a = await addSource('/loon-a', ['https://192.0.2.1/dns-query', 'https://192.0.2.2/second'], 'node.a.example');
   const b = await addSource('/loon-b', ['https://192.0.2.3/dns-query'], 'node.b.example');
   const profile = await profileFor([a, b]);
@@ -53,7 +53,7 @@ test('Loon projects separate source node DNS lists in order with partial transpo
   assert.equal(preview.success, true, preview.message);
   assert.equal(preview.generation.target.version, '3.5.3');
   if (process.env.SUBONE_LOON_ARTIFACT) await writeFile(process.env.SUBONE_LOON_ARTIFACT, preview.data);
-  assert.deepEqual(preview.generation.bindings.map((binding: any) => [binding.status, binding.appliedServiceIds]), [['degraded', a.doh.services.map((service: any) => service.id)], ['degraded', b.doh.services.map((service: any) => service.id)]]);
+  assert.deepEqual(preview.generation.bindings.map((binding: any) => [binding.status, binding.appliedServiceIds]), [['applied', a.doh.services.map((service: any) => service.id)], ['applied', b.doh.services.map((service: any) => service.id)]]);
   assert.match(proxyLines(preview.data).find(line => line.includes('node.a.example'))!, /server-dns="https:\/\/192\.0\.2\.1\/dns-query,https:\/\/192\.0\.2\.2\/second"$/);
   assert.match(proxyLines(preview.data).find(line => line.includes('node.b.example'))!, /server-dns="https:\/\/192\.0\.2\.3\/dns-query"$/);
   assert.ok(preview.generation.diagnostics.every((diagnostic: any) => diagnostic.code === 'loon-doh-transport-unverified'));
@@ -178,24 +178,24 @@ test('unsupported native Loon node detours fail clearly rather than emitting a d
   assert.equal((await fetch(`${origin}/s/${profile.token}/source/${source.id}?target=loon`)).status, 422);
 });
 
-test('Loon reports unproven hostname bootstrap and preserves higher-priority template Host mappings', async () => {
+test('Loon adopts native hostname DoH and replaces a conflicting owned template Host mapping', async () => {
   const source = await addSource('/loon-hostname', ['https://resolver.hostname.example/dns-query'], 'node.hostname.example');
   const profile = await profileFor([source]);
   const preview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'loon', expandNodes: true });
   assert.equal(preview.success, true, preview.message);
-  assert.equal(preview.generation.bindings[0].status, 'degraded');
-  assert.ok(preview.generation.diagnostics.some((diagnostic: any) => diagnostic.code === 'loon-doh-bootstrap-unverified'));
+  assert.equal(preview.generation.bindings[0].status, 'applied');
+  assert.equal(preview.generation.diagnostics.length, 0);
   assert.match(preview.data, /server-dns="https:\/\/resolver.hostname.example\/dns-query"/);
   assert.doesNotMatch(preview.data, /bootstrap=|dns-policy=|detour=|dns-egress=/);
   const hostTemplate = template.replace('kept.example = 192.0.2.10', 'kept.example = 192.0.2.10\nnode.hostname.example = 192.0.2.99');
   const mappedProfile = await profileFor([source], hostTemplate);
   const mapped = await api('/generate/preview', 'POST', { profileId: mappedProfile.id, customType: 'loon', expandNodes: true });
   assert.equal(mapped.success, true, mapped.message);
-  assert.equal(mapped.generation.bindings[0].status, 'unapplied');
-  assert.equal(mapped.generation.bindings[0].method, 'template-host-map');
-  assert.equal(mapped.generation.diagnostics[0].code, 'loon-node-dns-host-override');
-  assert.doesNotMatch(mapped.data, /server-dns=/);
-  assert.ok(mapped.data.includes(hostTemplate.split('[Proxy]')[0]));
+  assert.equal(mapped.generation.bindings[0].status, 'applied');
+  assert.equal(mapped.generation.bindings[0].method, 'loon-server-dns');
+  assert.match(mapped.data, /server-dns=/);
+  assert.doesNotMatch(mapped.data, /node\.hostname\.example = 192\.0\.2\.99/);
+  assert.match(mapped.data, /kept\.example = 192\.0\.2\.10/);
 });
 
 test('successful Loon source DoH removal restores template DNS and provider output after failure and reload', async () => {
@@ -275,7 +275,7 @@ test('Loon diagnoses a disabled stable remote-rule node reference even when no o
   assert.equal((await api('/templates')).data.find((entry: any) => entry.id === profile.templates.loon).content, content);
 });
 
-test('plain QuanX source DoH URLs project to Loon while scoped source options remain unapplied', async () => {
+test('QuanX DoH URLs project onto the source nodes in Loon regardless of the original DNS scope', async () => {
   const path = '/loon-quanx';
   const node = '[server_local]\nshadowsocks=quanx.node.example:443, method=aes-128-gcm, password=secret, tag=QuanX Loon\n[dns]\n';
   bodies.set(path, node + 'doh-server = https://192.0.2.60/one, https://192.0.2.61/two\n');
@@ -284,11 +284,10 @@ test('plain QuanX source DoH URLs project to Loon while scoped source options re
   const projected = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'loon', expandNodes: true });
   assert.equal(projected.success, true, projected.message);
   assert.match(projected.data, /server-dns="https:\/\/192.0.2.60\/one,https:\/\/192.0.2.61\/two"/);
-  assert.equal(projected.generation.bindings[0].status, 'degraded');
+  assert.equal(projected.generation.bindings[0].status, 'applied');
   bodies.set(path, node + 'doh-server = /*.private.example/https://192.0.2.62/dns-query\n');
   assert.equal((await api(`/sources/${source.id}/refresh`, 'POST', {})).success, true);
   const scoped = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'loon', expandNodes: true });
-  assert.equal(scoped.generation.bindings[0].status, 'unapplied');
-  assert.equal(scoped.generation.diagnostics[0].code, 'source-doh-options-unapplied');
-  assert.doesNotMatch(scoped.data, /server-dns=/);
+  assert.equal(scoped.generation.bindings[0].status, 'applied');
+  assert.match(scoped.data, /server-dns="https:\/\/192.0.2.62\/dns-query"/);
 });
