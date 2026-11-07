@@ -33,6 +33,7 @@ export function App() {
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [focusedSourceId, setFocusedSourceId] = useState<string | null>(null);
+  const [pendingSourceUpdateId, setPendingSourceUpdateId] = useState<string | null>(null);
   const [rawSource, setRawSource] = useState<SubscriptionSource | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -197,7 +198,7 @@ export function App() {
   };
 
   // Sources handlers
-  const handleAddSource = async (source: { name: string; url?: string; type: string; trafficNodeRegex?: string; expiryNodeRegex?: string }) => {
+  const handleAddSource = async (source: { name: string; url?: string; acquisition?: 'url' | 'manual'; content?: string; contentFile?: { name: string; base64: string }; type: string; trafficNodeRegex?: string; expiryNodeRegex?: string }) => {
     setErrorMsg(null);
     const res = await apiFetch(`${API_BASE}/sources`, {
       method: 'POST',
@@ -569,6 +570,8 @@ export function App() {
 
         {activeTab === 'sources' && (
           <SourcesManager
+            updateSourceId={pendingSourceUpdateId}
+            onUpdateSourceOpened={() => setPendingSourceUpdateId(null)}
             sources={config?.sources || []}
             onAddSource={handleAddSource}
             onUpdateSource={handleUpdateSource}
@@ -585,6 +588,7 @@ export function App() {
           key={focusedSourceId || 'nodes'}
           sources={config?.sources || []}
           focusSourceId={focusedSourceId}
+          onUpdateManualSource={sourceId => { setPendingSourceUpdateId(sourceId); setActiveTab('sources'); }}
           onUpdateNode={handleUpdateNode}
           onRefreshSource={handleRefreshSource}
         />}

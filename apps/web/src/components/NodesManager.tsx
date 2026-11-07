@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Check, CheckCircle2, ChevronDown, Copy, Edit2, RefreshCw, Server, XCircle } from 'lucide-react';
 import type { ProxyNode, SubscriptionSource } from '../types';
+import { isUpstreamSource } from '../utils/upstreamSource';
 import { copyToClipboard } from '../utils/clipboard';
 import { nodeToUri } from '../utils/nodeUri';
 import { Modal, ModalBody, ModalFooter, ModalForm } from './Modal';
@@ -17,10 +18,11 @@ interface NodesManagerProps {
   focusSourceId?: string | null;
   onUpdateNode: (id: string, updates: { name?: string; enabled?: boolean }) => Promise<void>;
   onRefreshSource: (id: string) => Promise<void>;
+  onUpdateManualSource: (id: string) => void;
 }
 
-export function NodesManager({ sources, focusSourceId, onUpdateNode, onRefreshSource }: NodesManagerProps) {
-  const upstreams = sources.filter(source => /^https?:\/\//i.test(source.url || '') && !['custom', 'manual', 'filter'].includes(source.type || ''));
+export function NodesManager({ sources, focusSourceId, onUpdateNode, onRefreshSource, onUpdateManualSource }: NodesManagerProps) {
+  const upstreams = sources.filter(isUpstreamSource);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(focusSourceId ? [focusSourceId] : []));
   const sourceElements = useRef(new Map<string, HTMLElement>());
   const [editingNode, setEditingNode] = useState<ProxyNode | null>(null);
@@ -121,7 +123,7 @@ export function NodesManager({ sources, focusSourceId, onUpdateNode, onRefreshSo
               <span className="ml-auto shrink-0 text-[10px] font-normal text-ui-muted whitespace-nowrap">最后更新 {updated && Number.isFinite(updated.getTime()) ? <time dateTime={source.lastUpdated} title={updated.toLocaleString()}>{updated.toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</time> : '—'}</span>
             </div>
           </button>
-          <button className={`${iconButton} shrink-0 -mt-1`} title="更新上游" aria-label={`更新 ${source.name}`} disabled={!!refreshing} onClick={() => refreshSource(source.id)}><RefreshCw size={14} className={`text-ui-accent ${refreshing === source.id ? 'animate-spin' : ''}`} /></button>
+          <button className={`${iconButton} shrink-0 -mt-1`} title="更新上游" aria-label={`更新 ${source.name}`} disabled={!!refreshing} onClick={() => source.acquisition === 'manual' ? onUpdateManualSource(source.id) : refreshSource(source.id)}><RefreshCw size={14} className={`text-ui-accent ${refreshing === source.id ? 'animate-spin' : ''}`} /></button>
         </div>
         {isExpanded && <div id={`source-nodes-${source.id}`} className="border-t border-ui-divider divide-y divide-ui-divider">{nodes.map(node => <div key={node.id} className={`px-4 py-2 hover:bg-ui-subtle flex items-center justify-between gap-3 text-xs ${node.enabled === false ? 'opacity-55' : ''}`}>
           <div className="flex items-center gap-2.5 min-w-0 flex-1"><span className="text-sm shrink-0">{node.countryEmoji || '🌐'}</span>

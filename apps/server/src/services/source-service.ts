@@ -1,5 +1,5 @@
 import { getAppConfig, setAppConfig, setGlobalNodesCache } from '../context';
-import { fetchAndParseSource, SourceParseError } from '../core/parser/fetcher';
+import { fetchAndParseSource, receiveSourceContent, SourceParseError } from '../core/parser/fetcher';
 import { cleanSourceOrGroupName } from '../core/generators/common';
 import { saveConfig } from '../storage/db';
 import type { AppConfig, SubscriptionSource } from '../types';
@@ -39,12 +39,15 @@ export class SourceUpdateError extends Error {
   constructor(message: string, public status: 422 | 500 = 422) { super(message); }
 }
 
-export async function refreshSource(id: string, changes: Partial<SubscriptionSource> = {}): Promise<SubscriptionSource> {
+export async function refreshSource(id: string, changes: Partial<SubscriptionSource> = {}, content?: string): Promise<SubscriptionSource> {
   const current = getAppConfig().sources.find(source => source.id === id);
   if (!current) throw new Error('Source not found');
   const candidate = { ...structuredClone(current), ...changes };
   try {
-    candidate.nodes = await fetchAndParseSource(candidate, getAppConfig().countryRules);
+    if (candidate.acquisition === 'manual' && content === undefined) throw new SourceUpdateError('请重新粘贴订阅原文');
+    candidate.nodes = content === undefined
+      ? await fetchAndParseSource(candidate, getAppConfig().countryRules)
+      : receiveSourceContent(candidate, content, getAppConfig().countryRules);
     candidate.nodeCount = candidate.nodes.length;
   } catch (error) {
     const message = error instanceof Error ? error.message : '上游更新失败';
