@@ -39,13 +39,15 @@ export interface SourceRawRecord {
 }
 
 export interface SubscriptionSource {
+  acquisition?: 'url' | 'manual';
   id: string;
   name: string;
-  url: string;
+  url?: string;
   enabled: boolean;
   type?: 'remote' | 'manual' | 'auto' | 'base64' | 'clash' | 'singbox' | 'quantumultx' | 'custom' | string;
   lastUpdated?: string;
   detectedFormat?: SourceFormat;
+  rawSubscription?: SourceRawRecord;
   lastUpdateError?: string;
   nodeCount?: number;
   nodes?: ProxyNode[];

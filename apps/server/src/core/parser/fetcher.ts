@@ -64,22 +64,27 @@ export async function fetchAndParseSource(
     }
 
     const text = await response.text();
-    const fetchedAt = new Date().toISOString();
-    try {
-      const parsed = parseSourceContent(text, source.id, source.name, countryPatterns);
-      source.rawSubscription = { content: text, fetchedAt, format: parsed.format, encoding: parsed.encoding, contentType: response.headers.get('content-type') || undefined, parseStatus: 'success' };
-      source.detectedFormat = parsed.format;
-      source.parsedConfig = parsed.document;
-      source.doh = sourceDohResult(source.id, parsed.format, fetchedAt, parsed.doh || []);
-      source.lastUpdated = fetchedAt;
-      source.lastUpdateError = undefined;
-      return applySubscriptionInfo(source, parsed.nodes, response.headers.get('subscription-userinfo'));
-    } catch (error) {
-      throw new SourceParseError(error instanceof Error ? error.message : '订阅解析失败', text, fetchedAt, response.headers.get('content-type') || undefined, error instanceof ContentParseError ? error.format : undefined, error instanceof ContentParseError ? error.encoding : undefined);
-    }
+    return receiveSourceContent(source, text, countryPatterns, response.headers.get('content-type') || undefined, response.headers.get('subscription-userinfo'));
   } catch (err: any) {
     console.error(`Failed to fetch source [${source.name}] (${url}):`, err.message || err);
     throw err;
+  }
+}
+
+/** Shared strict receive/parse contract for fetched and user-provided complete content. */
+export function receiveSourceContent(source: SubscriptionSource, text: string, countryPatterns?: CountryPatternRule[], contentType?: string, subscriptionUserinfo: string | null = null): ProxyNode[] {
+  const fetchedAt = new Date().toISOString();
+  try {
+    const parsed = parseSourceContent(text, source.id, source.name, countryPatterns);
+    source.rawSubscription = { content: text, fetchedAt, format: parsed.format, encoding: parsed.encoding, contentType, parseStatus: 'success' };
+    source.detectedFormat = parsed.format;
+    source.parsedConfig = parsed.document;
+    source.doh = sourceDohResult(source.id, parsed.format, fetchedAt, parsed.doh || []);
+    source.lastUpdated = fetchedAt;
+    source.lastUpdateError = undefined;
+    return applySubscriptionInfo(source, parsed.nodes, subscriptionUserinfo);
+  } catch (error) {
+    throw new SourceParseError(error instanceof Error ? error.message : '订阅解析失败', text, fetchedAt, contentType, error instanceof ContentParseError ? error.format : undefined, error instanceof ContentParseError ? error.encoding : undefined);
   }
 }
 

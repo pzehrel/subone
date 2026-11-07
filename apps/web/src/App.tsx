@@ -197,7 +197,7 @@ export function App() {
   };
 
   // Sources handlers
-  const handleAddSource = async (source: { name: string; url?: string; type: string; trafficNodeRegex?: string; expiryNodeRegex?: string }) => {
+  const handleAddSource = async (source: { name: string; url?: string; acquisition?: 'url' | 'manual'; content?: string; type: string; trafficNodeRegex?: string; expiryNodeRegex?: string }) => {
     setErrorMsg(null);
     const res = await apiFetch(`${API_BASE}/sources`, {
       method: 'POST',

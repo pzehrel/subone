@@ -20,7 +20,7 @@ interface NodesManagerProps {
 }
 
 export function NodesManager({ sources, focusSourceId, onUpdateNode, onRefreshSource }: NodesManagerProps) {
-  const upstreams = sources.filter(source => /^https?:\/\//i.test(source.url || '') && !['custom', 'manual', 'filter'].includes(source.type || ''));
+  const upstreams = sources.filter(source => source.acquisition === 'manual' || /^https?:\/\//i.test(source.url || '') && !['custom', 'manual', 'filter'].includes(source.type || ''));
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(focusSourceId ? [focusSourceId] : []));
   const sourceElements = useRef(new Map<string, HTMLElement>());
   const [editingNode, setEditingNode] = useState<ProxyNode | null>(null);

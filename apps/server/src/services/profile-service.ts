@@ -54,7 +54,7 @@ export interface SourceRefreshResult {
 
 export async function refreshAllSources(config: AppConfig): Promise<{ nodes: ProxyNode[]; results: SourceRefreshResult[] }> {
   const results: SourceRefreshResult[] = [];
-  const ids = config.sources.filter(source => source.enabled && /^https?:\/\//.test(source.url || '')).map(source => source.id);
+  const ids = config.sources.filter(source => source.enabled && source.acquisition !== 'manual' && /^https?:\/\//.test(source.url || '')).map(source => source.id);
   for (const id of ids) {
     try {
       const source = await refreshSource(id);
