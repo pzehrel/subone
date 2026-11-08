@@ -161,6 +161,7 @@ export interface QuantumultXGeneratorOptions {
   ordinaryNodeIds?: ReadonlySet<string>;
   dependencyGroupIds?: ReadonlySet<string>;
   runtimeSources?: SubscriptionSource[];
+  nodeResource?: { name: string; url: string };
 }
 
 export function generateQuantumultXConfig(
@@ -257,7 +258,7 @@ export function injectUnifiedToQuantumultX(
   options?: QuantumultXGeneratorOptions
 ): string {
   const expandNodes = Boolean(options?.expandNodes);
-  const staticGroups = expandNodes || Boolean(options?.ordinaryNodeIds && nodes.some(node => !options.ordinaryNodeIds!.has(node.id)));
+  const staticGroups = expandNodes || Boolean(options?.nodeResource) || Boolean(options?.ordinaryNodeIds && nodes.some(node => !options.ordinaryNodeIds!.has(node.id)));
   nodes = nodes.filter(node => !options?.ordinaryNodeIds || options.ordinaryNodeIds.has(node.id));
   const lines = templateConf.split('\n');
   const activeRules = rulesList.filter(r => r.enabled);
@@ -321,7 +322,10 @@ export function injectUnifiedToQuantumultX(
   const serverRemoteLines: string[] = [];
   const allActiveRemoteSources: SubscriptionSource[] = [];
 
-  if (!expandNodes) {
+  if (!expandNodes && options?.nodeResource) {
+    const tag = options.nodeResource.name.replace(/[=,\r\n]/g, '_').trim() || 'SubOne';
+    serverRemoteLines.push(`${options.nodeResource.url}, tag=${tag}, update-interval=86400, opt-parser=false, enabled=true`);
+  } else if (!expandNodes) {
     networkSources.forEach(s => {
       const tag = s.name.replace(/[=,]/g, '_').trim();
       const iconUrl = resolveGroupIcon(s.name) || `${DEFAULT_QX_ICON_BASE}/Airport.png`;
@@ -347,6 +351,8 @@ export function injectUnifiedToQuantumultX(
   // 确保所有启用的源（包括 filter 源与物理源）都有对应的策略组；去重时彻底剥离各种 emoji（✨/🖥️/⚡️ 等），避免重复生成第二套组
   const activeSources = sources.filter(s => s.enabled);
   activeSources.forEach(s => {
+    // A managed profile owns its policy selection; source bookkeeping is not a policy.
+    if (options?.ordinaryNodeIds) return;
     if (proxyGroups.some(g => g.includeAll)) return;
     const sClean = cleanSourceOrGroupName(s.name).toLowerCase();
     const targetTag = formatSourceGroupTag(s);

@@ -142,7 +142,7 @@ test('retained Loon template references complete runtime dependencies without ad
   assert.equal(preview.data.split('\n').find((line: string) => line.startsWith('Candidates-'))!.split(',').map((part: string) => part.trim()).includes(dependencyName), false);
   assert.equal(await fetch(`${origin}/s/${profile.token}/source/${ordinary.id}?target=loon`).then(response => response.text()), `[Proxy]\n${ordinaryLine}`);
   assert.equal(await fetch(`${origin}/s/${profile.token}/source/${dependency.id}?target=loon`).then(response => response.text()), '[Proxy]');
-  const remote = await fetch(`${origin}/s/${profile.token}/loon`).then(response => response.text());
+  const remote = await fetch(`${origin}/s/${profile.token}/loon?expand=false`).then(response => response.text());
   assert.ok(remote.includes(dependencyLine));
   assert.ok(remote.includes(`/source/${ordinary.id}?target=loon`));
   assert.doesNotMatch(remote, new RegExp(`/source/${dependency.id}`));

@@ -161,7 +161,7 @@ test('native provider mounts share profile selection, names and source lifecycle
   assert.deepEqual(doc.dns.bootstrap, nativeTemplate.dns.bootstrap);
   assert.deepEqual(doc.dns.upstreams.ordinary, nativeTemplate.dns.upstreams.ordinary);
   assert.deepEqual(doc.dns.forward.at(-1), nativeTemplate.dns.forward[0]);
-  assert.equal(await fetch(`${origin}/s/${profile.token}/egern`).then(response => response.text()), result.data);
+  assert.equal(await fetch(`${origin}/s/${profile.token}/egern?expand=false`).then(response => response.text()), result.data);
   const previousOrigin = origin; await stopApp(); await startApp();
   assert.equal((await preview(profile, false)).data, result.data.replaceAll(previousOrigin, origin));
   assert.equal((await api(`/sources/${b.id}`, 'PUT', { enabled: false })).success, true);

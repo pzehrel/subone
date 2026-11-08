@@ -19,7 +19,8 @@ export function renderQuantumultX(plan: GenerationPlan): string {
     }
   }
   const output = generateQuantumultXConfig(plan.templateContent, [...plan.ordinaryNodes, ...plan.dependencyNodes], plan.groups, plan.rules, plan.sources,
-    { expandNodes: plan.expandNodes, baseUrl: plan.baseUrl, subToken: plan.subToken, ordinaryNodeIds: new Set(plan.ordinaryNodes.map(node => node.id)), dependencyGroupIds: new Set(plan.dependencyGroupIds), runtimeSources: plan.inventory.sources });
+    { expandNodes: plan.expandNodes, baseUrl: plan.baseUrl, subToken: plan.subToken, ordinaryNodeIds: new Set(plan.ordinaryNodes.map(node => node.id)), dependencyGroupIds: new Set(plan.dependencyGroupIds), runtimeSources: plan.inventory.sources,
+      nodeResource: plan.baseUrl && plan.subToken ? { name: plan.subscriptionName || 'SubOne', url: `${plan.baseUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(plan.subToken)}/nodes/qx` } : undefined });
   validateQuantumultXReferences(output, plan);
   return renderIniDomainDns(output, plan, 'quantumultx');
 }
@@ -73,9 +74,14 @@ function validateNodeChains(plan: GenerationPlan): void {
 
 /** Pure provider output carries only the ordinary selected nodes; DNS chains are unused. */
 export function renderQuantumultXSource(input: GenerationPlan, sourceId: string) {
+  return renderQuantumultXNodes(input, sourceId);
+}
+
+/** The aggregate resource keeps the same profile selection and names as the full configuration. */
+export function renderQuantumultXNodes(input: GenerationPlan, sourceId?: string) {
   const plan = structuredClone(input);
   plan.target.mode = 'nodes';
-  plan.ordinaryNodes = plan.ordinaryNodes.filter(node => node.sourceId === sourceId);
+  if (sourceId !== undefined) plan.ordinaryNodes = plan.ordinaryNodes.filter(node => node.sourceId === sourceId);
   plan.dependencyNodes = [];
   const selectedIds = new Set(plan.ordinaryNodes.map(node => node.id));
   plan.bindings = plan.bindings.flatMap(binding => {

@@ -16,6 +16,7 @@ import { renderQuantumultX, renderQuantumultXSource } from './generation/adapter
 import { renderIniDomainDns } from './generation/native-domain-dns';
 import { GenerationError, generationMetadata, type GenerationMetadata, type GenerationOptions, type GenerationPlan } from './generation/types';
 export { GenerationError } from './generation/types';
+export { renderQuantumultXNodes } from './generation/adapters/quantumultx';
 export type { GenerationPlan, GenerationMetadata, GenerationBinding, GenerationDiagnostic } from './generation/types';
 
 /** All dispatch paths select and name the same enabled profile nodes before provider slicing. */
@@ -35,8 +36,9 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
     rules: structuredClone(options.profile ? getEffectiveRulesForProfile(options.profile) : config.rulesList),
     sources: structuredClone(sources.filter(source => source.enabled && (ordinary.some(node => node.sourceId === source.id) || options.profile?.nodeFilter?.sourceIds?.includes(source.id) || groups.some(group => (group.sources ?? group.use)?.some(mount => mount === source.id || mount === source.name))))),
     bindings: [],
-    expandNodes: requiresExpandedNodes(groups) || (options.expandNodes ?? (options.target === 'shadowrocket')),
+    expandNodes: requiresExpandedNodes(groups) || (options.expandNodes ?? true),
     baseUrl: options.baseUrl || '', subToken: options.subToken || options.profile?.token || 'preview-token',
+    subscriptionName: options.profile?.name,
   };
   const bindNodes = () => {
     const nodes = [...plan.ordinaryNodes, ...plan.dependencyNodes];

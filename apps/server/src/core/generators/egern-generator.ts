@@ -182,7 +182,7 @@ export function injectUnifiedToEgern(doc: NativeEntry, egernProxies: NativeEntry
   doc.proxies = [...(doc.proxies || []), ...egernProxies];
   const groups = proxyGroups.map(group => ({ ...group }));
   const used = new Set(['DIRECT', 'REJECT', ...doc.proxies.map((entry: NativeEntry) => egernEntry(entry).name), ...(doc.policy_groups || []).map((entry: NativeEntry) => egernEntry(entry).name), ...groups.map(group => group.name)]);
-  for (const source of sources.filter(source => source.enabled && ordinary.some(node => node.sourceId === source.id))) {
+  for (const source of sources.filter(source => !options?.ordinaryNodeIds && source.enabled && ordinary.some(node => node.sourceId === source.id))) {
     const clean = cleanSourceOrGroupName(source.name).toLowerCase();
     if (groups.some(group => cleanSourceOrGroupName(group.name).toLowerCase() === clean || group.id === `grp-src-${source.id}`)) continue;
     const base = formatSourceGroupTag(source); let name = base; let suffix = 2;

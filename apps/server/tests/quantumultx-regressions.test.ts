@@ -9,6 +9,24 @@ import type { ProxyGroupItem, ProxyNode, SubscriptionSource, UnifiedRuleItem } f
 
 const template = '[server_local]\n\n[policy]\n\n[filter_remote]\n\n[filter_local]\n';
 
+test('one downstream resource keeps source-specific candidate selection without exporting source names', () => {
+  const nodes: ProxyNode[] = [
+    { id: 'a', name: 'HK One', type: 'ss', server: 'a.invalid', port: 443, sourceId: 'source-a' },
+    { id: 'b', name: 'HK Two', type: 'ss', server: 'b.invalid', port: 443, sourceId: 'source-b' },
+  ];
+  const sources: SubscriptionSource[] = [
+    { id: 'source-a', name: 'Upstream A', type: 'remote', enabled: true, url: 'https://a.invalid/sub' },
+    { id: 'source-b', name: 'Upstream B', type: 'remote', enabled: true, url: 'https://b.invalid/sub' },
+  ];
+  const output = generateQuantumultXConfig(template, nodes,
+    [{ id: 'selected', name: 'Selected', type: 'select', sources: ['source-a'], filter: '^HK' }], [], sources,
+    { baseUrl: 'https://subone.invalid', subToken: 'token', ordinaryNodeIds: new Set(nodes.map(node => node.id)),
+      nodeResource: { name: 'My subscription', url: 'https://subone.invalid/s/token/nodes/qx' } });
+  assert.match(output, /^static=Selected, HK One(?:, img-url=[^\n]+)?$/m);
+  assert.match(output, /^https:\/\/subone\.invalid\/s\/token\/nodes\/qx, tag=My subscription,/m);
+  assert.doesNotMatch(output, /Upstream [AB]|resource-tag-regex|HK Two|\/source\//);
+});
+
 test('Quantumult X rejects Relay groups instead of returning an unusable configuration', () => {
   const relay: ProxyGroupItem = {
     id: 'relay',
