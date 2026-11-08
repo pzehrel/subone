@@ -52,6 +52,7 @@ export interface GenerationPlan {
   expandNodes: boolean;
   baseUrl: string;
   subToken: string;
+  subscriptionName?: string;
 }
 export interface GenerationMetadata {
   target: GenerationPlan['target'];

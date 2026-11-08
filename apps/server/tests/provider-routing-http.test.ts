@@ -103,6 +103,12 @@ test('source outputs ignore unused managed groups, template rules and FINAL whil
       assert.match(text, /192\.0\.2\.10/);
       assert.doesNotMatch(text, /192\.0\.2\.(?:11|12|13|53)\b|Provider Safe|Unused broken provider group|Missing native FINAL|unused\.provider\.example/);
       assert.doesNotMatch(text, /\[DNS\]|\[dns\]|\[Rule\]|\[filter_local\]|policy_groups|proxy-groups|(?:group|node|unresolved|ambiguous):/);
+      if (target === 'quantumultx') {
+        const aggregate = await fetch(`${origin}/s/${profile.token}/nodes/qx`);
+        assert.equal(aggregate.status, 200);
+        assert.equal(aggregate.headers.get('X-SubOne-Mode'), 'nodes');
+        assert.equal(await aggregate.text(), output);
+      }
       const excludedProvider = await fetch(`${origin}/s/${profile.token}/source/${excluded.id}/${target}`);
       assert.equal(excludedProvider.status, 200, `${target}: excluded source`);
       assert.doesNotMatch(providerText(target, await excludedProvider.text()), /192\.0\.2\./);

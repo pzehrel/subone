@@ -13,14 +13,15 @@ export default defineConfig(({ mode }) => {
     ],
     server: {
       port: 5173,
+      // Generated subscription URLs must retain the address used by the client.
       proxy: {
         '/api': {
           target,
-          changeOrigin: true,
+          changeOrigin: false,
         },
         '^/s/': {
           target,
-          changeOrigin: true,
+          changeOrigin: false,
         },
       },
     },

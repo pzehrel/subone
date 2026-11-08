@@ -269,6 +269,7 @@ test('info rules immediately reclassify cached nodes and filter every subscripti
     lastUpdated: '2026-11-01T00:00:00Z',
   }];
   config.profiles = [{ id: 'profile', name: 'Phone', token: 'info-test', enabled: true, nodeFilter: { mode: 'all' } }];
+  config.proxyGroups = [{ id: 'airport-choice', name: 'Airport choice', type: 'select', sources: ['airport'] }];
   context.setAppConfig(config);
   const update = async (body: unknown) => {
     const response = await fetch(`${origin}/api/sources/airport`, {
@@ -294,10 +295,10 @@ test('info rules immediately reclassify cached nodes and filter every subscripti
     assert.ok(!output.includes('套餐到期'));
   }
   for (const target of ['mihomo', 'loon', 'qx', 'egern']) {
-    const response = await fetch(`${origin}/s/info-test/${target}`);
+    const response = await fetch(`${origin}/s/info-test/${target}?expand=false`);
     assert.equal(response.status, 200, await response.clone().text());
     const output = await response.text();
-    assert.ok(output.includes(`${origin}/s/info-test/source/airport?target=`));
+    assert.ok(output.includes(target === 'qx' ? `${origin}/s/info-test/nodes/qx` : `${origin}/s/info-test/source/airport?target=`));
     assert.ok(!output.includes('expired-subscription'));
     const sourceResponse = await fetch(`${origin}/s/info-test/source/airport?target=${target}`);
     assert.equal(sourceResponse.status, 200);
@@ -461,6 +462,7 @@ test('preview provider links use the external HTTPS host and the selected profil
     profileId: created.body.data.id,
     customType: 'mihomo',
     customTemplate: 'proxy-groups: []\nrules: []',
+    expandNodes: false,
   }, {
     'X-Forwarded-Proto': 'https',
     'X-Forwarded-Host': 'subscriptions.example.test',

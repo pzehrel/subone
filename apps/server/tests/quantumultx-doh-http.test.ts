@@ -48,6 +48,28 @@ async function profileFor(sources: any[], content = template, filter?: any, grou
 }
 const preview = (profile: any, expandNodes = true) => api('/generate/preview', 'POST', { profileId: profile.id, customType: 'quantumultx', expandNodes });
 
+test('default Quantumult X downloads contain the selected nodes without fetching resources or adding source groups', async () => {
+  const a = await add('/qx-initial-a', [], { proxies: [{ name: 'Initial Trojan', type: 'trojan', server: 'trojan.initial.example', port: 443, password: 'fixture-password' }] });
+  const b = await add('/qx-initial-b', [], { proxies: [{ name: 'Initial AnyTLS', type: 'anytls', server: 'anytls.initial.example', port: 443, password: 'fixture-password' }] });
+  const group = (await api('/groups', 'POST', { name: 'Initial choice', type: 'select', proxies: ['DIRECT', `node:${a.nodes[0].id}`, `node:${b.nodes[0].id}`] })).data;
+  const { profile } = await profileFor([a, b], template, undefined, [group]);
+  const expected = await preview(profile);
+  assert.equal(expected.success, true, JSON.stringify(expected));
+  assert.match(expected.data, /^trojan=trojan\.initial\.example:443,.*tag=Initial Trojan$/m);
+  assert.match(expected.data, /^anytls=anytls\.initial\.example:443,.*tag=Initial AnyTLS$/m);
+  assert.doesNotMatch(expected.data, /qx-initial-[ab]|\/source\//);
+
+  const defaultPreview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'quantumultx' });
+  assert.equal(defaultPreview.success, true, JSON.stringify(defaultPreview));
+  assert.equal(defaultPreview.data, expected.data);
+  for (const path of ['qx', 'quantumultx', '?target=qx']) {
+    const response = await fetch(`${origin}/s/${profile.token}/${path}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('X-SubOne-Mode'), 'complete');
+    assert.equal(await response.text(), expected.data);
+  }
+});
+
 test('scoped DNS takeover preserves other entries and SSID options regardless of their position on the line', async () => {
   const source = await add('/qx-scoped-takeover', ['https://192.0.2.10/dns-query']);
   const owned = `/${source.nodes[0].server}/https://192.0.2.20/dns-query`;
@@ -131,11 +153,14 @@ test('provider and expanded output use the same selected names and usage without
   assert.deepEqual(names, ['A_1', 'A_1 (2)']);
   assert.match(expanded.data, new RegExp(`^static=${group.name}, (?:A_1, A_1 \\(2\\)|A_1 \\(2\\), A_1)(?:,|$)`, 'm'));
   assert.doesNotMatch(expanded.data, /hidden\.provider|omitted\.provider|unused-source/);
-  const actual = await fetch(`${origin}/s/${profile.token}/quantumultx`); assert.equal(await actual.text(), remote.data);
+  const actual = await fetch(`${origin}/s/${profile.token}/quantumultx`); assert.equal(await actual.text(), expanded.data);
   assert.match(actual.headers.get('subscription-userinfo') || '', /total=2000/);
+  assert.equal(await fetch(`${origin}/s/${profile.token}/qx?expand=false`).then(response => response.text()), remote.data);
   assert.doesNotMatch(remote.data, new RegExp(upstreamOrigin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  const urls = [...remote.data.matchAll(/^(https?:\/\/[^,]+), tag=/gm)].map(match => match[1]).filter(url => url.includes('/source/'));
-  assert.equal(urls.length, 2);
+  assert.doesNotMatch(remote.data, /qx-provider-[ab]|\/source\//);
+  const urls = [...remote.data.matchAll(/^(https?:\/\/[^,]+), tag=/gm)].map(match => match[1]).filter(url => url.endsWith('/nodes/qx'));
+  assert.deepEqual(urls, [`${origin}/s/${profile.token}/nodes/qx`]);
+  assert.match(remote.data, /\/nodes\/qx, tag=QX profile,/);
   const providerNames: string[] = [];
   for (const url of urls) {
     const response = await fetch(url); assert.equal(response.status, 200); const content = await response.text();
@@ -143,6 +168,9 @@ test('provider and expanded output use the same selected names and usage without
     providerNames.push(...[...content.matchAll(/tag=([^\n]+)$/gm)].map(match => match[1]));
   }
   assert.deepEqual(providerNames.sort(), names);
+  assert.equal((await fetch(`${origin}/s/invalid-token/nodes/qx`)).status, 404);
+  await api(`/profiles/${profile.id}`, 'PUT', { enabled: false });
+  assert.equal((await fetch(urls[0])).status, 404);
 });
 
 test('retained native references report disabled and deleted managed targets instead of retargeting', async () => {
@@ -271,8 +299,8 @@ test('retained native template references complete eligible omitted nodes and gr
   assert.match(result.data, /^static=Dependency group QX, direct(?:,|$)/m);
   assert.match(result.data, /^static = Native closure, Dependency group QX, Dependency closure QX, direct$/m);
   const ordinaryPolicy = result.data.split('\n').find((line: string) => line.startsWith(`static=${group.name},`)); assert.doesNotMatch(ordinaryPolicy, /Dependency closure/); assert.match(ordinaryPolicy, /, Ordinary closure QX(?:,|$)/);
-  const actual = await fetch(`${origin}/s/${profile.token}/quantumultx`); assert.equal(await actual.text(), result.data); assert.match(actual.headers.get('subscription-userinfo') || '', /total=1000/);
-  const urls = [...result.data.matchAll(/^(https?:\/\/[^,]+), tag=/gm)].map(match => match[1]).filter(url => url.includes('/source/')); assert.equal(urls.length, 1);
+  const actual = await fetch(`${origin}/s/${profile.token}/quantumultx?expand=false`); assert.equal(await actual.text(), result.data); assert.match(actual.headers.get('subscription-userinfo') || '', /total=1000/);
+  const urls = [...result.data.matchAll(/^(https?:\/\/[^,]+), tag=/gm)].map(match => match[1]).filter(url => url.endsWith('/nodes/qx')); assert.equal(urls.length, 1);
   const provider = await fetch(urls[0]).then(response => response.text()); assert.match(provider, /ordinary\.closure/); assert.doesNotMatch(provider, /dependency\.closure/);
   const previousOrigin = origin; await stopApp(); await startApp(); const reloaded = await preview(profile, false); assert.deepEqual(reloaded.generation, result.generation); assert.equal(reloaded.data.replaceAll(origin, previousOrigin), result.data);
   await api(`/nodes/${b.nodes[0].id}`, 'PUT', { enabled: false }); const disabled = await preview(profile, false); assert.equal(disabled.status, 422, JSON.stringify(disabled));

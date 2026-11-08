@@ -420,6 +420,7 @@ export function injectUnifiedToLoon(
 
   const activeSources = expandNodes ? sources.filter(s => s.enabled) : allActiveRemoteSources;
   activeSources.forEach(s => {
+    if (options?.ordinaryNodeIds) return;
     const sClean = cleanSourceOrGroupName(s.name);
     const groupTag = formatSourceGroupTag(s);
     const cleanLower = sClean.toLowerCase();
@@ -685,7 +686,7 @@ export function injectUnifiedToLoon(
     }
   });
 
-  if (!hasSuboneRemoteSubscription && customNodes.length > 0 && !effectiveGroups.some(g => g.id === 'grp-src-custom' || cleanSourceOrGroupName(g.name) === '自建节点' || cleanSourceOrGroupName(g.name) === '独立节点组')) {
+  if (!options?.ordinaryNodeIds && !hasSuboneRemoteSubscription && customNodes.length > 0 && !effectiveGroups.some(g => g.id === 'grp-src-custom' || cleanSourceOrGroupName(g.name) === '自建节点' || cleanSourceOrGroupName(g.name) === '独立节点组')) {
     const customTagName = customSources[0]?.name ? formatSourceGroupTag(customSources[0]) : '🖥️ 独立节点组';
     groupLines.push(`${customTagName} = select, ${customNodeNames.join(', ')}`);
   }

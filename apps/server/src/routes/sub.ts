@@ -1,4 +1,4 @@
-import { createGenerationPlan, renderGeneration, renderSourceGeneration, GenerationError } from '../services/generation';
+import { createGenerationPlan, renderGeneration, renderSourceGeneration, renderQuantumultXNodes, GenerationError } from '../services/generation';
 import { Hono, type Context } from 'hono';
 import { getAppConfig, getBaseUrl } from '../context';
 import { detectClientType, ClientType } from '../core/parser/ua-detector';
@@ -146,6 +146,25 @@ async function handleSourceSubRequest(c: Context, forcedTarget?: ClientType) {
 }
 
 // Secret Token Routes
+subRouter.get('/s/:subToken/nodes/qx', async (c) => {
+  const profile = getAppConfig().profiles?.find(profile => profile.enabled !== false && profile.token === c.req.param('subToken'));
+  if (!profile) return c.text('404 Not Found', 404);
+  try {
+    const plan = await createGenerationPlan({ target: 'quantumultx', outputRole: 'source', profile,
+      templateContent: getEffectiveTemplateForProfile(profile, 'quantumultx')?.content || '', baseUrl: getBaseUrl(c.req) });
+    const result = renderQuantumultXNodes(plan);
+    const userinfo = formatSubscriptionUserinfo(aggregateSubscriptionInfo(plan.sources.map(source => source.subscriptionInfo)));
+    if (userinfo) c.header('subscription-userinfo', userinfo);
+    c.header('Content-Type', result.contentType);
+    c.header('X-SubOne-Mode', 'nodes');
+    return c.body(result.output);
+  } catch (error) {
+    if (error instanceof GenerationError) return c.json({ success: false, message: error.message, generation: error.generation }, 422);
+    console.error('Quantumult X node generation error:', error);
+    return c.text('Node resource unavailable', 500);
+  }
+});
+
 subRouter.get('/s/:subToken/source/:sourceId/loon', (c) => handleSourceSubRequest(c, 'loon'));
 subRouter.get('/s/:subToken/source/:sourceId/:target', (c) => {
   const target = c.req.param('target');
