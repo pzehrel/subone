@@ -16,7 +16,7 @@ function diagnose(plan: GenerationPlan, diagnostic: GenerationDiagnostic): void 
 
 /** DNS is rendered in native Host mappings after proxy declarations are generated. */
 export function adaptShadowrocketDns(plan: GenerationPlan): void {
-  for (const group of plan.groups) if (!['select', 'urltest', 'fallback', 'relay', 'direct', 'reject'].includes(group.type)) {
+  for (const group of plan.groups) if (!['select', 'urltest', 'fallback', 'load-balance', 'relay', 'direct', 'reject'].includes(group.type)) {
     diagnose(plan, { code: 'shadowrocket-strategy-unapplied', severity: 'error',
       message: `Shadowrocket 完整输出尚未证实 ${group.type} 策略组的写法：${group.name}` });
   }

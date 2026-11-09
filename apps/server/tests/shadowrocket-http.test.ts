@@ -355,13 +355,46 @@ test('ordinary Shadowrocket strategies retain ordered members, probes, local and
   assert.deepEqual(decoded(await provider.text()).split('\n'), ['trojan://a@strategy.a.example:443#Strategy%20A', 'trojan://b@strategy.b.example:443#Strategy%20B']);
 });
 
-test('Shadowrocket does not invent a managed strategy syntax beyond its existing complete-output surface', async () => {
-  const source = await addSource('/rocket-unsupported-strategy', [], 'strategy.unproven.example');
-  const group = (await api('/groups', 'POST', { name: 'Unproven load balancing', type: 'load-balance', proxies: [`node:${source.nodes[0].id}`] })).data;
-  const profile = await profileFor([source], template, { selectedGroupIds: [group.id] });
+test('Shadowrocket load balancing preserves members, probes and explicit strategy and lazy options through reload', async () => {
+  bodies.set('/rocket-load-balance', yaml.dump({ proxies: [
+    { name: 'Balance A', type: 'trojan', server: 'balance.a.example', port: 443, password: 'a' },
+    { name: 'Balance B', type: 'trojan', server: 'balance.b.example', port: 443, password: 'b' },
+  ] }));
+  const addedSource = await api('/sources', 'POST', { name: 'Rocket load balance', url: upstreamOrigin + '/rocket-load-balance' });
+  assert.equal(addedSource.success, true, addedSource.message);
+  const source = addedSource.data;
+  const cases = [
+    { name: 'AUTO_HK', strategy: 'consistent-hashing', lazy: true },
+    { name: 'Round Robin Rocket', strategy: 'round-robin', lazy: false },
+    { name: 'Sticky Rocket', strategy: 'sticky-sessions' },
+    { name: 'Default Balance Rocket' },
+  ];
+  const groups: any[] = [];
+  for (const options of cases) {
+    const added = await api('/groups', 'POST', { ...options, type: 'load-balance',
+      proxies: [`node:${source.nodes[1].id}`, `node:${source.nodes[0].id}`],
+      url: 'https://probe.balance.example/check', interval: 71 });
+    assert.equal(added.success, true, added.message);
+    groups.push(added.data);
+  }
+  const defaults = await api('/groups', 'POST', { name: 'Default Probe Rocket', type: 'load-balance', sources: [source.id] });
+  assert.equal(defaults.success, true, defaults.message);
+  groups.push(defaults.data);
+  const profile = await profileFor([source], template, { selectedGroupIds: groups.map(group => group.id) });
   const complete = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'shadowrocket' });
-  assert.equal(complete.status, 422);
-  assert.ok(complete.generation.diagnostics.some((diagnostic: any) => diagnostic.code === 'shadowrocket-strategy-unapplied'));
+  assert.equal(complete.status, 200, complete.message);
+  assert.deepEqual(complete.generation.diagnostics, []);
+  const lines = complete.data.split('\n');
+  assert.ok(lines.includes('AUTO_HK = load-balance, Balance B, Balance A, url=https://probe.balance.example/check, interval=71, strategy=consistent-hashing, lazy=true'));
+  assert.ok(lines.includes('Round Robin Rocket = load-balance, Balance B, Balance A, url=https://probe.balance.example/check, interval=71, strategy=round-robin, lazy=false'));
+  assert.ok(lines.includes('Sticky Rocket = load-balance, Balance B, Balance A, url=https://probe.balance.example/check, interval=71, strategy=sticky-sessions'));
+  assert.ok(lines.includes('Default Balance Rocket = load-balance, Balance B, Balance A, url=https://probe.balance.example/check, interval=71'));
+  assert.ok(lines.includes('Default Probe Rocket = load-balance, Balance A, Balance B, url=http://cp.cloudflare.com/generate_204, interval=300'));
+  const download = await fetch(`${origin}/s/${profile.token}/shadowrocket`);
+  assert.equal(download.status, 200); assert.equal(await download.text(), complete.data);
+  await stopApp(); await startApp();
+  assert.equal(await fetch(`${origin}/s/${profile.token}/rocket`).then(response => response.text()), complete.data);
   const pure = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'shadowrocket', format: 'b64' });
   assert.equal(pure.success, true, pure.message); assert.deepEqual(pure.generation.diagnostics, []);
+  assert.deepEqual(decoded(pure.data).split('\n'), ['trojan://a@balance.a.example:443#Balance%20A', 'trojan://b@balance.b.example:443#Balance%20B']);
 });

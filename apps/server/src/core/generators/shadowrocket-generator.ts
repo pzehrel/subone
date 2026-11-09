@@ -336,9 +336,11 @@ export function injectUnifiedToShadowrocket(
     }
     if (!members.length && !group.proxies?.length && !mounts?.length && !group.filter && !group.includeAll) members.push('DIRECT');
     const type = group.type === 'urltest' ? 'url-test' : group.type;
-    const probe = ['url-test', 'fallback'].includes(type)
+    const probe = ['url-test', 'fallback', 'load-balance'].includes(type)
       ? `, url=${group.url || 'http://cp.cloudflare.com/generate_204'}, interval=${group.interval || 300}${type === 'url-test' ? `, tolerance=${group.tolerance || 50}` : ''}` : '';
-    return `${group.name} = ${type}${members.length ? ', ' + members.join(', ') : ''}${probe}`;
+    const balanceOptions = type === 'load-balance'
+      ? `${group.strategy ? `, strategy=${group.strategy}` : ''}${group.lazy !== undefined ? `, lazy=${group.lazy}` : ''}` : '';
+    return `${group.name} = ${type}${members.length ? ', ' + members.join(', ') : ''}${probe}${balanceOptions}`;
   });
   const active = rulesList.filter(rule => rule.enabled);
   const ruleLines: string[] = [];
