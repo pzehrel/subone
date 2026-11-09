@@ -53,6 +53,8 @@ Mihomo 的 `include-all`、`include-all-proxies` 与额外依赖节点组合时�
 
 实际使用的必要出站或引导缺失、失效或成环时，受影响输出要求修复。检查覆盖仍可选的全部成员路径，不自动换出口、删成员或添加公共 DNS。Relay、协议、传输、原生策略和远程规则仍受各目标能力限制，不承诺所有客户端相同。
 
+Shadowrocket 完整输出支持 `load-balance` 分组，包含成员、测试 URL 和周期；显式设置的 `strategy`、`lazy` 也会写入，`lazy=false` 会保留。这两个选项是否生效及客户端如何处理未知字段尚未实机验证。
+
 ## 验证记录
 
 | 验证层 | 已有证据及限制 |
@@ -66,6 +68,8 @@ Mihomo 的 `include-all`、`include-all-proxies` 与额外依赖节点组合时�
 | 六目标首次下载 | 2026-11-08 真实订阅的六种默认输出均直接包含 169 个节点，没有自动生成的远程节点资源或上游分组。新增 HTTP 交叉回归验证所选节点、禁用及排除节点、策略组和默认预览一致性；该检查无需客户端再次获取节点资源。Loon、Egern、Shadowrocket 仅完成输出及格式检查，尚未进行实机导入。 |
 
 2026-11-08 跨客户端修复的 `pnpm check` 与 `pnpm build` 通过；服务端 301 项、前端 3 项测试全部通过，零跳过。已启用 Mihomo 1.19.33 与 sing-box 1.14.4 的原生校验及隔离短时启动；真实订阅的两份 169 节点配置另分别通过原生配置检查。此前 Quantumult X 单项修复阶段为服务端 287 项、前端 3 项通过，4 项可选原生核心校验未启用。
+
+2026-11-09 Shadowrocket 负载均衡输出调整后，`pnpm check` 与 `pnpm build` 通过；服务端 295 项、前端 3 项测试通过，6 项可选原生核心检查未启用。Shadowrocket 的 13 项 HTTP 测试全部通过，覆盖负载均衡成员、测试参数、显式 `strategy`、`lazy=true/false`、完整下载及重启后的输出；尚未在真实 Shadowrocket 客户端导入。
 
 2026-11-07 已执行 `pnpm typecheck`、`pnpm lint`、`pnpm test` 与 `pnpm build`；类型检查、测试和构建通过，lint 保留已有告警。该次原生测试通过 `SUBONE_SINGBOX_BINARY` 和 `SUBONE_TEST_MIHOMO` 指定可用核心，两项检查均已启用。
 
