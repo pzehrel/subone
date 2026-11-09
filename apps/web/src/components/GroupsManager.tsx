@@ -203,7 +203,7 @@ export function GroupsManager({ groups, sources = [], nodes = [], sourceIcons, o
     <Popconfirm title="删除策略组？" description={group.name} confirmText="删除" danger onConfirm={() => onDeleteGroup(group.id)}><button className="ui-icon-button-danger p-1.5 rounded-lg" title="删除" aria-label={`删除 ${group.name}`}><Trash2 size={14} /></button></Popconfirm>
   </div>;
 
-  return <div className="space-y-5">
+  return <div className="max-w-6xl mx-auto space-y-5 pb-16">
     <section className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 p-4 ${panel}`}>
       <div className="flex items-center gap-2"><GroupsIcon className="w-5 h-5 text-ui-accent" /><h1 className="text-base font-bold">策略组</h1><Badge tone="accent" className="font-mono border">{groups.length} 个策略组</Badge></div>
       <div className="flex items-center gap-2"><button className="ui-button-secondary" onClick={openYaml}><Code size={14} />YAML 编辑</button><button className="ui-button-primary" onClick={() => openEditor()}><Plus size={14} />新建策略组</button></div>
