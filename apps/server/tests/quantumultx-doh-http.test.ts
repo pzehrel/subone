@@ -104,6 +104,41 @@ test('QuanX downloads keep a single-node consistent hash policy as an exact tag 
   assert.equal(saved.strategy, 'consistent-hashing');
 });
 
+test('VMess TCP TLS uses native obfs fields in full downloads and both node resource endpoints', async () => {
+  const uuid = '11111111-1111-4111-8111-111111111111';
+  const source = await add('/qx-vmess-tls', [], { proxies: [
+    { name: 'VMess TLS', type: 'vmess', server: 'vmess-tls.example', port: 21581, uuid, cipher: 'auto', tls: true },
+    { name: 'VMess SNI', type: 'vmess', server: 'vmess-sni.example', port: 443, uuid, cipher: 'auto', tls: true, servername: 'sni.example', 'skip-cert-verify': true },
+  ] });
+  const { profile } = await profileFor([source]);
+  const assertTls = (content: string) => {
+    const nodes = content.split('\n').filter(line => line.startsWith('vmess='));
+    assert.equal(nodes.length, 2);
+    assert.match(nodes[0], /^vmess=vmess-tls\.example:21581, method=none,.*obfs=over-tls, tls-verification=true,.*tag=VMess TLS$/);
+    assert.match(nodes[1], /^vmess=vmess-sni\.example:443, method=none,.*obfs=over-tls, obfs-host=sni\.example, tls-verification=false,.*tag=VMess SNI$/);
+    for (const line of nodes) assert.doesNotMatch(line, /(?:^|, )(?:tls|tls-host)=/);
+  };
+
+  for (const expandNodes of [true, false]) {
+    const result = await preview(profile, expandNodes);
+    assert.equal(result.success, true, JSON.stringify(result));
+    const download = await fetch(`${origin}/s/${profile.token}/qx?expand=${expandNodes}`);
+    assert.equal(download.status, 200);
+    assert.equal(await download.text(), result.data);
+    if (expandNodes) {
+      assertTls(result.data);
+      const defaultDownload = await fetch(`${origin}/s/${profile.token}/qx`);
+      assert.equal(defaultDownload.status, 200);
+      assert.equal(await defaultDownload.text(), result.data);
+    }
+  }
+  for (const path of ['nodes/qx', `source/${source.id}?target=quantumultx`]) {
+    const resource = await fetch(`${origin}/s/${profile.token}/${path}`);
+    assert.equal(resource.status, 200);
+    assertTls(await resource.text());
+  }
+});
+
 test('scoped DNS takeover preserves other entries and SSID options regardless of their position on the line', async () => {
   const source = await add('/qx-scoped-takeover', ['https://192.0.2.10/dns-query']);
   const owned = `/${source.nodes[0].server}/https://192.0.2.20/dns-query`;
