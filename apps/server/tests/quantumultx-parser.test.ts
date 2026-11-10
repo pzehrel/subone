@@ -121,6 +121,8 @@ test('QuanX preserves VMess, VLESS and Trojan transports, TLS, Reality and ALPN'
   const legacy = one(`vmess=vmess.example.test:443, password=${uuid}, method=none, tls=true, tls-host=tls.example.test`);
   assert.equal(legacy.tls, true);
   assert.equal(legacy.sni, 'tls.example.test');
+  assert.match(nodeToQuantumultXProxy(legacy), /, obfs=over-tls, obfs-host=tls\.example\.test,/);
+  assert.doesNotMatch(nodeToQuantumultXProxy(legacy), /(?:^|, )(?:tls|tls-host)=/);
 });
 
 test('QuanX SSR credentials survive normalization and Mihomo output', () => {

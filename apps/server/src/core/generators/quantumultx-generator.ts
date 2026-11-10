@@ -118,8 +118,8 @@ export function nodeToQuantumultXProxy(node: ProxyNode): string {
       if (host) line += `, obfs=${obfsType}, obfs-host=${host}, obfs-uri=${node.wsPath || '/'}`;
       else line += `, obfs=${obfsType}, obfs-uri=${node.wsPath || '/'}`;
     } else if (node.tls) {
-      line += `, tls=true`;
-      if (node.sni) line += `, tls-host=${node.sni}`;
+      line += `, obfs=over-tls`;
+      if (node.sni) line += `, obfs-host=${node.sni}`;
       const verify = node.skipCertVerify ? 'false' : 'true';
       line += `, tls-verification=${verify}`;
     }

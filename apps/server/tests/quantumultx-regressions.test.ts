@@ -4,10 +4,28 @@ import { UnsupportedProxyGroupError } from '../src/core/generators/errors';
 import {
   generateQuantumultXConfig,
   injectUnifiedToQuantumultX,
+  nodeToQuantumultXProxy,
 } from '../src/core/generators/quantumultx-generator';
 import type { ProxyGroupItem, ProxyNode, SubscriptionSource, UnifiedRuleItem } from '../src/types/index';
 
 const template = '[server_local]\n\n[policy]\n\n[filter_remote]\n\n[filter_local]\n';
+
+test('VMess TCP TLS uses Quantumult X obfs fields instead of tls=true', () => {
+  const node: ProxyNode = {
+    id: 'vmess-tls', name: 'VMess TLS', type: 'vmess',
+    server: 'vmess.node.invalid', port: 21581,
+    uuid: '11111111-1111-4111-8111-111111111111', cipher: 'auto', tls: true,
+  };
+  for (const options of [{}, { sni: 'tls.node.invalid' }, { sni: 'tls.node.invalid', skipCertVerify: true }]) {
+    const output = nodeToQuantumultXProxy({ ...node, ...options });
+
+    assert.match(output, /, obfs=over-tls(?:,|$)/);
+    assert.ok(output.includes(`, tls-verification=${!options.skipCertVerify}`));
+    assert.doesNotMatch(output, /(?:^|, )(?:tls|tls-host)=/);
+    if (options.sni) assert.ok(output.includes(`, obfs-host=${options.sni},`));
+    else assert.doesNotMatch(output, /, obfs-host=/);
+  }
+});
 
 test('Quantumult X dest-hash selects a single candidate through the documented tag regex syntax', () => {
   const node: ProxyNode = {
