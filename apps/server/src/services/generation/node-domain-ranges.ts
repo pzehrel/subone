@@ -1,7 +1,7 @@
 import { isIP } from 'node:net';
 import { domainToASCII } from 'node:url';
 import { getPublicSuffix } from 'tldts';
-import { extractQuanxDomainAliases } from '../../core/parser/source-doh';
+import { sourceDomainAliases } from '../../core/parser/source-doh';
 import type { SourceDohService, SubscriptionSource } from '../../types';
 import { GenerationError, generationMetadata, type GenerationDiagnostic, type GenerationPlan } from './types';
 
@@ -52,9 +52,7 @@ export function dohServiceKey({ source, service }: DomainDohService): string {
 
 function sourceAliases(source: SubscriptionSource): Map<string, string> {
   const aliases = new Map<string, string>();
-  if (source.doh?.format !== 'quantumultx') return aliases;
-  const values = source.doh.domainAliases ?? (source.rawSubscription?.parseStatus === 'success' ? extractQuanxDomainAliases(source.rawSubscription) : {});
-  for (const [from, to] of Object.entries(values)) {
+  for (const [from, to] of Object.entries(sourceDomainAliases(source))) {
     const a = normalizeNodeDomain(from), b = normalizeNodeDomain(to);
     if (a && b) aliases.set(a, b);
   }
