@@ -407,13 +407,14 @@ export function injectUnifiedToQuantumultX(
   const policyWithMembers = (type: string, group: ProxyGroupItem, members: string[]) => {
     if (type !== 'dest-hash') return `${type}=${group.name}${members.length ? ', ' + members.join(', ') : ''}`;
     members = members.map(member => nodeOutputNames.get(member) || member);
-    // Use the official dest-hash server-tag-regex form for concrete candidates.
-    // Anchor escaped output tags so source filtering and dependency isolation remain exact.
+    // Keep known candidates as server references, including local and dependency nodes.
     if (!members.length || members.some(member => !hashNodeNames.has(member))) {
       throw new Error(`Quantumult X 目标哈希策略组「${group.name}」需要可用节点，不能使用直连、拒绝或其他策略组。`);
     }
-    const pattern = [...new Set(members)].map(member => member.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-    return `dest-hash=${group.name}, server-tag-regex=^(?:${pattern})$`;
+    members = [...new Set(members)];
+    // With one candidate, static selection preserves the sole egress without a hash policy.
+    const effectiveType = members.length === 1 ? 'static' : 'dest-hash';
+    return `${effectiveType}=${group.name}, ${members.join(', ')}`;
   };
   const addGroupLine = (line: string, grp: ProxyGroupItem) => {
     if (line.includes('img-url=')) {
