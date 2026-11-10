@@ -9,6 +9,76 @@ import type { ProxyGroupItem, ProxyNode, SubscriptionSource, UnifiedRuleItem } f
 
 const template = '[server_local]\n\n[policy]\n\n[filter_remote]\n\n[filter_local]\n';
 
+test('Quantumult X dest-hash selects a single candidate through the documented tag regex syntax', () => {
+  const node: ProxyNode = {
+    id: 'tw', name: '🇨🇳 台湾W01 | IEPL | x2', type: 'ss',
+    server: 'tw.invalid', port: 443, sourceId: 'upstream',
+    method: 'aes-128-gcm', password: 'fixture-password',
+  };
+  const group: ProxyGroupItem = {
+    id: 'tw', name: 'AUTO_TW', type: 'load-balance', strategy: 'consistent-hashing',
+    sources: ['upstream'], filter: '台湾',
+  };
+  const source: SubscriptionSource = {
+    id: 'upstream', name: 'Upstream', type: 'remote', enabled: true, url: 'https://upstream.invalid/sub',
+  };
+  const output = generateQuantumultXConfig(template, [node], [group], [], [source], { expandNodes: true });
+  const policy = output.split('\n').find(line => line.startsWith('dest-hash=AUTO_TW,'));
+
+  assert.ok(policy);
+  assert.match(policy, /^dest-hash=AUTO_TW, server-tag-regex=/);
+  const pattern = policy.split('server-tag-regex=')[1].split(', ')[0];
+  assert.ok(new RegExp(pattern).test(node.name));
+  assert.ok(!new RegExp(pattern).test('🇨🇳 台湾W02 | IEPL | x2'));
+});
+
+test('dest-hash keeps exact escaped candidates across source, filter, explicit and dependency groups', () => {
+  const nodes: ProxyNode[] = [
+    { id: 'one', name: 'TW [01].+ (IEPL) | x2 $^?*\\', type: 'socks5', server: 'one.invalid', port: 1080, sourceId: 'selected' },
+    { id: 'two', name: 'TW=02,IEPL', type: 'socks5', server: 'two.invalid', port: 1080, sourceId: 'selected' },
+    { id: 'other', name: 'TW Other', type: 'socks5', server: 'other.invalid', port: 1080, sourceId: 'other' },
+    { id: 'unsupported', name: 'TW Unsupported', type: 'hysteria2', server: 'hy2.invalid', port: 443, sourceId: 'selected' },
+  ];
+  const sources: SubscriptionSource[] = [
+    { id: 'selected', name: 'Selected', type: 'manual', enabled: true },
+    { id: 'other', name: 'Other', type: 'manual', enabled: true },
+  ];
+  const expected = nodes.slice(0, 2).map(node => node.name.replace(/[=,]/g, '_'));
+  const selections: Partial<ProxyGroupItem>[] = [
+    { sources: ['selected'], filter: '^TW' },
+    { filter: '^TW(?: \\[|=)' },
+    { proxies: expected },
+  ];
+  for (const selection of selections) {
+    for (const dependency of [false, true]) {
+      const group: ProxyGroupItem = { id: 'hash', name: 'Hash', type: 'load-balance', strategy: 'consistent-hashing', ...selection };
+      if (dependency) group.proxies = expected;
+      const output = generateQuantumultXConfig(template, nodes, [group], [], sources, {
+        expandNodes: true,
+        dependencyGroupIds: dependency ? new Set(['hash']) : undefined,
+        ordinaryNodeIds: dependency ? new Set(['other', 'unsupported']) : undefined,
+      });
+      const policy = output.split('\n').find(line => line.startsWith('dest-hash=Hash,'));
+      assert.ok(policy, JSON.stringify({ selection, dependency }));
+      const pattern = new RegExp(policy.split('server-tag-regex=')[1].split(', ')[0]);
+      for (const name of expected) assert.ok(pattern.test(name), name);
+      for (const name of ['TW Other', 'TW Unsupported', 'TW 01ZZ IEPL | x2', expected[0] + 'suffix', 'prefix' + expected[1]]) {
+        assert.ok(!pattern.test(name), name);
+      }
+    }
+  }
+});
+
+test('dest-hash does not silently turn builtins or child policies into server-tag matches', () => {
+  for (const member of ['DIRECT', 'REJECT', 'Child', 'Native']) {
+    const groups: ProxyGroupItem[] = [
+      { id: 'hash', name: 'Hash', type: 'load-balance', strategy: 'consistent-hashing', sources: ['source'], proxies: [member] },
+      { id: 'child', name: 'Child', type: 'select', proxies: ['DIRECT'] },
+    ];
+    assert.throws(() => generateQuantumultXConfig(template.replace('[policy]', '[policy]\nstatic=Native, direct'), [], groups, [], [], { expandNodes: true }), /目标哈希策略组「Hash」需要可用节点/);
+  }
+});
+
 test('one downstream resource keeps source-specific candidate selection without exporting source names', () => {
   const nodes: ProxyNode[] = [
     { id: 'a', name: 'HK One', type: 'ss', server: 'a.invalid', port: 443, sourceId: 'source-a' },

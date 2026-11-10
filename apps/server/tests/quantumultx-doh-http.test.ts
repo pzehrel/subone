@@ -70,6 +70,40 @@ test('default Quantumult X downloads contain the selected nodes without fetching
   }
 });
 
+test('QuanX downloads keep a single-node consistent hash policy as an exact tag selector', async () => {
+  const source = await add('/qx-hash-single', [], { proxies: [
+    { name: '🇨🇳 台湾W01 | IEPL | x2', type: 'ss', server: 'tw.hash.example', port: 443, cipher: 'aes-128-gcm', password: 'fixture-password' },
+    { name: 'HK Other', type: 'socks5', server: 'hk.hash.example', port: 1080 },
+  ] });
+  const other = await add('/qx-hash-other', [], { proxies: [
+    { name: '🇨🇳 台湾W02 | IEPL | x2', type: 'socks5', server: 'other.hash.example', port: 1080 },
+  ] });
+  const added = await api('/groups', 'POST', {
+    name: 'AUTO_TW', type: 'load-balance', strategy: 'consistent-hashing',
+    sources: [source.id], filter: '台湾',
+  });
+  assert.equal(added.success, true, JSON.stringify(added));
+  const { profile } = await profileFor([source, other], template, undefined, [added.data]);
+
+  for (const expandNodes of [true, false]) {
+    const result = await preview(profile, expandNodes);
+    assert.equal(result.success, true, JSON.stringify(result));
+    const policy = result.data.split('\n').find((line: string) => line.startsWith('dest-hash=AUTO_TW,'));
+    assert.ok(policy);
+    assert.match(policy, /^dest-hash=AUTO_TW, server-tag-regex=/);
+    const pattern = new RegExp(policy.split('server-tag-regex=')[1].split(', ')[0]);
+    assert.ok(pattern.test(source.nodes[0].name));
+    assert.ok(!pattern.test(other.nodes[0].name));
+    assert.ok(!pattern.test('HK Other'));
+    const response = await fetch(`${origin}/s/${profile.token}/qx?expand=${expandNodes}`);
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), result.data);
+  }
+  const saved = (await api('/groups')).data.find((group: any) => group.id === added.data.id);
+  assert.equal(saved.type, 'load-balance');
+  assert.equal(saved.strategy, 'consistent-hashing');
+});
+
 test('scoped DNS takeover preserves other entries and SSID options regardless of their position on the line', async () => {
   const source = await add('/qx-scoped-takeover', ['https://192.0.2.10/dns-query']);
   const owned = `/${source.nodes[0].server}/https://192.0.2.20/dns-query`;
