@@ -442,3 +442,37 @@ for (const count of [1, 200]) {
     assert.ok(!doc.outbounds.some((entry: any) => entry.server === '198.51.100.1'));
   });
 }
+
+for (const separateMounts of [false, true]) {
+  test(`jointly necessary groups find a shared valid numbering across ${separateMounts ? 'distinct' : 'identical'} source mounts`, async () => {
+    const node = (label: string, octet: number, extra = {}) => ({ type: 'socks', tag: '大阪 ' + label, server: '198.51.100.' + octet, server_port: 1080, ...extra });
+    const suffix = separateMounts ? 'separate' : 'shared';
+    // In separate mounts the saved predecessor source still sorts before the A source.
+    const hop = node('P', 4), a = node('A', 5), b = node('B', 6, { detour: '大阪 P' });
+    const first = await addSource('/coupled-1-' + suffix, { outbounds: separateMounts ? [hop, b] : [hop, a, b] });
+    const second = separateMounts ? await addSource('/coupled-2-' + suffix, { outbounds: [a] }) : first;
+    for (const source of new Set([first, second])) {
+      await api('/sources/' + source.id, 'PUT', { extractRegex: '(?<label>[PAB])$', nameTemplate: '{label}{region_index}' });
+    }
+    const group = async (name: string, fields: object) => (await api('/groups', 'POST', { name: name + '-' + suffix, type: 'select', ...fields })).data;
+    // P,B,A in separate sources. P,A,B when one source owns all three.
+    const aName = separateMounts ? 'A03' : 'A02';
+    const bName = separateMounts ? 'B02' : 'B03';
+    const left = await group('Coupled A', { sources: [second.id], filter: '^' + aName + '$' });
+    const right = await group('Coupled B', { sources: [first.id], filter: '^' + bName + '$' });
+    const parent = await group('Coupled parent', { proxies: ['group:' + left.id, 'group:' + right.id] });
+    const main = await addSource('/coupled-main-' + suffix, {
+      outbounds: [{ type: 'socks', tag: 'Main', server: 'coupled.completion.example', server_port: 1080 }],
+      dns: { servers: [{ type: 'https', server: 'dns.coupled.completion.example' }] },
+    });
+    const content = structuredClone(template);
+    (content.dns.servers[0] as any).detour = parent.name;
+    const result = await preview(await profileFor(main.nodes, content));
+    assert.equal(result.status, 200, JSON.stringify(result));
+    const doc = JSON.parse(result.data);
+    assert.deepEqual(doc.outbounds.find((entry: any) => entry.tag === left.name).outbounds, [aName]);
+    assert.deepEqual(doc.outbounds.find((entry: any) => entry.tag === right.name).outbounds, [bName]);
+    assert.equal(doc.outbounds.find((entry: any) => entry.tag === bName).detour, 'P01');
+    assert.equal(result.generation.dependencyNodeCount, 3);
+  });
+}

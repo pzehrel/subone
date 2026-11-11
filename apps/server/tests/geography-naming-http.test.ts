@@ -227,3 +227,13 @@ test('the legacy Taiwan flag prefix keeps an explicit Taiwan place in the TW cou
   const source = await addSource('Legacy flag', [proxy('🇨🇳 台湾W01', 241), proxy('🇨🇳 台北', 242), proxy('🇨🇳 大阪', 243)]);
   assert.deepEqual(await names(await profileFor([source], { countryCodes: ['TW'] })), ['台湾|TW|🇹🇼|01', '台北|TW|🇹🇼|01']);
 });
+
+test('single-character place abbreviations distinguish standalone labels from words on management and downstream filters', async () => {
+  const labels = ['日本东京 加速专线', '加速专线', '国际快线 加密', '港口专线', '加01', '港02', '加', '港', '加拿大 Toronto', '香港-日本'];
+  const source = await addSource('Abbreviations', labels.map((name, index) => proxy(name, 80 + index)), { nameTemplate: '{region} {region_index}' });
+  assert.deepEqual(source.nodes.map((node: any) => node.countryCode), ['JP', undefined, undefined, undefined, 'CA', 'HK', 'CA', 'HK', 'CA', undefined]);
+  const all = await profileFor([source]);
+  assert.deepEqual(await names(all), ['东京 01', '加速专线', '国际快线 加密', '港口专线', '加拿大 01', '香港 01', '加拿大 02', '香港 02', '多伦多 01', '香港-日本']);
+  await api('/profiles/' + all.id, 'PUT', { nodeFilter: { mode: 'all', sourceIds: [source.id], countryCodes: ['CA', 'JP'] } });
+  assert.deepEqual(await names(all), ['东京 01', '加拿大 01', '加拿大 02', '多伦多 01']);
+});

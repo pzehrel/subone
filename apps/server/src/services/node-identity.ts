@@ -80,7 +80,7 @@ export function prepareSourceNodes(candidate: SubscriptionSource, previous?: Sub
     node.id = matched?.id || `node-${randomUUID()}`;
     node.localName = matched?.localName;
     node.enabled = matched?.enabled !== false;
-    if (node.localName) Object.assign(node, nodeInputFields(node, countryRules));
+    Object.assign(node, nodeInputFields(node, countryRules));
     node.sourceId = candidate.id;
     node.sourceName = candidate.name;
   }

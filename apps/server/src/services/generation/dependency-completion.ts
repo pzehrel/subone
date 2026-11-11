@@ -65,12 +65,12 @@ export function completeOutputDependencies(plan: GenerationPlan, supportsNode: (
   plan.dynamicNodeIds = new Map();
   while (true) {
     const necessaryGroups = complete(plan);
-    const project = (groupId: string, ids: string[]) => {
-      const trial = { ...plan, dynamicNodeIds: new Map(plan.dynamicNodeIds).set(groupId, ids) };
+    const project = (members: Map<string, string[]>) => {
+      const trial = { ...plan, dynamicNodeIds: members };
       complete(trial);
       return allocate([...trial.ordinaryNodes, ...trial.dependencyNodes], trial.groups).nodes;
     };
-    const { next, searchLimited } = connectionGroupMembers(plan, necessaryGroups, allocate, project);
+    const { next, searchLimited } = connectionGroupMembers(plan, necessaryGroups, project);
     const key = membershipKey(next);
     if (key === membershipKey(plan.dynamicNodeIds)) {
       if (!searchLimited.size) return necessaryGroups;

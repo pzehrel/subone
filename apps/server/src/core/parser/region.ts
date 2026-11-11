@@ -34,8 +34,10 @@ country('哥斯达黎加', 'CR', '🇨🇷', ['哥斯達黎加', 'costa rica'], 
 
 const aliases = places.flatMap(place => place.aliases.map(alias => {
   const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s*');
-  const latin = /^[a-z ]+$/i.test(alias);
-  return { place, pattern: new RegExp(latin ? `(?<![a-z])${escaped}(?![a-z])` : escaped, 'gi') };
+  let expression = escaped;
+  if (/^[a-z ]+$/i.test(alias)) expression = `(?<![a-z])${escaped}(?![a-z])`;
+  if (/^\p{Script=Han}$/u.test(alias)) expression = `(?<!\\p{Script=Han})${escaped}(?!\\p{Script=Han})`;
+  return { place, pattern: new RegExp(expression, 'giu') };
 }));
 
 export function detectRegion(input: string): RegionInfo | undefined {

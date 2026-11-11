@@ -12,12 +12,12 @@ function dependencyPriority(node: ProxyNode): number {
 
 /** Bound possible names before trying combinations. A possible match is only a candidate:
  * completion and the real allocator still have to establish that all members match together. */
-function possibleMembers(plan: GenerationPlan, omitted: ProxyNode[], actualIds: Set<string>, filter: string) {
+export function possibleMembers(plan: GenerationPlan, omitted: ProxyNode[], actualIds: Set<string>, filter: string, sharedOrdinals: boolean) {
   const pattern = groupNamePattern(filter);
   const candidates = new Set(omitted.map(node => node.id));
   // Direct IP exits introduce neither a node-server lookup nor another hop.
   // Otherwise allow the entire enabled inventory as potential support for the ordinal.
-  const mayIntroduceHops = omitted.some(node => dependencyPriority(node) > 0);
+  const mayIntroduceHops = sharedOrdinals || omitted.some(node => dependencyPriority(node) > 0);
   const counts = new Map<string, number>();
   const result: string[] = [];
   const baseMatches = new Map<string, boolean>();
@@ -69,26 +69,22 @@ function possibleMembers(plan: GenerationPlan, omitted: ProxyNode[], actualIds: 
 
 /** Verify plausible memberships with their real dependencies and target names.
  * Undefined signals that the bounded combination search has not proved emptiness. */
-export function findJointMembers(plan: GenerationPlan, filter: string, omitted: ProxyNode[], actualIds: Set<string>, trial: (ids: string[]) => Set<string>) {
-  const candidates = possibleMembers(plan, omitted, actualIds, filter);
-  if (!candidates.length) return [];
-  const possible = new Set(candidates);
-  const byDependency = omitted.filter(node => possible.has(node.id)).sort((a, b) => dependencyPriority(b) - dependencyPriority(a));
+export function searchMemberSets<T>(candidates: ProxyNode[], trial: (ids: string[]) => { matched: Set<string>; solution?: T }): T | undefined | null {
+  if (!candidates.length) return null;
+  const byDependency = [...candidates].sort((a, b) => dependencyPriority(b) - dependencyPriority(a));
   const ordered = byDependency.map(node => node.id);
-  const batch = trial(candidates);
-  const proposed = candidates.filter(id => batch.has(id));
-  if (proposed.length === candidates.length) return proposed;
-  if (proposed.length) {
-    const verified = trial(proposed);
-    if (proposed.every(id => verified.has(id))) return proposed;
+  const batch = trial(ordered);
+  if (batch.solution !== undefined) return batch.solution;
+  const proposed = ordered.filter(id => batch.matched.has(id));
+  if (proposed.length && proposed.length < ordered.length) {
+    const narrowed = trial(proposed);
+    if (narrowed.solution !== undefined) return narrowed.solution;
     // A rejected exit may supply the very hop that makes the first matches valid.
-    // Try these supports before combinations of interchangeable terminal nodes.
     for (const node of byDependency) {
       if (!dependencyPriority(node)) break;
-      if (batch.has(node.id)) continue;
-      const withHop = [...proposed, node.id];
-      const matches = trial(withHop);
-      if (withHop.every(id => matches.has(id))) return withHop;
+      if (batch.matched.has(node.id)) continue;
+      const withHop = trial([...proposed, node.id]);
+      if (withHop.solution !== undefined) return withHop.solution;
     }
   }
   let remaining = candidates.length + 256;
@@ -97,8 +93,8 @@ export function findJointMembers(plan: GenerationPlan, filter: string, omitted: 
     while (true) {
       if (remaining-- <= 0) return undefined;
       const ids = indices.map(index => ordered[index]);
-      const matches = trial(ids);
-      if (ids.every(id => matches.has(id))) return ids;
+      const { solution } = trial(ids);
+      if (solution !== undefined) return solution;
       let position = size - 1;
       while (position >= 0 && indices[position] === candidates.length - size + position) position--;
       if (position < 0) break;
@@ -106,5 +102,5 @@ export function findJointMembers(plan: GenerationPlan, filter: string, omitted: 
       for (let next = position + 1; next < size; next++) indices[next] = indices[next - 1] + 1;
     }
   }
-  return [];
+  return null;
 }

@@ -133,7 +133,7 @@ apiRouter.post('/sources', async (c) => {
     try {
       source.nodes = manual ? receiveSourceContent(source, content!, appConfig.countryRules) : await fetchAndParseSource(source, appConfig.countryRules);
     } catch (error: any) { return c.json({ success: false, message: error.message || '上游更新失败' }, 422); }
-    prepareSourceNodes(source);
+    prepareSourceNodes(source, undefined, appConfig.countryRules);
     bindSourceDoh(source);
     source.nodeCount = source.nodes.length;
     const candidate = structuredClone(appConfig);

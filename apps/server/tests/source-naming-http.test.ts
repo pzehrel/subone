@@ -183,3 +183,33 @@ test('refresh preserves a naming pair and local settings saved while awaiting th
   assert.deepEqual([current.nodes[0].id, current.nodes[0].name, current.nodes[0].sourceName, current.nodes[0].originalName], [first.id, 'Tokyo local', 'Renamed', 'New Osaka']);
   assert.equal((await api('/sources/' + id + '/raw')).data.content, body);
 });
+
+for (const operation of ['create', 'refresh']) {
+  test(`remote source ${operation} returns the country rules in effect when its result commits`, async () => {
+    const rule = (await api('/country-rules', 'POST', { code: 'IS', name: '冰岛', emoji: '🇮🇸', pattern: 'Reykjavik' })).data;
+    body = valid.replace('name: First', 'name: Reykjavik');
+    const add = () => api('/sources', 'POST', { name: 'Current country rules', url: upstreamOrigin });
+    const existing = operation === 'refresh' ? (await add()).data : undefined;
+    if (existing) assert.equal(existing.nodes[0].countryCode, 'IS');
+    const gate = new EventEmitter();
+    const requested = once(gate, 'requested');
+    beforeResponse = async () => { gate.emit('requested'); await once(gate, 'release'); };
+    const pending = existing ? api('/sources/' + existing.id + '/refresh', 'POST') : add();
+    try {
+      await requested;
+      assert.equal((await api('/country-rules/' + rule.id, 'DELETE')).success, true);
+    } finally {
+      beforeResponse = undefined;
+      gate.emit('release');
+    }
+    const received = await pending;
+    assert.equal(received.success, true, received.message);
+    const source = existing ? received.source : received.data;
+    assert.equal(source.nodes[0].countryCode, undefined);
+    assert.equal(source.nodes[0].countryEmoji, undefined);
+    if (existing) assert.equal(source.nodes[0].id, existing.nodes[0].id);
+    const saved = (await api('/sources')).data.find((entry: any) => entry.id === source.id);
+    assert.equal(saved.nodes[0].countryCode, undefined);
+    assert.equal((await api('/sources/' + source.id + '/raw')).data.content, body);
+  });
+}
