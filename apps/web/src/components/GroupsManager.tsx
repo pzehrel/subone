@@ -66,6 +66,8 @@ export function GroupsManager({ groups, sources = [], nodes = [], sourceIcons, o
     return `${node.name} · ${source?.name || node.sourceName || node.sourceId || '未知来源'}`;
   };
   const outbound = (value: string) => {
+    if (value.startsWith('template:')) return { value, label: `${value.slice(9)} · 模板`, available: true, kind: 'template' };
+    if (/^(unresolved|ambiguous):/.test(value)) return { value, label: value.slice(value.indexOf(':') + 1), available: false, kind: 'unavailable' };
     if (value.startsWith('node:')) {
       const node = savedNodes.get(value.slice(5));
       return { value, label: node ? nodeLabel(node) : value, available: !!node && activeIds.has(node.id), kind: 'node' };

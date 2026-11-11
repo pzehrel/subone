@@ -308,7 +308,10 @@ export function collectMihomoRuntimeDependencies(plan: GenerationPlan): RuntimeD
   };
   const ordinaryGroups = new Set(plan.ordinaryGroupIds);
   const templateOutbound = (name: string, owner: string, reason: string[], ordinary = false): void => {
+    const native = name.startsWith('template:');
+    if (native) name = name.slice(9);
     const matches = [...(doc.proxies || []), ...(doc['proxy-groups'] || [])].filter(value => value.name === name);
+    if (native && !matches.length) return;
     if (!matches.length && name.startsWith('node:')) return node(name.slice(5), owner, [...reason, name]);
     if (!matches.length && name.startsWith('group:')) return managed(name.slice(6), owner, reason, ordinary);
     if (!matches.length) {

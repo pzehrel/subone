@@ -82,6 +82,8 @@ export function collectEgernDependencies(plan: GenerationPlan): RuntimeDependenc
     }
   };
   const reference = (name: string, owner: string, reason: string[], ordinary = false) => {
+    const native = name.startsWith('template:');
+    if (native) name = name.slice(9);
     const template = templateDefinitions.find(entry => entry?.name === name);
     if (template) {
       if (!once(`${owner}:template:${name}:${ordinary}`)) return;
@@ -91,6 +93,7 @@ export function collectEgernDependencies(plan: GenerationPlan): RuntimeDependenc
       for (const rule of template.rules || []) { const value = egernEntry(rule); if (value?.policy && !value.disabled) reference(value.policy, owner, [...reason, name], ordinary); }
       return;
     }
+    if (native) return;
     const nodeId = nodeReferenceId(name); const groupId = groupReferenceId(name);
     if (nodeId) return node(nodeId, owner, reason);
     if (groupId) return group(groupId, owner, reason, ordinary);

@@ -158,7 +158,10 @@ function collectSingboxRuntimeDependencies(plan: GenerationPlan): RuntimeDepende
     if (group.type !== 'relay' && (mounts?.length || group.filter || !group.proxies?.length)) for (const candidate of candidates) node(candidate.id, owner, [...reason, group.name]);
   };
   const templateOutbound = (tag: string, owner: string, reason: string[], ordinary = false): void => {
+    const native = tag.startsWith('template:');
+    if (native) tag = tag.slice(9);
     const matches = (template.outbounds || []).filter((value: Document) => value.tag === tag);
+    if (native && !matches.length) return;
     if (!matches.length && tag.startsWith('node:')) return node(tag.slice(5), owner, [...reason, tag]);
     if (!matches.length && tag.startsWith('group:')) return managedGroup(tag.slice(6), owner, reason, ordinary);
     const selectedNode = !matches.length && [...plan.ordinaryNodes, ...plan.dependencyNodes].find(node => node.name === tag);
