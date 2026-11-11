@@ -1,3 +1,4 @@
+import { DEFAULT_NAME_TEMPLATE, validateSourceNaming } from '../../../../shared/source-naming';
 import { readManualInput } from './manual-input';
 import { createGenerationPlan, renderGeneration, GenerationError } from '../services/generation';
 import { Hono, type Handler } from 'hono';
@@ -121,11 +122,12 @@ apiRouter.post('/sources', async (c) => {
     if (!manual && (body.content !== undefined || body.contentFile !== undefined)) return c.json({ success: false, message: '请先选择手动输入' }, 400);
     const url = typeof body.url === 'string' ? body.url.trim() : '';
     if (!manual && !/^https?:\/\//.test(url)) return c.json({ success: false, message: '请填写 HTTP 订阅链接' }, 400);
-    try { validateInfoRegex(body); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
+    try { validateInfoRegex(body); validateSourceNaming(body); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
     const source: SubscriptionSource = {
       id: `src-${crypto.randomUUID()}`, name: cleanSourceOrGroupName((body.name || '新订阅').trim()), url: manual ? undefined : url, acquisition: manual ? 'manual' : 'url',
       enabled: body.enabled !== false, type: body.type || 'auto',
       trafficNodeRegex: body.trafficNodeRegex?.trim(), expiryNodeRegex: body.expiryNodeRegex?.trim(),
+      extractRegex: body.extractRegex ?? '', nameTemplate: body.nameTemplate ?? DEFAULT_NAME_TEMPLATE,
     };
     try {
       source.nodes = manual ? receiveSourceContent(source, content!, appConfig.countryRules) : await fetchAndParseSource(source, appConfig.countryRules);
@@ -150,7 +152,7 @@ apiRouter.put('/sources/:id', async (c) => {
   const body = c.get('body');
   const current = appConfig.sources.find(s => s.id === c.req.param('id'));
   if (!current) return c.json({ success: false, message: 'Source not found' }, 404);
-  try { validateInfoRegex(body); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
+  try { validateInfoRegex(body); validateSourceNaming({ ...current, ...body }); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
   if (body.acquisition !== undefined && !['url', 'manual'].includes(body.acquisition)) return c.json({ success: false, message: '输入方式无效' }, 400);
   const acquisition = body.acquisition ?? current.acquisition ?? 'url';
   const manual = acquisition === 'manual';
@@ -163,6 +165,8 @@ apiRouter.put('/sources/:id', async (c) => {
   if (body.url !== undefined && (typeof body.url !== 'string' || !/^https?:\/\//.test(body.url.trim()))) return c.json({ success: false, message: '请填写 HTTP 订阅链接' }, 400);
   if (switching && !manual && (typeof body.url !== 'string' || !/^https?:\/\//.test(body.url.trim()))) return c.json({ success: false, message: '请填写 HTTP 订阅链接' }, 400);
   const candidate = structuredClone(current);
+  if (body.extractRegex !== undefined) candidate.extractRegex = body.extractRegex;
+  if (body.nameTemplate !== undefined) candidate.nameTemplate = body.nameTemplate;
   candidate.acquisition = acquisition;
   if (manual) candidate.url = undefined;
   if (typeof body.name === 'string' && body.name.trim()) candidate.name = cleanSourceOrGroupName(body.name.trim());

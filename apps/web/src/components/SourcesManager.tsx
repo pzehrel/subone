@@ -1,3 +1,4 @@
+import { DEFAULT_NAME_TEMPLATE, NamingValidationError, validateSourceNaming } from '../../../../shared/source-naming';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { CheckCircle2, Edit2, FileText, Plus, RefreshCw, Trash2, XCircle } from 'lucide-react';
@@ -45,7 +46,7 @@ interface SourcesManagerProps {
   sources: SubscriptionSource[];
   updateSourceId?: string | null;
   onUpdateSourceOpened: () => void;
-  onAddSource: (source: { name: string; url?: string; acquisition?: 'url' | 'manual'; content?: string; contentFile?: { name: string; base64: string }; type: string; trafficNodeRegex?: string; expiryNodeRegex?: string }) => Promise<void>;
+  onAddSource: (source: { name: string; url?: string; acquisition?: 'url' | 'manual'; content?: string; contentFile?: { name: string; base64: string }; type: string; trafficNodeRegex?: string; expiryNodeRegex?: string; extractRegex?: string; nameTemplate?: string }) => Promise<void>;
   onUpdateSource: (id: string, updates: Partial<SubscriptionSource> & { content?: string; contentFile?: { name: string; base64: string } }) => Promise<void>;
   onDeleteSource: (id: string) => Promise<void>;
   onRefreshSource: (id: string) => Promise<void>;
@@ -77,6 +78,12 @@ export function SourcesManager({ sources, updateSourceId, onUpdateSourceOpened, 
   const [type, setType] = useState(editableType(initialSource));
   const [trafficNodeRegex, setTrafficNodeRegex] = useState(initialSource?.trafficNodeRegex || '');
   const [expiryNodeRegex, setExpiryNodeRegex] = useState(initialSource?.expiryNodeRegex || '');
+  const [extractRegex, setExtractRegex] = useState(initialSource?.extractRegex ?? '');
+  const [nameTemplate, setNameTemplate] = useState(initialSource?.nameTemplate ?? DEFAULT_NAME_TEMPLATE);
+  const namingError = useMemo(() => {
+    try { validateSourceNaming({ extractRegex, nameTemplate }); return undefined; }
+    catch (cause) { return cause instanceof NamingValidationError ? cause : undefined; }
+  }, [extractRegex, nameTemplate]);
   const [submitting, setSubmitting] = useState(false);
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -98,6 +105,8 @@ export function SourcesManager({ sources, updateSourceId, onUpdateSourceOpened, 
     setType(editableType(source));
     setTrafficNodeRegex(source?.trafficNodeRegex || '');
     setExpiryNodeRegex(source?.expiryNodeRegex || '');
+    setExtractRegex(source?.extractRegex ?? '');
+    setNameTemplate(source?.nameTemplate ?? DEFAULT_NAME_TEMPLATE);
     setFormError('');
     setShowForm(true);
   };
@@ -147,10 +156,10 @@ export function SourcesManager({ sources, updateSourceId, onUpdateSourceOpened, 
 
   const saveSource = async (event: FormEvent) => {
     event.preventDefault();
-    if (submitting || readingFile || (inputMode === 'file' && (!contentFile || !!fileError)) || !name.trim() || (inputMode === 'url' ? !url.trim() : inputMode === 'paste' && submitsContent && (!content.trim() || !!contentError)) || trafficMatches.error || expiryMatches.error) return;
+    if (namingError || submitting || readingFile || (inputMode === 'file' && (!contentFile || !!fileError)) || !name.trim() || (inputMode === 'url' ? !url.trim() : inputMode === 'paste' && submitsContent && (!content.trim() || !!contentError)) || trafficMatches.error || expiryMatches.error) return;
     setSubmitting(true);
     setFormError('');
-    const updates = { name: name.trim(), acquisition, ...(acquisition === 'url' ? { url: url.trim() } : (submitsContent ? (inputMode === 'file' && contentFile ? { contentFile: { name: contentFile.name, base64: contentFile.base64 } } : { content }) : {})), type, trafficNodeRegex: trafficNodeRegex.trim(), expiryNodeRegex: expiryNodeRegex.trim() };
+    const updates = { name: name.trim(), acquisition, ...(acquisition === 'url' ? { url: url.trim() } : (submitsContent ? (inputMode === 'file' && contentFile ? { contentFile: { name: contentFile.name, base64: contentFile.base64 } } : { content }) : {})), type, extractRegex, nameTemplate, trafficNodeRegex: trafficNodeRegex.trim(), expiryNodeRegex: expiryNodeRegex.trim() };
     try {
       if (editingSource) await onUpdateSource(editingSource.id, updates);
       else await onAddSource(updates);
@@ -244,6 +253,14 @@ export function SourcesManager({ sources, updateSourceId, onUpdateSourceOpened, 
             <SelectItem value="auto">自动识别</SelectItem><SelectItem value="clash">Mihomo / Clash YAML</SelectItem><SelectItem value="singbox">sing-box JSON</SelectItem><SelectItem value="quantumultx">Quantumult X</SelectItem><SelectItem value="base64">Base64 节点串</SelectItem>
           </Select></Field>
           </>}
+          <Field error={namingError?.field === 'extractRegex' ? namingError.message : undefined}>
+            <div className="mb-1 flex items-center gap-1"><Label>提取正则</Label><HelpTooltip label="提取正则说明" content="可留空。使用命名捕获组提取额外字段，例如 x(?<multiplier>[0-9.]+)。默认忽略英文大小写。" /></div>
+            <Input value={extractRegex} onChange={event => setExtractRegex(event.target.value)} className="font-mono" />
+          </Field>
+          <Field error={namingError?.field === 'nameTemplate' ? namingError.message : undefined}>
+            <div className="mb-1 flex items-center gap-1"><Label>名称模板</Label><HelpTooltip label="名称模板说明" content="可用字段：upstream_name、region、region_code、region_emoji、region_index，以及正则的命名捕获组。使用 {字段名}；字面括号写作 {{ 和 }}。留空保留原名，最终名称在下游文件预览中查看。" /></div>
+            <Input value={nameTemplate} onChange={event => setNameTemplate(event.target.value)} className="font-mono" />
+          </Field>
           {[
             { id: 'traffic-node-regex', label: '流量信息匹配', placeholder: '剩余流量|已用流量|流量用量', value: trafficNodeRegex, setValue: setTrafficNodeRegex, preview: trafficMatches },
             { id: 'expiry-node-regex', label: '到期信息匹配', placeholder: '套餐到期|到期时间|有效期', value: expiryNodeRegex, setValue: setExpiryNodeRegex, preview: expiryMatches },
@@ -256,7 +273,7 @@ export function SourcesManager({ sources, updateSourceId, onUpdateSourceOpened, 
             </div>
           </Field>)}
         </ModalBody>
-        <ModalFooter><button type="button" className="ui-button-secondary" disabled={submitting} onClick={() => { fileRead.current++; setShowForm(false); }}>取消</button><button type="submit" className="ui-button-primary" disabled={submitting || readingFile || (inputMode === 'file' && (!contentFile || !!fileError)) || !!contentError || !!trafficMatches.error || !!expiryMatches.error}>{submitting ? '保存中…' : editingSource ? '保存更改' : acquisition === 'manual' ? '添加' : '添加并拉取'}</button></ModalFooter>
+        <ModalFooter><button type="button" className="ui-button-secondary" disabled={submitting} onClick={() => { fileRead.current++; setShowForm(false); }}>取消</button><button type="submit" className="ui-button-primary" disabled={!!namingError || submitting || readingFile || (inputMode === 'file' && (!contentFile || !!fileError)) || !!contentError || !!trafficMatches.error || !!expiryMatches.error}>{submitting ? '保存中…' : editingSource ? '保存更改' : acquisition === 'manual' ? '添加' : '添加并拉取'}</button></ModalFooter>
       </ModalForm>
     </Modal>
   </div>;

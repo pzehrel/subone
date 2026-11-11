@@ -290,7 +290,7 @@ test('info rules immediately reclassify cached nodes and filter every subscripti
     const response = await fetch(`${origin}/s/info-test/${target}?expand=true`);
     assert.equal(response.status, 200, await response.clone().text());
     const output = await response.text();
-    assert.ok(output.includes('Hong Kong'));
+    assert.ok(output.includes('Airport_香港 01'));
     assert.ok(!output.includes('剩余流量'));
     assert.ok(!output.includes('套餐到期'));
   }

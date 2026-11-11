@@ -39,6 +39,8 @@ export interface SourceRawRecord {
 }
 
 export interface SubscriptionSource {
+  extractRegex?: string;
+  nameTemplate?: string;
   acquisition?: 'url' | 'manual';
   id: string;
   name: string;

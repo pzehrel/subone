@@ -255,7 +255,7 @@ test('native strategy parameters, ordered multi-value rules, explicit Egern rule
   const { profile, groups, rule } = await profileFor(source, [
     { name: 'Native failover', type: 'fallback', proxies: [`node:${source.nodes[1].id}`, `node:${source.nodes[0].id}`], interval: 60, url: 'https://health.example/check' },
     { name: 'Native round robin', type: 'load-balance', sources: [source.id], strategy: 'round-robin' },
-    { name: 'Native HK regex', type: 'urltest', sources: [source.id], filter: '(?i)hk', tolerance: 15, interval: 0 },
+    { name: 'Native HK regex', type: 'urltest', sources: [source.id], filter: '香港', tolerance: 15, interval: 0 },
     { name: 'Native direct', type: 'direct' }, { name: 'Native reject', type: 'reject' },
   ]);
   bodies.set('/native-rules.yaml', 'domain_suffix_set: [remote.example]\nip_cidr_set: [192.0.2.0/24]\n');
@@ -274,9 +274,9 @@ test('native strategy parameters, ordered multi-value rules, explicit Egern rule
   const doc: any = yaml.load(result.data); assertNativeReferences(doc);
   assert.doesNotMatch(result.data, /info\.strategy\.example|剩余流量/);
   const find = (type: string, name: string) => doc.policy_groups.find((entry: any) => entry[type]?.name === name)?.[type];
-  assert.deepEqual(find('fallback', groups[0].name), { name: groups[0].name, policies: ['JP chosen', 'HK chosen'], interval: 60, latency_test_url: 'https://health.example/check' });
+  assert.deepEqual(find('fallback', groups[0].name), { name: groups[0].name, policies: ['strategy-rules_日本 01', 'strategy-rules_香港 01'], interval: 60, latency_test_url: 'https://health.example/check' });
   assert.equal(find('load_balance', groups[1].name).algorithm, 'round_robin');
-  assert.deepEqual(find('auto_test', groups[2].name).policies, ['HK chosen']); assert.equal(find('auto_test', groups[2].name).interval, 0);
+  assert.deepEqual(find('auto_test', groups[2].name).policies, ['strategy-rules_香港 01']); assert.equal(find('auto_test', groups[2].name).interval, 0);
   assert.deepEqual(find('select', groups[3].name).policies, ['DIRECT']); assert.deepEqual(find('select', groups[4].name).policies, ['REJECT']);
   assert.deepEqual(doc.rules.filter((entry: any) => ['alpha.example', 'beta.example'].includes(entry.domain_suffix?.match)), [{ domain_suffix: { match: 'alpha.example', policy: groups[0].name } }, { domain_suffix: { match: 'beta.example', policy: groups[0].name } }]);
   assert.ok(doc.rules.some((entry: any) => entry.ip_cidr?.match === '192.0.2.0/24')); assert.ok(doc.rules.some((entry: any) => entry.ip_cidr6?.match === '2001:db8::/32'));

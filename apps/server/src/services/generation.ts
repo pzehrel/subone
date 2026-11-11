@@ -1,3 +1,4 @@
+import { nameOutputNodes } from './node-naming';
 import yaml from 'js-yaml';
 import { getAppConfig } from '../context';
 import { generateMihomoConfig } from '../core/generators/mihomo-generator';
@@ -21,10 +22,11 @@ export type { GenerationPlan, GenerationMetadata, GenerationBinding, GenerationD
 
 /** All dispatch paths select and name the same enabled profile nodes before provider slicing. */
 export async function createGenerationPlan(options: GenerationOptions): Promise<GenerationPlan> {
-  const config = getAppConfig();
-  const ordinary = options.profile ? await getEffectiveNodesForProfile(options.profile) : await getEffectiveNodes();
-  const groups = options.profile ? getEffectiveGroupsForProfile(options.profile, ordinary) : config.proxyGroups;
-  const sources = options.profile ? getEffectiveSourcesForProfile(options.profile, ordinary) : config.sources;
+  const config = structuredClone(getAppConfig());
+  options = structuredClone(options);
+  const ordinary = options.profile ? await getEffectiveNodesForProfile(options.profile, config) : await getEffectiveNodes(config);
+  const groups = options.profile ? getEffectiveGroupsForProfile(options.profile, ordinary, config) : config.proxyGroups;
+  const sources = options.profile ? getEffectiveSourcesForProfile(options.profile, ordinary, config) : config.sources;
   const savedTemplate = config.templates.find(template => template.id === (options.templateId || options.profile?.templates?.[options.target])) || config.templates.find(template => template.type === options.target && template.content === options.templateContent);
   const nodeOnly = options.target === 'shadowrocket' && ['base64', 'b64'].includes(options.format || '') || options.outputRole === 'source' && ['shadowrocket', 'singbox'].includes(options.target);
   const template = nodeOnly ? { id: 'nodes-only', name: '', type: options.target, content: options.templateContent } : prepareTemplateReferences({ ...(savedTemplate || { id: 'unsaved', name: '', type: options.target }), content: options.templateContent }, config, savedTemplate);
@@ -33,7 +35,7 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
     target: { type: options.target, ...(options.target === 'singbox' ? { version: '1.14.4' } : options.target === 'egern' ? { version: '2.21.0' } : options.target === 'mihomo' ? { version: '1.19.33' } : options.target === 'loon' ? { version: '3.5.3' } : options.target === 'shadowrocket' ? { version: '2.2.93' } : options.target === 'quantumultx' ? { version: '1.8.1' } : {}), mode: nodeOnly ? 'nodes' : 'complete' },
     templateContent: stableTemplate(ordinary, groups), template, inventory: createRuntimeInventory(config),
     ordinaryNodes: structuredClone(ordinary), dependencyNodes: [], dependencyGroupIds: [], ordinaryGroupIds: groups.map(group => group.id), dependencyReasons: [], groups: structuredClone(groups),
-    rules: structuredClone(options.profile ? getEffectiveRulesForProfile(options.profile) : config.rulesList),
+    rules: structuredClone(options.profile ? getEffectiveRulesForProfile(options.profile, config) : config.rulesList),
     sources: structuredClone(sources.filter(source => source.enabled && (ordinary.some(node => node.sourceId === source.id) || options.profile?.nodeFilter?.sourceIds?.includes(source.id) || groups.some(group => (group.sources ?? group.use)?.some(mount => mount === source.id || mount === source.name))))),
     bindings: [],
     expandNodes: requiresExpandedNodes(groups) || (options.expandNodes ?? true),
@@ -81,7 +83,7 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
     }
     plan.templateContent = stableTemplate([...plan.ordinaryNodes, ...plan.dependencyNodes], plan.groups);
   } while (changed);
-  const resolved = resolveOutputReferences([...plan.ordinaryNodes, ...plan.dependencyNodes], nodeOnly ? [] : plan.groups, plan.inventory.sources, nodeOnly ? 'uri' : options.target, nodeOnly ? [] : templateOutboundNames(template));
+  const resolved = resolveOutputReferences(nameOutputNodes([...plan.ordinaryNodes, ...plan.dependencyNodes], plan.inventory.sources), nodeOnly ? [] : plan.groups, plan.inventory.sources, nodeOnly ? 'uri' : options.target, nodeOnly ? [] : templateOutboundNames(template));
   const ordinaryIds = new Set(plan.ordinaryNodes.map(node => node.id));
   plan.ordinaryNodes = resolved.nodes.filter(node => ordinaryIds.has(node.id));
   plan.dependencyNodes = resolved.nodes.filter(node => !ordinaryIds.has(node.id));
