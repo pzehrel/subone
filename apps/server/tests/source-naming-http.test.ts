@@ -1,59 +1,31 @@
+import { httpApp } from './helpers/http-app';
 import assert from 'node:assert/strict';
 import yaml from 'js-yaml';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { once } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { EventEmitter, once } from 'node:events';
 import { createServer } from 'node:http';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 
-let directory: string;
-let child: ChildProcess;
-let origin: string;
+const app = httpApp('subone-source-naming-');
+const { api } = app;
+
 let upstreamOrigin: string;
 let body = '';
-const upstream = createServer((_request, response) => response.end(body));
+let beforeResponse: (() => Promise<void>) | undefined;
+const upstream = createServer(async (_request, response) => {
+  await beforeResponse?.();
+  response.end(body);
+});
 
-async function startApp() {
-  child = spawn(process.execPath, ['--import', 'tsx', join(__dirname, 'helpers/http-server.ts')], {
-    env: { ...process.env, SUBONE_ROOT: directory }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
-  });
-  let errors = '';
-  child.stderr?.on('data', chunk => { errors += chunk; });
-  const message = await Promise.race([
-    once(child, 'message'),
-    once(child, 'exit').then(([code]) => { throw new Error(`Server exited ${code}: ${errors}`); }),
-  ]);
-  origin = `http://127.0.0.1:${message[0].port}`;
-}
-async function stopApp() {
-  const exited = once(child, 'exit');
-  child.kill('SIGTERM');
-  await exited;
-}
-async function api(path: string, method = 'GET', value?: unknown) {
-  const response = await fetch(`${origin}/api${path}`, {
-    method, headers: { 'Content-Type': 'application/json' },
-    body: value === undefined ? undefined : JSON.stringify(value),
-  });
-  return { status: response.status, ...(await response.json() as any) };
-}
 const valid = '# upstream evidence\nproxies:\n  - { name: First, type: ss, server: one.example, port: 443, cipher: aes-128-gcm, password: secret }\ndns:\n  nameserver: [https://dns.example/dns-query, tls://ordinary.example]\ncustom: preserved\n';
 before(async () => {
-  directory = await mkdtemp(join(tmpdir(), 'subone-source-http-'));
-  await writeFile(join(directory, 'config.json'), JSON.stringify({ port: 3456, adminPassword: '' }));
   upstream.listen(0, '127.0.0.1');
   await once(upstream, 'listening');
   const address = upstream.address();
   assert.ok(address && typeof address !== 'string');
   upstreamOrigin = `http://127.0.0.1:${address.port}`;
-  await startApp();
 });
 after(async () => {
-  await stopApp();
   await new Promise<void>(resolve => upstream.close(() => resolve()));
-  await rm(directory, { recursive: true, force: true });
 });
 
 test('source naming fields persist through remote, paste, file and restart, and invalid edits preserve the saved configuration', async () => {
@@ -79,7 +51,7 @@ test('source naming fields persist through remote, paste, file and restart, and 
   assert.equal(pasted.data.nameTemplate, '{upstream_name}_{region} {region_index}');
   const file = await api('/sources', 'POST', { name: 'File', acquisition: 'manual', contentFile: { name: 'nodes.yaml', base64: Buffer.from(valid).toString('base64') }, extractRegex: 'no-match(?<zero>0)', nameTemplate: '{{{region}}} {zero}' });
   assert.equal(file.success, true, file.message);
-  await stopApp(); await startApp();
+  await app.restart();
   const sources = (await api('/sources')).data;
   assert.equal(sources.find((source: any) => source.id === id).nameTemplate, '');
   assert.equal(sources.find((source: any) => source.id === file.data.id).nameTemplate, '{{{region}}} {zero}');
@@ -122,7 +94,6 @@ function inspect(target: string, content: string) {
   };
 }
 
-
 test('the same downstream names appear in preview and all six complete downloads, without changing naming inputs or identities', async () => {
   const node = (name: string, server: string) => ({ name, type: 'trojan', server, port: 443, password: 'fixture-password' });
   const first = await api('/sources', 'POST', { name: 'Airport A', acquisition: 'manual', content: yaml.dump({ proxies: [node('日本01', '192.0.2.10')] }) });
@@ -137,7 +108,7 @@ test('the same downstream names appear in preview and all six complete downloads
     const tpl = (await api('/templates', 'POST', { name: target + ' naming', type: target, content: template(target) })).data;
     const profile = (await api('/profiles', 'POST', { name: 'Named downstream', nodeFilter: { mode: 'all', sourceIds: [a.id, b.id], includeRegex: '大阪|东京|香港' }, selectedGroupIds: [group.id], selectedRuleIds: ['no-rules'], templates: { [target]: tpl.id } })).data;
     profiles.push({ target, profile });
-    const response = await fetch(`${origin}/s/${profile.token}/${target}`);
+    const response = await fetch(`${app.origin}/s/${profile.token}/${target}`);
     const output = await response.text();
     assert.equal(response.status, 200, output);
     assert.deepEqual(inspect(target, output).nodes, ['Airport A_大阪 01', '🇯🇵 东京 01', '🇯🇵 大阪 02', '🇭🇰 香港 01'], target);
@@ -154,9 +125,9 @@ test('the same downstream names appear in preview and all six complete downloads
   const renamed = await api(`/sources/${a.id}`, 'PUT', { name: 'Renamed A', nameTemplate: '{region_code} {region} {region_index}' });
   assert.equal(renamed.success, true, renamed.message);
   assert.equal(renamed.data.nodes[0].id, a.nodes[0].id);
-  await stopApp(); await startApp();
+  await app.restart();
   const { target, profile } = profiles[1];
-  const restored = await fetch(`${origin}/s/${profile.token}/${target}`).then(response => response.text());
+  const restored = await fetch(`${app.origin}/s/${profile.token}/${target}`).then(response => response.text());
   assert.deepEqual(inspect(target, restored).nodes, ['JP 大阪 01', '🇯🇵 东京 01', '🇯🇵 大阪 02', '🇭🇰 香港 01']);
 });
 
@@ -169,7 +140,7 @@ test('capture text, literal braces, missing values and empty templates preserve 
   const tpl = (await api('/templates', 'POST', { name: 'Capture template', type: 'mihomo', content: yaml.dump({ proxies: [], 'proxy-groups': [], rules: ['MATCH,DIRECT'] }) })).data;
   const profile = (await api('/profiles', 'POST', { templates: { mihomo: tpl.id }, name: 'Captures', nodeFilter: { mode: 'all', sourceIds: [source.id] }, selectedGroupIds: [group.id], selectedRuleIds: ['no-rules'] })).data;
   const download = async () => {
-    const response = await fetch(`${origin}/s/${profile.token}/mihomo`);
+    const response = await fetch(`${app.origin}/s/${profile.token}/mihomo`);
     const output = await response.text();
     assert.equal(response.status, 200, output);
     return inspect('mihomo', output).nodes;
@@ -182,4 +153,33 @@ test('capture text, literal braces, missing values and empty templates preserve 
   assert.equal((await api(`/sources/${source.id}`, 'PUT', { content: 'invalid subscription' })).success, false);
   assert.deepEqual(await download(), ['大阪 01', '大阪 02', '大阪 03', '大阪 04', 'Unknown x4']);
   assert.deepEqual((await api('/sources')).data.find((entry: any) => entry.id === source.id).nodes.map((entry: any) => entry.id), source.nodes.map((entry: any) => entry.id));
+});
+
+test('refresh preserves a naming pair and local settings saved while awaiting the upstream', async () => {
+  body = valid;
+  const added = await api('/sources', 'POST', { name: 'Original', url: upstreamOrigin, nameTemplate: 'old' });
+  assert.equal(added.success, true, added.message);
+  const { id, nodes: [first] } = added.data;
+  const gate = new EventEmitter();
+  const requested = once(gate, 'requested');
+  beforeResponse = async () => { gate.emit('requested'); await once(gate, 'release'); };
+  body = valid.replace('name: First', 'name: New Osaka');
+  const refresh = api('/sources/' + id + '/refresh', 'POST');
+  try {
+    await requested;
+    const updated = await api('/sources/' + id, 'PUT', { name: 'Renamed', extractRegex: '(?<value>local)', nameTemplate: '{value} {region_index}' });
+    assert.equal(updated.success, true, updated.message);
+    assert.equal((await api('/nodes/' + first.id, 'PUT', { name: 'Tokyo local' })).success, true);
+  } finally {
+    beforeResponse = undefined;
+    gate.emit('release');
+  }
+  const refreshed = await refresh;
+  assert.equal(refreshed.success, true, refreshed.message);
+  const current = (await api('/sources')).data.find((entry: any) => entry.id === id);
+  assert.equal(current.nameTemplate, '{value} {region_index}');
+  assert.equal(current.extractRegex, '(?<value>local)');
+  assert.equal(current.name, 'Renamed');
+  assert.deepEqual([current.nodes[0].id, current.nodes[0].name, current.nodes[0].sourceName, current.nodes[0].originalName], [first.id, 'Tokyo local', 'Renamed', 'New Osaka']);
+  assert.equal((await api('/sources/' + id + '/raw')).data.content, body);
 });

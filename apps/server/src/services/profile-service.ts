@@ -67,13 +67,13 @@ export async function refreshAllSources(config: AppConfig): Promise<{ nodes: Pro
 
 export async function getEffectiveNodes(config?: AppConfig): Promise<ProxyNode[]> {
   const appConfig = config ?? getAppConfig();
-  if (config) return applyExtractionRules(inputNodes(collectNodesFromSources(config)), config.rules);
+  if (config) return applyExtractionRules(inputNodes(collectNodesFromSources(config), config.countryRules), config.rules);
   let cache = getGlobalNodesCache();
   if (cache.length === 0) {
     cache = collectNodesFromSources(appConfig);
     setGlobalNodesCache(cache);
   }
-  return applyExtractionRules(inputNodes(cache), appConfig.rules);
+  return applyExtractionRules(inputNodes(cache, appConfig.countryRules), appConfig.rules);
 }
 
 export async function getEffectiveNodesForProfile(profile: SubscriptionProfile, config?: AppConfig): Promise<ProxyNode[]> {
@@ -107,7 +107,7 @@ export async function getEffectiveNodesForProfile(profile: SubscriptionProfile, 
   }
 
   // 2. Global extraction rules apply
-  filtered = applyExtractionRules(inputNodes(filtered), appConfig.rules);
+  filtered = applyExtractionRules(inputNodes(filtered, appConfig.countryRules), appConfig.rules);
 
   // 3. Optional Country filter (if specified in profile)
   if (Array.isArray(filter.countryCodes) && filter.countryCodes.length > 0) {

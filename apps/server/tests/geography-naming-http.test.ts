@@ -1,49 +1,10 @@
+import { httpApp } from './helpers/http-app';
 import assert from 'node:assert/strict';
 import yaml from 'js-yaml';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { once } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { after, before, test } from 'node:test';
+import { test } from 'node:test';
 
-let directory: string;
-let child: ChildProcess;
-let origin: string;
-
-async function startApp() {
-  child = spawn(process.execPath, ['--import', 'tsx', join(__dirname, 'helpers/http-server.ts')], {
-    env: { ...process.env, SUBONE_ROOT: directory }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
-  });
-  let errors = '';
-  child.stderr?.on('data', chunk => { errors += chunk; });
-  const message = await Promise.race([
-    once(child, 'message'),
-    once(child, 'exit').then(([code]) => { throw new Error(`Server exited ${code}: ${errors}`); }),
-  ]);
-  origin = `http://127.0.0.1:${message[0].port}`;
-}
-async function stopApp() {
-  const exited = once(child, 'exit');
-  child.kill('SIGTERM');
-  await exited;
-}
-async function api(path: string, method = 'GET', value?: unknown) {
-  const response = await fetch(`${origin}/api${path}`, {
-    method, headers: { 'Content-Type': 'application/json' },
-    body: value === undefined ? undefined : JSON.stringify(value),
-  });
-  return { status: response.status, ...(await response.json() as any) };
-}
-before(async () => {
-  directory = await mkdtemp(join(tmpdir(), 'subone-geography-http-'));
-  await writeFile(join(directory, 'config.json'), JSON.stringify({ port: 3456, adminPassword: '' }));
-  await startApp();
-});
-after(async () => {
-  await stopApp();
-  await rm(directory, { recursive: true, force: true });
-});
+const app = httpApp('subone-geography-naming-');
+const { api } = app;
 
 const proxy = (name: string, index: number, extra = {}) => ({ name, type: 'trojan', server: `192.0.2.${index}`, port: 443, password: 'fixture-password', ...extra });
 async function addSource(name: string, nodes: any[], extra = {}) {
@@ -59,7 +20,7 @@ async function profileFor(sources: any[], filter = {}, templateContent?: string)
   return saved.data;
 }
 async function names(profile: any) {
-  const response = await fetch(`${origin}/s/${profile.token}/mihomo`);
+  const response = await fetch(`${app.origin}/s/${profile.token}/mihomo`);
   const content = await response.text();
   assert.equal(response.status, 200, content);
   return (yaml.load(content) as any).proxies.map((node: any) => node.name);
@@ -88,11 +49,11 @@ test('target and pure outputs number only written nodes while each downstream re
   assert.deepEqual(await names(profile), ['大阪 01', '大阪 02', '大阪 03']);
   const qxTemplate = (await api('/templates', 'POST', { name: 'Target QX', type: 'quantumultx', content: '[general]\n[dns]\n[server_local]\n[policy]\n[filter_local]\nfinal, direct\n' })).data;
   await api(`/profiles/${profile.id}`, 'PUT', { templates: { ...profile.templates, quantumultx: qxTemplate.id } });
-  const qx = await fetch(`${origin}/s/${profile.token}/quantumultx`);
+  const qx = await fetch(`${app.origin}/s/${profile.token}/quantumultx`);
   const qxText = await qx.text();
   assert.equal(qx.status, 200, qxText);
   assert.deepEqual([...qxText.matchAll(/tag=([^\n]+)$/gm)].map(match => match[1]), ['大阪 01', '大阪 02']);
-  const pure = await fetch(`${origin}/s/${profile.token}/shadowrocket?format=base64`);
+  const pure = await fetch(`${app.origin}/s/${profile.token}/shadowrocket?format=base64`);
   const links = Buffer.from(await pure.text(), 'base64').toString().split('\n');
   assert.equal(pure.status, 200);
   assert.deepEqual(links.map(link => decodeURIComponent(link.split('#')[1])), ['大阪 01', '大阪 02']);
@@ -123,7 +84,7 @@ test('explicit dependencies consume their source position, source slices inherit
   assert.equal(document.outbounds.find((node: any) => node.server === 'ordinary.numbering.example').tag, '大阪 02');
   assert.equal(preview.generation.dependencyNodeCount, 1);
   assert.equal(document.outbounds.filter((node: any) => node.server).length, 2);
-  const slice = await fetch(`${origin}/s/${profile.token}/source/${source.id}/singbox`);
+  const slice = await fetch(`${app.origin}/s/${profile.token}/source/${source.id}/singbox`);
   assert.equal(slice.status, 200);
   const sliceLinks = Buffer.from(await slice.text(), 'base64').toString();
   assert.match(sliceLinks, /#%E5%A4%A7%E9%98%AA%2002$/);
@@ -168,7 +129,7 @@ test('actual entries keep upstream document order across sources, information ex
   assert.equal(output[1], 'Unknown gap');
   assert.deepEqual(output.slice(-4), ['First 大阪 99', 'First 大阪 100', 'Second 大阪 101', 'Second 东京 01']);
   assert.deepEqual(await names(profile), output);
-  const slice = await fetch(`${origin}/s/${profile.token}/source/${second.id}/mihomo`);
+  const slice = await fetch(`${app.origin}/s/${profile.token}/source/${second.id}/mihomo`);
   assert.equal(slice.status, 200);
   assert.deepEqual((yaml.load(await slice.text()) as any).proxies.map((node: any) => node.name), ['Second 大阪 101', 'Second 东京 01']);
   // Source membership order never substitutes for the saved upstream order.
@@ -183,15 +144,15 @@ test('the independent QX node output excludes template-only dependencies while a
   const profile = await profileFor([source], { includeKeywords: ['ordinary'] });
   const tpl = (await api('/templates', 'POST', { name: 'QX dependency counting', type: 'quantumultx', content: '[general]\n[dns]\n[server_local]\n[policy]\nstatic=Needed, 大阪 exit\n[filter_local]\nfinal, direct\n' })).data;
   await api(`/profiles/${profile.id}`, 'PUT', { templates: { ...profile.templates, quantumultx: tpl.id } });
-  const full = await fetch(`${origin}/s/${profile.token}/quantumultx`);
+  const full = await fetch(`${app.origin}/s/${profile.token}/quantumultx`);
   const text = await full.text();
   assert.equal(full.status, 200, text);
   assert.match(text, /trojan=192\.0\.2\.211:443,.*tag=大阪 02/);
   assert.match(text, /trojan=192\.0\.2\.210:443,.*tag=大阪 01/);
-  const slice = await fetch(`${origin}/s/${profile.token}/source/${source.id}/quantumultx`);
+  const slice = await fetch(`${app.origin}/s/${profile.token}/source/${source.id}/quantumultx`);
   assert.equal(slice.status, 200);
   assert.match(await slice.text(), /tag=大阪 02/);
-  const pure = await fetch(`${origin}/s/${profile.token}/nodes/qx`);
+  const pure = await fetch(`${app.origin}/s/${profile.token}/nodes/qx`);
   const pureText = await pure.text();
   assert.equal(pure.status, 200, pureText);
   assert.match(pureText, /tag=大阪 01/);
@@ -208,10 +169,61 @@ test('target omission never hides an existing connection capability error', asyn
   assert.ok(preview.generation.diagnostics.some((diagnostic: any) => diagnostic.code === 'quantumultx-node-chain-unverified'));
 });
 
-
 test('known fallback entries still occupy their place while unknown inputs never consume another place number', async () => {
   const empty = await addSource('Empty template', [proxy('大阪 original', 230), proxy('Unknown original', 231)], { nameTemplate: '' });
   const captured = await addSource('Missing capture', [proxy('Osaka missing', 232), proxy('大阪 x0', 233)], { extractRegex: 'x(?<multiplier>[0-9.]+)', nameTemplate: '{region} {region_index} {multiplier}x' });
   const profile = await profileFor([empty, captured]);
   assert.deepEqual(await names(profile), ['大阪 original', 'Unknown original', 'Osaka missing', '大阪 03 0x']);
+});
+
+test('a declared toString capture falls back when missing and retains a matched zero', async () => {
+  const source = await addSource('Named captures', [proxy('大阪 P', 234), proxy('大阪 0', 235)], {
+    extractRegex: '(?<toString>0)$', nameTemplate: '{toString} {region_index}',
+  });
+  assert.deepEqual(await names(await profileFor([source])), ['大阪 P', '0 02']);
+});
+
+test('country filters honor configured patterns on the current name and canonical stock places', async () => {
+  const rule = (await api('/country-rules', 'POST', { name: '冰岛', code: 'IS', emoji: '🇮🇸', pattern: 'Reykjavik' })).data;
+  try {
+    const source = await addSource('Custom country', [
+      proxy('Reykjavik', 236), proxy('shipping muscle frankfurter', 237), proxy('香港-日本', 238),
+    ]);
+    const filtered = await profileFor([source], { countryCodes: ['IS', 'HK', 'US', 'DE'] });
+    assert.deepEqual(await names(filtered), ['Reykjavik']);
+    await api('/nodes/' + source.nodes[0].id, 'PUT', { name: 'Tokyo local' });
+    assert.deepEqual(await names(filtered), []);
+    await api('/profiles/' + filtered.id, 'PUT', { nodeFilter: { mode: 'all', sourceIds: [source.id], countryCodes: ['JP'] } });
+    assert.deepEqual(await names(filtered), ['东京|JP|🇯🇵|01']);
+    await api('/nodes/' + source.nodes[0].id, 'PUT', { name: '' });
+    assert.deepEqual(await names(filtered), []);
+  } finally {
+    await api('/country-rules/' + rule.id, 'DELETE');
+  }
+});
+
+test('management geography follows a local name through refresh, restart and clearing', async () => {
+  const content = yaml.dump({ proxies: [proxy('Hong Kong original', 240)] });
+  const source = (await api('/sources', 'POST', { name: 'Managed places', acquisition: 'manual', content })).data;
+  const id = source.nodes[0].id;
+  const check = (node: any, name: string, code: string, flag: string) => {
+    assert.deepEqual([node.id, node.originalName, node.name, node.countryCode, node.countryEmoji], [id, 'Hong Kong original', name, code, flag]);
+    assert.deepEqual(node.raw, source.nodes[0].raw);
+  };
+  const renamed = await api('/nodes/' + id, 'PUT', { name: 'Tokyo local' });
+  check(renamed.data, 'Tokyo local', 'JP', '🇯🇵');
+  const refreshed = await api('/sources/' + source.id, 'PUT', { content });
+  check(refreshed.data.nodes[0], 'Tokyo local', 'JP', '🇯🇵');
+  await app.restart();
+  const stored = (await api('/sources')).data.find((entry: any) => entry.id === source.id);
+  check(stored.nodes[0], 'Tokyo local', 'JP', '🇯🇵');
+  assert.equal((await api('/sources/' + source.id + '/raw')).data.content, content);
+  check((await api('/nodes/' + id, 'PUT', { name: '' })).data, 'Hong Kong original', 'HK', '🇭🇰');
+  const cleared = (await api('/config')).data.sources.find((entry: any) => entry.id === source.id);
+  check(cleared.nodes[0], 'Hong Kong original', 'HK', '🇭🇰');
+});
+
+test('the legacy Taiwan flag prefix keeps an explicit Taiwan place in the TW country filter', async () => {
+  const source = await addSource('Legacy flag', [proxy('🇨🇳 台湾W01', 241), proxy('🇨🇳 台北', 242), proxy('🇨🇳 大阪', 243)]);
+  assert.deepEqual(await names(await profileFor([source], { countryCodes: ['TW'] })), ['台湾|TW|🇹🇼|01', '台北|TW|🇹🇼|01']);
 });

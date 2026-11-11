@@ -32,17 +32,22 @@ country('澳大利亚', 'AU', '🇦🇺', ['澳大利亞', '澳洲', 'australia'
 country('中国', 'CN', '🇨🇳', ['中國', 'china']);
 country('哥斯达黎加', 'CR', '🇨🇷', ['哥斯達黎加', 'costa rica'], [['圣何塞', ['聖何塞', 'san jose']]]);
 
+const aliases = places.flatMap(place => place.aliases.map(alias => {
+  const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s*');
+  const latin = /^[a-z ]+$/i.test(alias);
+  return { place, pattern: new RegExp(latin ? `(?<![a-z])${escaped}(?![a-z])` : escaped, 'gi') };
+}));
+
 export function detectRegion(input: string): RegionInfo | undefined {
-  const found = places.flatMap(place => place.aliases.flatMap(alias => {
-    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s*');
-    const latin = /^[a-z ]+$/i.test(alias);
-    const pattern = new RegExp(latin ? `(?<![a-z])${escaped}(?![a-z])` : escaped, 'gi');
-    return [...input.matchAll(pattern)].map(match => ({ place, index: match.index, end: match.index + match[0].length }));
-  }));
+  const found = aliases.flatMap(({ place, pattern }) =>
+    [...input.matchAll(pattern)].map(match => ({ place, index: match.index, end: match.index + match[0].length })));
   // A longer known alias owns its span (e.g. 新加坡 must not also mean 加拿大).
   let matches = found.filter(match => !found.some(other => other.index <= match.index && other.end >= match.end && other.end - other.index > match.end - match.index));
   // 中国香港/中国澳门 describe the independently identified region, not a conflict.
   if (matches.some(match => ['HK', 'MO'].includes(match.place.code!))) matches = matches.filter(match => match.place.code !== 'CN');
+  // Older Taiwan groups used 🇨🇳 in their display label; an explicit Taiwan place
+  // still identifies its region. Other country evidence continues to participate.
+  if (matches.some(match => match.place.code === 'TW')) matches = matches.filter(match => input.slice(match.index, match.end) !== '🇨🇳');
   if (!matches.length) return undefined;
   const spans = new Map<string, Set<string>>();
   for (const match of matches) {

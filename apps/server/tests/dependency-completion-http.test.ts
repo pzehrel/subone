@@ -417,3 +417,28 @@ test('a required member can get its final index from its own necessary node chai
   assert.equal(doc.outbounds.find((entry: any) => entry.tag === '大阪 02').detour, '大阪 01');
   assert.equal(result.generation.dependencyNodeCount, 2);
 });
+
+for (const count of [1, 200]) {
+  test(`jointly valid necessary members retain their shared numbering with ${count} candidate exits`, async () => {
+    const names = ['X', 'P', ...Array.from({ length: count }, (_, index) => 'A' + index), 'B'];
+    const exits = await addSource('/joint-exits-' + count, { outbounds: names.map((label, index) => ({
+      type: 'socks', tag: '大阪 ' + label, server: '198.51.100.' + (index + 1), server_port: 1080,
+      ...(label === 'B' ? { detour: '大阪 P' } : {}),
+    })) });
+    await api('/sources/' + exits.id, 'PUT', { extractRegex: '(?<label>[XPAB])[0-9]*$', nameTemplate: '{label}{region_index}' });
+    const group = (await api('/groups', 'POST', { name: 'Joint exits ' + count, type: 'select', sources: [exits.id], filter: '^(A02|B03)$' })).data;
+    const main = await addSource('/joint-main-' + count, {
+      outbounds: [{ type: 'socks', tag: 'Main', server: 'joint.completion.example', server_port: 1080 }],
+      dns: { servers: [{ type: 'https', server: 'dns.joint.completion.example' }] },
+    });
+    const content = structuredClone(template);
+    (content.dns.servers[0] as any).detour = group.name;
+    const result = await preview(await profileFor(main.nodes, content));
+    assert.equal(result.status, 200, JSON.stringify(result));
+    const doc = JSON.parse(result.data);
+    assert.deepEqual(doc.outbounds.find((entry: any) => entry.tag === group.name).outbounds.sort(), ['A02', 'B03']);
+    assert.equal(doc.outbounds.find((entry: any) => entry.tag === 'B03').detour, 'P01');
+    assert.equal(result.generation.dependencyNodeCount, 3);
+    assert.ok(!doc.outbounds.some((entry: any) => entry.server === '198.51.100.1'));
+  });
+}

@@ -1,59 +1,26 @@
+import { httpApp } from './helpers/http-app';
 import assert from 'node:assert/strict';
 import yaml from 'js-yaml';
-import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 
-let directory: string;
-let child: ChildProcess;
-let origin: string;
+const app = httpApp('subone-naming-references-');
+const { api } = app;
+
 let upstreamOrigin: string;
 let body = '';
 const upstream = createServer((_request, response) => response.end(body));
 
-async function startApp() {
-  child = spawn(process.execPath, ['--import', 'tsx', join(__dirname, 'helpers/http-server.ts')], {
-    env: { ...process.env, SUBONE_ROOT: directory }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
-  });
-  let errors = '';
-  child.stderr?.on('data', chunk => { errors += chunk; });
-  const message = await Promise.race([
-    once(child, 'message'),
-    once(child, 'exit').then(([code]) => { throw new Error(`Server exited ${code}: ${errors}`); }),
-  ]);
-  origin = `http://127.0.0.1:${message[0].port}`;
-}
-async function stopApp() {
-  const exited = once(child, 'exit');
-  child.kill('SIGTERM');
-  await exited;
-}
-async function api(path: string, method = 'GET', value?: unknown) {
-  const response = await fetch(`${origin}/api${path}`, {
-    method, headers: { 'Content-Type': 'application/json' },
-    body: value === undefined ? undefined : JSON.stringify(value),
-  });
-  return { status: response.status, ...(await response.json() as any) };
-}
-
 before(async () => {
-  directory = await mkdtemp(join(tmpdir(), 'subone-source-http-'));
-  await writeFile(join(directory, 'config.json'), JSON.stringify({ port: 3456, adminPassword: '' }));
   upstream.listen(0, '127.0.0.1');
   await once(upstream, 'listening');
   const address = upstream.address();
   assert.ok(address && typeof address !== 'string');
   upstreamOrigin = `http://127.0.0.1:${address.port}`;
-  await startApp();
 });
 after(async () => {
-  await stopApp();
   await new Promise<void>(resolve => upstream.close(() => resolve()));
-  await rm(directory, { recursive: true, force: true });
 });
 
 function template(target: string): string {
@@ -93,8 +60,6 @@ function inspect(target: string, content: string) {
   };
 }
 
-
-
 test('six complete targets allocate collision-free names after target characters and protect native and template names', async () => {
   const node = (name: string, index: number) => ({ name, type: 'trojan', server: `192.0.2.${index}`, port: 443, password: 'fixture-password' });
   const source = (await api('/sources', 'POST', { name: 'Collision source', acquisition: 'manual', nameTemplate: '', content: yaml.dump({ proxies: [
@@ -117,7 +82,7 @@ test('six complete targets allocate collision-free names after target characters
     else content = content.replace('[Proxy]', '[Proxy]\nTemplate owned = socks5,192.0.2.99,1080');
     const tpl = (await api('/templates', 'POST', { name: `${target} namespace`, type: target, content })).data;
     const profile = (await api('/profiles', 'POST', { name: `${target} namespace`, nodeFilter: { mode: 'all', sourceIds: [source.id, second.id] }, selectedGroupIds: [picker.id], selectedRuleIds: ['no-rules'], templates: { [target]: tpl.id } })).data;
-    const response = await fetch(`${origin}/s/${profile.token}/${target}`);
+    const response = await fetch(`${app.origin}/s/${profile.token}/${target}`);
     const output = await response.text();
     assert.equal(response.status, 200, output);
     const inspected = inspect(target, output);
@@ -147,7 +112,7 @@ test('six complete targets allocate collision-free names after target characters
     assert.deepEqual(new Set(members), new Set(names.filter(name => name !== 'Template owned')), `${target}: ${members}`);
     const preview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: target });
     assert.equal(preview.data, output, preview.message);
-    assert.equal(await fetch(`${origin}/s/${profile.token}/${target}`).then(response => response.text()), output);
+    assert.equal(await fetch(`${app.origin}/s/${profile.token}/${target}`).then(response => response.text()), output);
   }
   assert.deepEqual((await api('/sources')).data.find((entry: any) => entry.id === source.id), source);
 });
@@ -161,7 +126,7 @@ test('a missing imported name remains a repair reference when a new target later
   assert.deepEqual(renamed.data.proxies, ['unresolved:Future imported target']);
   const tpl = (await api('/templates', 'POST', { name: 'Unresolved import template', type: 'singbox', content: JSON.stringify({ outbounds: [{ type: 'socks', tag: 'Future imported target', server: '192.0.2.96', server_port: 1080 }] }) })).data;
   const profile = (await api('/profiles', 'POST', { name: 'Unresolved import profile', nodeFilter: { mode: 'manual', selectedNodeIds: [] }, selectedGroupIds: [saved.data.id, target.id], templates: { singbox: tpl.id } })).data;
-  await stopApp(); await startApp();
+  await app.restart();
   const preview = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'singbox' });
   assert.equal(preview.status, 422, JSON.stringify(preview));
 });
@@ -185,7 +150,7 @@ test('renumbering, refresh, input switching and restart keep explicit groups, no
   const tpl = (await api('/templates', 'POST', { name: 'Lifecycle template', type: 'singbox', content })).data;
   const profile = (await api('/profiles', 'POST', { name: 'Lifecycle profile', nodeFilter: { mode: 'all', sourceIds: [source.id] }, selectedGroupIds: [outer.id], selectedRuleIds: ['no-rules'], templates: { singbox: tpl.id } })).data;
   const check = async (entryName: string, exitName: string, groupName = inner.name) => {
-    const response = await fetch(`${origin}/s/${profile.token}/singbox`);
+    const response = await fetch(`${app.origin}/s/${profile.token}/singbox`);
     const output = await response.text();
     assert.equal(response.status, 200, output);
     const result = JSON.parse(output);
@@ -227,7 +192,7 @@ test('renumbering, refresh, input switching and restart keep explicit groups, no
   assert.equal(temporary.success, true, temporary.message);
   assert.equal((await latest()).nodes.find((node: any) => node.id === entry.id).name, '东京入口');
   assert.equal((await api('/templates')).data.find((item: any) => item.id === tpl.id).content, content);
-  await stopApp(); await startApp();
+  await app.restart();
   assert.equal(await check('东京 01', '大阪 02', 'Renamed lifecycle inner'), refreshed);
   assert.equal((await api(`/sources/${source.id}`, 'DELETE')).success, true);
   const replacement = (await api('/sources', 'POST', { name: 'Replacement lifecycle', acquisition: 'manual', content: document(true), nameTemplate: '{region} {region_index}' })).data;
@@ -252,6 +217,6 @@ test('known template members keep their native namespace and never bind to a man
   assert.equal((await api(`/templates/${tpl.id}`, 'PUT', { content: '{}' })).success, true);
   assert.equal((await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'singbox' })).status, 422);
   assert.deepEqual((await api(`/groups/${owner.id}`, 'PUT', { name: 'Still a native namespace owner' })).data.proxies, ['template:Known native target']);
-  await stopApp(); await startApp();
-  assert.equal((await fetch(`${origin}/s/${profile.token}/singbox`)).status, 422);
+  await app.restart();
+  assert.equal((await fetch(`${app.origin}/s/${profile.token}/singbox`)).status, 422);
 });

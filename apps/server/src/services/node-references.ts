@@ -37,6 +37,12 @@ export function normalizeGroupReferences(group: ProxyGroupItem, config: AppConfi
   return result;
 }
 
+export function clientNodeBaseName(node: ProxyNode, name: string, client?: ClientType | 'uri'): string {
+  let base = name.trim() || `${node.type.toUpperCase()}-${node.server}`;
+  if (client && !['singbox', 'mihomo', 'egern', 'uri'].includes(client)) base = base.replace(/[=,\r\n]/g, '_');
+  return base;
+}
+
 /** Allocate client names once, then resolve all stable edges against this exact selected set. */
 export function resolveOutputReferences(nodes: ProxyNode[], groups: ProxyGroupItem[], sources: SubscriptionSource[], client?: ClientType | 'uri', reservedNames: Iterable<string> = []): { nodes: ProxyNode[]; groups: ProxyGroupItem[]; sources: SubscriptionSource[] } {
   const enabledSources = new Set(sources.filter(source => source.enabled).map(source => source.id));
@@ -54,8 +60,7 @@ export function resolveOutputReferences(nodes: ProxyNode[], groups: ProxyGroupIt
   }
   if (client !== 'uri') used.add('🎯 本地直连');
   for (const node of [...selected].sort((a, b) => a.id.localeCompare(b.id))) {
-    let base = node.name.trim() || `${node.type.toUpperCase()}-${node.server}`;
-    if (client && !['singbox', 'mihomo', 'egern', 'uri'].includes(client)) base = base.replace(/[=,\r\n]/g, '_');
+    const base = clientNodeBaseName(node, node.name, client);
     let name = base; let suffix = 2;
     while (used.has(name) || client !== 'uri' && builtins.test(name)) name = `${base} (${suffix++})`;
     used.add(name); names.set(node.id, name);
