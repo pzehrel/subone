@@ -1,3 +1,4 @@
+import { nodeInputFields, restoreInputFields } from '../services/node-naming';
 import { DEFAULT_NAME_TEMPLATE, validateSourceNaming } from '../../../../shared/source-naming';
 import { readManualInput } from './manual-input';
 import { createGenerationPlan, renderGeneration, GenerationError } from '../services/generation';
@@ -93,7 +94,7 @@ apiRouter.put('/nodes/:id', (c) => {
     node.originalName ??= node.name;
     if ('name' in body) {
       node.localName = body.name?.trim() || undefined;
-      node.name = node.localName ?? node.originalName;
+      Object.assign(node, nodeInputFields(node, candidate.countryRules));
     }
     if ('enabled' in body) node.enabled = body.enabled;
     try { commitConfig(candidate); } catch (error: any) { return c.json({ success: false, message: error.message }, 500); }
@@ -243,6 +244,11 @@ apiRouter.post('/sources/refresh-all', async (c) => {
 
 
 // 3. Country Matching & Grouping Rules (国家/地区识别规则)
+function saveCountryRules() {
+  restoreInputFields(appConfig.sources, appConfig.countryRules);
+  saveConfig(appConfig);
+}
+
 apiRouter.get('/country-rules', (c) => {
   return c.json({ success: true, data: appConfig.countryRules || INITIAL_COUNTRY_RULES });
 });
@@ -259,7 +265,7 @@ apiRouter.post('/country-rules', (c) => {
   };
   if (!appConfig.countryRules) appConfig.countryRules = [...INITIAL_COUNTRY_RULES];
   appConfig.countryRules.push(newRule);
-  saveConfig(appConfig);
+  saveCountryRules();
   return c.json({ success: true, data: newRule });
 });
 
@@ -269,20 +275,20 @@ apiRouter.put('/country-rules/:id', (c) => {
   const idx = appConfig.countryRules.findIndex(r => r.id === c.req.param('id'));
   if (idx === -1) return c.json({ success: false, message: 'Country rule not found' }, 404);
   appConfig.countryRules[idx] = { ...appConfig.countryRules[idx], ...body };
-  saveConfig(appConfig);
+  saveCountryRules();
   return c.json({ success: true, data: appConfig.countryRules[idx] });
 });
 
 apiRouter.delete('/country-rules/:id', (c) => {
   if (!appConfig.countryRules) appConfig.countryRules = [...INITIAL_COUNTRY_RULES];
   appConfig.countryRules = appConfig.countryRules.filter(r => r.id !== c.req.param('id'));
-  saveConfig(appConfig);
+  saveCountryRules();
   return c.json({ success: true, message: 'Country rule deleted' });
 });
 
 apiRouter.post('/country-rules/reset', (c) => {
   appConfig.countryRules = [...INITIAL_COUNTRY_RULES];
-  saveConfig(appConfig);
+  saveCountryRules();
   return c.json({ success: true, data: appConfig.countryRules });
 });
 

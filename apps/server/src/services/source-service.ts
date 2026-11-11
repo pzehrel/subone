@@ -64,7 +64,15 @@ export async function refreshSource(id: string, changes: Partial<SubscriptionSou
     }
     throw new SourceUpdateError(message, error instanceof SourceParseError ? 422 : 500);
   }
-  prepareSourceNodes(candidate, getAppConfig().sources.find(source => source.id === id));
+  const latest = getAppConfig().sources.find(source => source.id === id);
+  if (!latest) throw new SourceUpdateError('Source not found');
+  // A naming edit committed during acquisition owns its entire validated pair.
+  if (latest.extractRegex !== current.extractRegex || latest.nameTemplate !== current.nameTemplate) {
+    candidate.extractRegex = latest.extractRegex;
+    candidate.nameTemplate = latest.nameTemplate;
+  }
+  if (latest.name !== current.name) candidate.name = latest.name;
+  prepareSourceNodes(candidate, latest, getAppConfig().countryRules);
   bindSourceDoh(candidate);
   try { commitSource(candidate); } catch (error) {
     throw new SourceUpdateError(error instanceof Error ? error.message : '保存失败', 500);

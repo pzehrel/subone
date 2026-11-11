@@ -12,6 +12,10 @@ export function dynamicGroupNodes(group: ProxyGroupItem, nodes: ProxyNode[], sou
   return [];
 }
 
+export function groupNamePattern(filter: string): RegExp {
+  return new RegExp(filter.replace(/\(\?i\)/g, ''), 'i');
+}
+
 export function resolveGroupNodes(group: ProxyGroupItem, nodes: ProxyNode[], sources: SubscriptionSource[]): ProxyNode[] {
   nodes = nodes.filter(node => node.enabled !== false && (sources.length === 0 || sources.some(source => source.enabled && source.id === node.sourceId)));
   const uses = group.sources || group.use || [];
@@ -23,8 +27,7 @@ export function resolveGroupNodes(group: ProxyGroupItem, nodes: ProxyNode[], sou
   }));
   let result = uses.length ? nodes.filter(node => node.sourceId && selected.has(node.sourceId)) : nodes;
   if (group.filter) {
-    const pattern = group.filter.replace(/\(\?i\)/g, '');
-    const regex = new RegExp(pattern, 'i');
+    const regex = groupNamePattern(group.filter);
     result = result.filter(n => regex.test(n.name));
   }
   return result;

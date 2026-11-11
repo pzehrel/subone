@@ -70,9 +70,16 @@ export function completeOutputDependencies(plan: GenerationPlan, supportsNode: (
       complete(trial);
       return allocate([...trial.ordinaryNodes, ...trial.dependencyNodes], trial.groups).nodes;
     };
-    const next = connectionGroupMembers(plan, necessaryGroups, allocate, project);
+    const { next, searchLimited } = connectionGroupMembers(plan, necessaryGroups, allocate, project);
     const key = membershipKey(next);
-    if (key === membershipKey(plan.dynamicNodeIds)) return necessaryGroups;
+    if (key === membershipKey(plan.dynamicNodeIds)) {
+      if (!searchLimited.size) return necessaryGroups;
+      const generation = generationMetadata(plan);
+      for (const group of plan.groups.filter(group => searchLimited.has(group.id))) {
+        generation.diagnostics.push({ code: 'group-naming-search-limit', severity: 'error', message: `必要策略组「${group.name}」的候选组合过多，请缩小筛选范围或指定出站` });
+      }
+      throw new GenerationError('必要连接需修复', generation);
+    }
     if (seen.has(key)) {
       const generation = generationMetadata(plan);
       const names = plan.groups.filter(group => necessaryGroups.has(group.id)).map(group => group.name);

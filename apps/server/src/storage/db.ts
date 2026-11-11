@@ -1,3 +1,4 @@
+import { restoreInputFields } from '../services/node-naming';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -178,6 +179,7 @@ export function loadConfig(): AppConfig {
         : INITIAL_COUNTRY_RULES;
 
       const sources: SubscriptionSource[] = Array.isArray(parsed.sources) ? parsed.sources : [];
+      restoreInputFields(sources, countryRules);
       sources.forEach(s => {
         if (s.id === 'custom' && (!s.name || s.name === '自建节点' || s.name === '独立节点组')) {
           s.name = '独立节点组';

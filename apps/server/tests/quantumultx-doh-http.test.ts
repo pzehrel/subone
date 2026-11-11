@@ -177,7 +177,7 @@ test('QuanX downloads keep a single hash candidate explicit and restore hashing 
     assert.equal(result.success, true, JSON.stringify(result));
     const policy = result.data.split('\n').find((line: string) => line.startsWith('static=AUTO_TW,'));
     assert.ok(policy);
-    assert.deepEqual(quantumultXReferences({ quantumultxLines: ['[policy]', policy] }).map(reference => reference.literal), [source.nodes[0].name]);
+    assert.deepEqual(quantumultXReferences({ quantumultxLines: ['[policy]', policy] }).map(reference => reference.literal), ['qx-hash-single_台湾 01']);
     assert.doesNotMatch(policy, /(?:resource|server)-tag-regex=|, direct(?:,|$)/);
     const response = await fetch(`${origin}/s/${profile.token}/qx?expand=${expandNodes}`);
     assert.equal(response.status, 200);
@@ -196,7 +196,7 @@ test('QuanX downloads keep a single hash candidate explicit and restore hashing 
   assert.equal(updated.success, true, JSON.stringify(updated));
   const policy = updated.data.split('\n').find((line: string) => line.startsWith('dest-hash=AUTO_TW,'));
   assert.ok(policy);
-  assert.deepEqual(quantumultXReferences({ quantumultxLines: ['[policy]', policy] }).map(reference => reference.literal), ['🇨🇳 台湾W01 | IEPL | x2', '🇨🇳 台湾W03 | IEPL | x2']);
+  assert.deepEqual(quantumultXReferences({ quantumultxLines: ['[policy]', policy] }).map(reference => reference.literal), ['qx-hash-single_台湾 01', 'qx-hash-single_台湾 02']);
 });
 
 test('QuanX AUTO groups retain explicit local candidates for complete and resource-based downloads', async () => {
