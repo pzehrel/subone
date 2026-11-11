@@ -208,6 +208,7 @@ test('QuanX AUTO groups retain explicit local candidates for complete and resour
   const other = await add('/qx-auto-other', [], { proxies: [
     { name: 'SGP Excluded', type: 'socks5', server: 'sg-other.example', port: 1080 },
   ] });
+  for (const item of [source, other]) await api(`/sources/${item.id}`, 'PUT', { nameTemplate: '' });
   const group = (await api('/groups', 'POST', {
     name: 'AUTO_SGP', type: 'load-balance', strategy: 'consistent-hashing', sources: [source.id], filter: '^SGP',
   })).data;

@@ -184,6 +184,7 @@ test('native template references and managed references follow stable renames wi
     { name: 'Template node', type: 'socks5', server: 'collision.native.example', port: 1081 },
     { name: 'DIRECT', type: 'socks5', server: 'builtin.native.example', port: 1082 },
   ], []);
+  await api(`/sources/${source.id}`, 'PUT', { nameTemplate: '' });
   const content = {
     ...nativeTemplate,
     proxies: [{ socks5: { ...nativeTemplate.proxies[0].socks5, prev_hop: 'Stable upstream' } }],

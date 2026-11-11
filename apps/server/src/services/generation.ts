@@ -4,7 +4,7 @@ import { getAppConfig } from '../context';
 import { generateMihomoConfig } from '../core/generators/mihomo-generator';
 import { generateSingboxDocument } from '../core/generators/singbox-generator';
 import { generateLoonConfig, nodeToLoonProxy } from '../core/generators/loon-generator';
-import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../core/generators/shadowrocket-generator';
+import { generateShadowrocketConfig, generateShadowrocketBase64, nodeToUri, nodeToShadowrocketProxy } from '../core/generators/shadowrocket-generator';
 import { getEffectiveNodes, getEffectiveNodesForProfile, getEffectiveGroupsForProfile, getEffectiveRulesForProfile, getEffectiveSourcesForProfile } from './profile-service';
 import { resolveOutputReferences, prepareTemplateReferences, resolveTemplateReferences, templateOutboundNames, nodeReference, groupReference } from './node-references';
 import { createRuntimeInventory, collectRuntimeDependencies, validateSingboxRuntime } from './generation/runtime-dependencies';
@@ -13,7 +13,9 @@ import { renderEgern, renderEgernSource } from './generation/adapters/egern';
 import { adaptLoonDns, validateLoonRuntime } from './generation/adapters/loon';
 import { adaptMihomoDns, renderMihomoSource, validateMihomoRuntime } from './generation/adapters/mihomo';
 import { adaptShadowrocketDns, diagnosePureNodes, validateShadowrocketRuntime } from './generation/adapters/shadowrocket';
-import { renderQuantumultX, renderQuantumultXSource } from './generation/adapters/quantumultx';
+import { renderQuantumultX, renderQuantumultXSource, validateQuantumultXNodeChains } from './generation/adapters/quantumultx';
+import type { ProxyNode } from '../types';
+import { isSupportedByQuantumultX } from '../core/generators/quantumultx-generator';
 import { renderIniDomainDns } from './generation/native-domain-dns';
 import { GenerationError, generationMetadata, type GenerationMetadata, type GenerationOptions, type GenerationPlan } from './generation/types';
 export { GenerationError } from './generation/types';
@@ -24,11 +26,21 @@ export type { GenerationPlan, GenerationMetadata, GenerationBinding, GenerationD
 export async function createGenerationPlan(options: GenerationOptions): Promise<GenerationPlan> {
   const config = structuredClone(getAppConfig());
   options = structuredClone(options);
-  const ordinary = options.profile ? await getEffectiveNodesForProfile(options.profile, config) : await getEffectiveNodes(config);
+  const uriNodes = options.target === 'shadowrocket' && ['base64', 'b64'].includes(options.format || '');
+  const nodeOnly = uriNodes || options.outputRole === 'nodes';
+  const supportsNode = (node: ProxyNode): boolean => {
+    if (uriNodes) return !!nodeToUri(node);
+    if (options.target === 'quantumultx') return isSupportedByQuantumultX(node);
+    if (options.target === 'loon') return !nodeToLoonProxy(node).startsWith('#');
+    if (options.target === 'shadowrocket') return !nodeToShadowrocketProxy(node).startsWith('#');
+    // Targets with authoritative conversion errors keep reporting them during rendering.
+    return true;
+  };
+  const selected = options.profile ? await getEffectiveNodesForProfile(options.profile, config) : await getEffectiveNodes(config);
+  const ordinary = uriNodes ? selected : selected.filter(supportsNode);
   const groups = options.profile ? getEffectiveGroupsForProfile(options.profile, ordinary, config) : config.proxyGroups;
   const sources = options.profile ? getEffectiveSourcesForProfile(options.profile, ordinary, config) : config.sources;
   const savedTemplate = config.templates.find(template => template.id === (options.templateId || options.profile?.templates?.[options.target])) || config.templates.find(template => template.type === options.target && template.content === options.templateContent);
-  const nodeOnly = options.target === 'shadowrocket' && ['base64', 'b64'].includes(options.format || '') || options.outputRole === 'source' && ['shadowrocket', 'singbox'].includes(options.target);
   const template = nodeOnly ? { id: 'nodes-only', name: '', type: options.target, content: options.templateContent } : prepareTemplateReferences({ ...(savedTemplate || { id: 'unsaved', name: '', type: options.target }), content: options.templateContent }, config, savedTemplate);
   const stableTemplate = (nodes: typeof ordinary, selectedGroups: typeof groups) => resolveTemplateReferences(template, nodes.map(node => ({ ...node, name: nodeReference(node.id) })), selectedGroups.map(group => ({ ...group, name: groupReference(group.id) })));
   const plan: GenerationPlan = {
@@ -53,6 +65,14 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
         method: nodeOnly ? 'nodes-only' : 'template-dns', appliedServiceIds: [], diagnostics: [] }];
     });
   };
+  // Capability errors apply even when a target would otherwise omit that protocol.
+  if (options.target === 'quantumultx') validateQuantumultXNodeChains({ ...plan, ordinaryNodes: selected });
+  if (!nodeOnly && options.target === 'shadowrocket' && selected.some(node => !supportsNode(node))) {
+    bindNodes();
+    adaptShadowrocketDns({ ...plan, ordinaryNodes: selected.filter(node => !supportsNode(node)), groups: [] });
+    const generation = generationMetadata(plan);
+    if (generation.diagnostics.some(diagnostic => diagnostic.severity === 'error')) throw new GenerationError('连接依赖需修复', generation);
+  }
   // Completion works on stable identities, before allocating any client-facing names.
   // Each newly required source can introduce its own DNS/bootstrap connections.
   let changed: boolean;
@@ -72,6 +92,11 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
       if (requirement.state !== 'omitted' || included.has(requirement.nodeId)) continue;
       const entry = plan.inventory.nodes.find(entry => entry.node.id === requirement.nodeId);
       if (!entry || entry.state !== 'enabled') continue;
+      if (!supportsNode(entry.node)) {
+        const generation = generationMetadata(plan);
+        generation.diagnostics.push({ code: options.target === 'quantumultx' ? 'quantumultx-reference-missing' : 'required-node-unsupported', severity: 'error', sourceId: entry.sourceId, message: `目标客户端无法输出必要节点：${entry.node.name}` });
+        throw new GenerationError('必要连接需修复', generation);
+      }
       plan.dependencyNodes.push(structuredClone(entry.node));
       plan.dependencyReasons!.push(requirement);
       included.add(entry.node.id); changed = true;
@@ -84,7 +109,14 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
     }
     plan.templateContent = stableTemplate([...plan.ordinaryNodes, ...plan.dependencyNodes], plan.groups);
   } while (changed);
-  const resolved = resolveOutputReferences(nameOutputNodes([...plan.ordinaryNodes, ...plan.dependencyNodes], plan.inventory.sources), nodeOnly ? [] : plan.groups, plan.inventory.sources, nodeOnly ? 'uri' : options.target, nodeOnly ? [] : templateOutboundNames(template));
+  if (uriNodes) {
+    // Preserve existing omission diagnostics, but omitted URI protocols never consume a number.
+    diagnosePureNodes({ ...plan, ordinaryNodes: plan.ordinaryNodes.filter(node => !supportsNode(node)) });
+    plan.ordinaryNodes = plan.ordinaryNodes.filter(supportsNode);
+    const written = new Set(plan.ordinaryNodes.map(node => node.id));
+    plan.bindings = plan.bindings.map(binding => ({ ...binding, nodeIds: binding.nodeIds.filter(id => written.has(id)) }));
+  }
+  const resolved = resolveOutputReferences(nameOutputNodes([...plan.ordinaryNodes, ...plan.dependencyNodes], plan.inventory.sources), nodeOnly ? [] : plan.groups, plan.inventory.sources, uriNodes ? 'uri' : options.target, nodeOnly ? [] : templateOutboundNames(template));
   const ordinaryIds = new Set(plan.ordinaryNodes.map(node => node.id));
   plan.ordinaryNodes = resolved.nodes.filter(node => ordinaryIds.has(node.id));
   plan.dependencyNodes = resolved.nodes.filter(node => !ordinaryIds.has(node.id));
@@ -161,6 +193,12 @@ export function renderSourceGeneration(plan: GenerationPlan, sourceId: string): 
     }
     case 'quantumultx': return renderQuantumultXSource(plan, sourceId);
     case 'egern': return { output: renderEgernSource(plan, sourceId), contentType: 'text/yaml; charset=utf-8' };
-    default: return { output: generateShadowrocketBase64(nodes), contentType: 'text/plain; charset=utf-8' };
+    default: {
+      const slice = structuredClone(plan);
+      slice.target.mode = 'nodes'; slice.ordinaryNodes = nodes; slice.dependencyNodes = [];
+      slice.bindings = slice.bindings.filter(binding => binding.sourceId === sourceId).map(binding => ({ ...binding, status: 'ignored' as const, method: 'nodes-only', appliedServiceIds: [], diagnostics: [] }));
+      diagnosePureNodes(slice);
+      return { output: generateShadowrocketBase64(nodes), contentType: 'text/plain; charset=utf-8', generation: generationMetadata(slice) };
+    }
   }
 }
