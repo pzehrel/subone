@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mihomoDnsFragment } from '../mihomo-dns';
 import { isIP } from 'node:net';
+import yaml from 'js-yaml';
 import type { SourceDohOutbound, SourceDohReference, SourceDohResult, SourceDohService, SourceFormat, SourceRawRecord, SubscriptionSource } from '../../types';
 
 const mihomoLists = new Set(['nameserver', 'fallback', 'default-nameserver', 'proxy-server-nameserver', 'direct-nameserver']);
@@ -206,8 +207,26 @@ export function extractQuanxDomainAliases(raw: Pick<SourceRawRecord, 'content' |
   return aliases;
 }
 
+/** Read the successful alias snapshot, including sources saved before aliases were captured. */
+export function sourceDomainAliases(source: SubscriptionSource): Record<string, string> {
+  if (source.doh?.domainAliases) return source.doh.domainAliases;
+  const raw = source.rawSubscription;
+  if (source.doh?.format === 'quantumultx') return raw?.parseStatus === 'success' ? extractQuanxDomainAliases(raw) : {};
+  if (source.doh?.format !== 'mihomo') return {};
+  // parsedConfig remains the last successful document after an unsuccessful update.
+  let document: unknown = source.parsedConfig;
+  if (!document && raw?.parseStatus === 'success' && raw.format === 'mihomo') {
+    try { document = yaml.load(raw.encoding === 'base64' ? Buffer.from(raw.content, 'base64').toString('utf8') : raw.content); }
+    catch { return {}; }
+  }
+  const hosts = document && typeof document === 'object' && !Array.isArray(document) ? (document as Record<string, unknown>).hosts : undefined;
+  if (!hosts || typeof hosts !== 'object' || Array.isArray(hosts)) return {};
+  // Only exact domain-to-domain mappings can be represented by the shared alias pipeline.
+  return Object.fromEntries(Object.entries(hosts).filter(([from, to]) => typeof to === 'string' && !isIP(from) && !isIP(to) && !/[\s*?\\/:,]/.test(from + to))) as Record<string, string>;
+}
+
 /** Keep aliases with the successful DNS snapshot, never with a later failed response. */
 export function preserveSourceDomainAliases(source: SubscriptionSource): void {
-  if (source.doh?.format !== 'quantumultx' || source.doh.domainAliases || source.rawSubscription?.parseStatus !== 'success') return;
-  source.doh.domainAliases = extractQuanxDomainAliases(source.rawSubscription);
+  if (!source.doh || source.doh.domainAliases || !['quantumultx', 'mihomo'].includes(source.doh.format)) return;
+  source.doh.domainAliases = sourceDomainAliases(source);
 }

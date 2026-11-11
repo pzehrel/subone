@@ -19,6 +19,7 @@ export function nodeToQuantumultXProxy(node: ProxyNode): string {
   if (node.type === 'anytls') {
     let line = `anytls=${serverWithPort}, password=${node.password || ''}, over-tls=true`;
     if (node.sni) line += `, tls-host=${node.sni}`;
+    if (node.skipCertVerify !== undefined) line += `, tls-verification=${!node.skipCertVerify}`;
     if (node.reality?.enabled && node.reality.publicKey) {
       line += `, reality-base64-pubkey=${node.reality.publicKey}`;
       if (node.reality.shortId) {
