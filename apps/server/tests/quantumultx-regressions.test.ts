@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { quantumultXReferences } from '../src/core/quantumultx-config';
 import { UnsupportedProxyGroupError } from '../src/core/generators/errors';
 import {
   generateQuantumultXConfig,
@@ -9,6 +10,23 @@ import {
 import type { ProxyGroupItem, ProxyNode, SubscriptionSource, UnifiedRuleItem } from '../src/types/index';
 
 const template = '[server_local]\n\n[policy]\n\n[filter_remote]\n\n[filter_local]\n';
+
+test('complete Quantumult X hash policies reference their local server candidates explicitly', () => {
+  const nodes: ProxyNode[] = [
+    { id: 'sg-one', name: 'SGP 01', type: 'socks5', server: 'one.invalid', port: 1080, sourceId: 'upstream' },
+    { id: 'sg-two', name: 'SGP 02', type: 'socks5', server: 'two.invalid', port: 1080, sourceId: 'upstream' },
+  ];
+  const source: SubscriptionSource = { id: 'upstream', name: 'Upstream', type: 'manual', enabled: true };
+  const group: ProxyGroupItem = {
+    id: 'sgp', name: 'AUTO_SGP', type: 'load-balance', strategy: 'consistent-hashing', sources: ['upstream'],
+  };
+  const output = generateQuantumultXConfig(template, nodes, [group], [], [source], { expandNodes: true });
+  const policy = output.split('\n').find(line => line.startsWith('dest-hash=AUTO_SGP,'));
+  assert.ok(policy);
+  const references = quantumultXReferences({ quantumultxLines: ['[policy]', policy] }).map(reference => reference.literal);
+  assert.deepEqual(references, nodes.map(node => node.name));
+  assert.doesNotMatch(policy, /(?:resource|server)-tag-regex=|, direct(?:,|$)/);
+});
 
 test('AnyTLS preserves explicit certificate verification and leaves an absent option at the client default', () => {
   const node: ProxyNode = { id: 'anytls', name: 'AnyTLS', type: 'anytls', server: 'anytls.node.invalid', port: 443, password: 'fixture-password', sni: 'tls.node.invalid' };
@@ -37,7 +55,7 @@ test('VMess TCP TLS uses Quantumult X obfs fields instead of tls=true', () => {
   }
 });
 
-test('Quantumult X dest-hash selects a single candidate through the documented tag regex syntax', () => {
+test('Quantumult X uses the sole server for a single-candidate hash policy without changing saved intent', () => {
   const node: ProxyNode = {
     id: 'tw', name: '🇨🇳 台湾W01 | IEPL | x2', type: 'ss',
     server: 'tw.invalid', port: 443, sourceId: 'upstream',
@@ -51,16 +69,19 @@ test('Quantumult X dest-hash selects a single candidate through the documented t
     id: 'upstream', name: 'Upstream', type: 'remote', enabled: true, url: 'https://upstream.invalid/sub',
   };
   const output = generateQuantumultXConfig(template, [node], [group], [], [source], { expandNodes: true });
-  const policy = output.split('\n').find(line => line.startsWith('dest-hash=AUTO_TW,'));
+  const policy = output.split('\n').find(line => line.startsWith('static=AUTO_TW,'));
 
   assert.ok(policy);
-  assert.match(policy, /^dest-hash=AUTO_TW, server-tag-regex=/);
-  const pattern = policy.split('server-tag-regex=')[1].split(', ')[0];
-  assert.ok(new RegExp(pattern).test(node.name));
-  assert.ok(!new RegExp(pattern).test('🇨🇳 台湾W02 | IEPL | x2'));
+  assert.deepEqual(quantumultXReferences({ quantumultxLines: ['[policy]', policy] }).map(reference => reference.literal), [node.name]);
+  assert.doesNotMatch(policy, /(?:resource|server)-tag-regex=|, direct(?:,|$)/);
+  assert.equal(group.type, 'load-balance');
+  assert.equal(group.strategy, 'consistent-hashing');
+  const second = { ...node, id: 'tw-two', name: '🇨🇳 台湾W02 | IEPL | x2' };
+  const updated = generateQuantumultXConfig(template, [node, second], [group], [], [source], { expandNodes: true });
+  assert.match(updated, /^dest-hash=AUTO_TW, 🇨🇳 台湾W01 \| IEPL \| x2, 🇨🇳 台湾W02 \| IEPL \| x2,/m);
 });
 
-test('dest-hash keeps exact escaped candidates across source, filter, explicit and dependency groups', () => {
+test('dest-hash keeps exact server references across source, filter, explicit and dependency groups', () => {
   const nodes: ProxyNode[] = [
     { id: 'one', name: 'TW [01].+ (IEPL) | x2 $^?*\\', type: 'socks5', server: 'one.invalid', port: 1080, sourceId: 'selected' },
     { id: 'two', name: 'TW=02,IEPL', type: 'socks5', server: 'two.invalid', port: 1080, sourceId: 'selected' },
@@ -88,16 +109,14 @@ test('dest-hash keeps exact escaped candidates across source, filter, explicit a
       });
       const policy = output.split('\n').find(line => line.startsWith('dest-hash=Hash,'));
       assert.ok(policy, JSON.stringify({ selection, dependency }));
-      const pattern = new RegExp(policy.split('server-tag-regex=')[1].split(', ')[0]);
-      for (const name of expected) assert.ok(pattern.test(name), name);
-      for (const name of ['TW Other', 'TW Unsupported', 'TW 01ZZ IEPL | x2', expected[0] + 'suffix', 'prefix' + expected[1]]) {
-        assert.ok(!pattern.test(name), name);
-      }
+      const references = quantumultXReferences({ quantumultxLines: ['[policy]', policy] }).map(reference => reference.literal);
+      assert.deepEqual(references, expected);
+      assert.doesNotMatch(policy, /(?:resource|server)-tag-regex=/);
     }
   }
 });
 
-test('dest-hash does not silently turn builtins or child policies into server-tag matches', () => {
+test('dest-hash refuses builtins and child policies instead of changing the candidate set', () => {
   for (const member of ['DIRECT', 'REJECT', 'Child', 'Native']) {
     const groups: ProxyGroupItem[] = [
       { id: 'hash', name: 'Hash', type: 'load-balance', strategy: 'consistent-hashing', sources: ['source'], proxies: [member] },

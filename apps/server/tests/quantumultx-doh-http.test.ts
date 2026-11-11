@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import yaml from 'js-yaml';
+import { quantumultXReferences } from '../src/core/quantumultx-config';
 
 let directory: string, child: ChildProcess, origin: string, upstreamOrigin: string;
 const bodies = new Map<string, string>();
@@ -156,7 +157,7 @@ test('default Quantumult X downloads contain the selected nodes without fetching
   }
 });
 
-test('QuanX downloads keep a single-node consistent hash policy as an exact tag selector', async () => {
+test('QuanX downloads keep a single hash candidate explicit and restore hashing after an upstream update', async () => {
   const source = await add('/qx-hash-single', [], { proxies: [
     { name: '🇨🇳 台湾W01 | IEPL | x2', type: 'ss', server: 'tw.hash.example', port: 443, cipher: 'aes-128-gcm', password: 'fixture-password' },
     { name: 'HK Other', type: 'socks5', server: 'hk.hash.example', port: 1080 },
@@ -174,13 +175,10 @@ test('QuanX downloads keep a single-node consistent hash policy as an exact tag 
   for (const expandNodes of [true, false]) {
     const result = await preview(profile, expandNodes);
     assert.equal(result.success, true, JSON.stringify(result));
-    const policy = result.data.split('\n').find((line: string) => line.startsWith('dest-hash=AUTO_TW,'));
+    const policy = result.data.split('\n').find((line: string) => line.startsWith('static=AUTO_TW,'));
     assert.ok(policy);
-    assert.match(policy, /^dest-hash=AUTO_TW, server-tag-regex=/);
-    const pattern = new RegExp(policy.split('server-tag-regex=')[1].split(', ')[0]);
-    assert.ok(pattern.test(source.nodes[0].name));
-    assert.ok(!pattern.test(other.nodes[0].name));
-    assert.ok(!pattern.test('HK Other'));
+    assert.deepEqual(quantumultXReferences({ quantumultxLines: ['[policy]', policy] }).map(reference => reference.literal), [source.nodes[0].name]);
+    assert.doesNotMatch(policy, /(?:resource|server)-tag-regex=|, direct(?:,|$)/);
     const response = await fetch(`${origin}/s/${profile.token}/qx?expand=${expandNodes}`);
     assert.equal(response.status, 200);
     assert.equal(await response.text(), result.data);
@@ -188,6 +186,43 @@ test('QuanX downloads keep a single-node consistent hash policy as an exact tag 
   const saved = (await api('/groups')).data.find((group: any) => group.id === added.data.id);
   assert.equal(saved.type, 'load-balance');
   assert.equal(saved.strategy, 'consistent-hashing');
+  bodies.set('/qx-hash-single', yaml.dump({ proxies: [
+    { name: '🇨🇳 台湾W01 | IEPL | x2', type: 'ss', server: 'tw.hash.example', port: 443, cipher: 'aes-128-gcm', password: 'fixture-password' },
+    { name: '🇨🇳 台湾W03 | IEPL | x2', type: 'socks5', server: 'tw-three.hash.example', port: 1080 },
+  ] }));
+  const refreshed = await api(`/sources/${source.id}/refresh`, 'POST');
+  assert.equal(refreshed.success, true, JSON.stringify(refreshed));
+  const updated = await preview(profile);
+  assert.equal(updated.success, true, JSON.stringify(updated));
+  const policy = updated.data.split('\n').find((line: string) => line.startsWith('dest-hash=AUTO_TW,'));
+  assert.ok(policy);
+  assert.deepEqual(quantumultXReferences({ quantumultxLines: ['[policy]', policy] }).map(reference => reference.literal), ['🇨🇳 台湾W01 | IEPL | x2', '🇨🇳 台湾W03 | IEPL | x2']);
+});
+
+test('QuanX AUTO groups retain explicit local candidates for complete and resource-based downloads', async () => {
+  const source = await add('/qx-auto-members', [], { proxies: [
+    { name: 'SGP 01', type: 'socks5', server: 'sg-one.example', port: 1080 },
+    { name: 'SGP 02', type: 'socks5', server: 'sg-two.example', port: 1080 },
+    { name: 'HK Other', type: 'socks5', server: 'hk-other.example', port: 1080 },
+  ] });
+  const other = await add('/qx-auto-other', [], { proxies: [
+    { name: 'SGP Excluded', type: 'socks5', server: 'sg-other.example', port: 1080 },
+  ] });
+  const group = (await api('/groups', 'POST', {
+    name: 'AUTO_SGP', type: 'load-balance', strategy: 'consistent-hashing', sources: [source.id], filter: '^SGP',
+  })).data;
+  const { profile } = await profileFor([source, other], template, undefined, [group]);
+  for (const expandNodes of [true, false]) {
+    const result = await preview(profile, expandNodes);
+    assert.equal(result.success, true, JSON.stringify(result));
+    const policy = result.data.split('\n').find((line: string) => line.startsWith('dest-hash=AUTO_SGP,'));
+    assert.ok(policy);
+    assert.deepEqual(quantumultXReferences({ quantumultxLines: ['[policy]', policy] }).map(reference => reference.literal), ['SGP 01', 'SGP 02']);
+    assert.doesNotMatch(policy, /(?:resource|server)-tag-regex=|, direct(?:,|$)/);
+    const response = await fetch(`${origin}/s/${profile.token}/qx?expand=${expandNodes}`);
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), result.data);
+  }
 });
 
 test('VMess TCP TLS uses native obfs fields in full downloads and both node resource endpoints', async () => {
