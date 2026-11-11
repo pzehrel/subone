@@ -7,7 +7,7 @@ import { renderIniDomainDns } from '../native-domain-dns';
 
 /** Source server domains use native scoped DoH entries. */
 export function renderQuantumultX(plan: GenerationPlan): string {
-  validateNodeChains(plan);
+  validateQuantumultXNodeChains(plan);
   if (plan.dependencyNodes.length) {
     const template = { quantumultxLines: plan.templateContent.split('\n') };
     const dynamic = quantumultXEntries(template).filter(entry => entry.section === 'policy' && entry.parts.some(part => /server-tag-regex\s*=/.test(part))).map(entry => entry.parts[0].slice(entry.parts[0].indexOf('=') + 1).trim());
@@ -61,7 +61,7 @@ function validateQuantumultXReferences(output: string, plan: GenerationPlan): vo
 }
 
 /** No documented QX node-chain field is substituted for a source detour. */
-function validateNodeChains(plan: GenerationPlan): void {
+export function validateQuantumultXNodeChains(plan: GenerationPlan): void {
   const diagnostics: GenerationDiagnostic[] = [...plan.ordinaryNodes, ...plan.dependencyNodes].flatMap(node => {
     const original = plan.inventory.nodes.find(entry => entry.node.id === node.id)?.node || node;
     const detour = original.detourRef || original.detour || (original.raw && typeof original.raw === 'object' && (original.raw.detour || original.raw['dialer-proxy']));
@@ -88,8 +88,8 @@ export function renderQuantumultXNodes(input: GenerationPlan, sourceId?: string)
     const nodeIds = binding.nodeIds.filter(id => selectedIds.has(id));
     return nodeIds.length ? [{ ...binding, nodeIds, services: [], status: 'ignored' as const, method: 'nodes-only', appliedServiceIds: [], diagnostics: [] }] : [];
   });
-  validateNodeChains(plan);
-  return { output: plan.ordinaryNodes.map(nodeToQuantumultXProxy).join('\n'), contentType: 'text/plain; charset=utf-8' };
+  validateQuantumultXNodeChains(plan);
+  return { output: plan.ordinaryNodes.filter(isSupportedByQuantumultX).map(nodeToQuantumultXProxy).join('\n'), contentType: 'text/plain; charset=utf-8' };
 }
 
 /** Complete only retained native/managed outbound references, never unapplied source DNS. */

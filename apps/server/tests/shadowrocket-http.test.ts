@@ -74,7 +74,7 @@ test('Shadowrocket adopts each source DoH list in native Host mappings', async (
   assert.deepEqual((await api('/sources')).data.find((entry: any) => entry.id === a.id).doh, a.doh);
 });
 
-test('pure Base64 and URI source endpoints preserve local punctuation names and ignore every unused DNS graph', async () => {
+test('pure Base64 retains punctuation while source slices use the complete target name and ignore unused DNS graphs', async () => {
   bodies.set('/rocket-pure', JSON.stringify({ outbounds: [
     { type: 'trojan', tag: 'Original', server: 'pure.node.example', server_port: 443, password: 'secret' },
     { type: 'trojan', tag: 'DNS exit', server: 'unused.dns.exit.example', server_port: 443, password: 'other' },
@@ -99,7 +99,9 @@ test('pure Base64 and URI source endpoints preserve local punctuation names and 
     `/s/${profile.token}/source/${source.id}?target=shadowrocket`, `/s/${profile.token}/source/${source.id}/rocket`,
     `/s/${profile.token}/source/${source.id}?target=singbox`, `/s/${profile.token}/source/${source.id}/singbox`,
   ]) {
-    const response = await fetch(origin + path); assert.equal(response.status, 200, path); assert.equal(await response.text(), preview.data, path);
+    const response = await fetch(origin + path); assert.equal(response.status, 200, path);
+    const expected = /source\/.*(?:shadowrocket|rocket)/.test(path) ? 'trojan://secret@pure.node.example:443#Local_%20A_B' : decoded(preview.data);
+    assert.equal(decoded(await response.text()), expected, path);
   }
   const saved = (await api('/sources')).data.find((entry: any) => entry.id === source.id);
   assert.equal(saved.nodes.find((node: any) => node.id === ordinary.id).raw.tag, 'Original');
@@ -177,7 +179,9 @@ test('retained Shadowrocket template dependencies remain outside ordinary candid
   const pure = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'shadowrocket', format: 'base64' });
   assert.equal(pure.generation.dependencyNodeCount, 0); assert.doesNotMatch(decoded(pure.data), /dependency.runtime|dns.unused/);
   assert.equal(await fetch(`${origin}/s/${profile.token}/source/${dependency.id}/rocket`).then(response => response.text()), '');
-  assert.equal(await fetch(`${origin}/s/${profile.token}/source/${ordinary.id}/rocket`).then(response => response.text()), pure.data);
+  const ordinaryName = preview.data.split('\n').find((line: string) => line.includes(' = trojan, ordinary.runtime.example'))!.split(' = ')[0];
+  const slice = await fetch(`${origin}/s/${profile.token}/source/${ordinary.id}/rocket`).then(response => response.text());
+  assert.equal(decodeURIComponent(decoded(slice).split('#')[1]), ordinaryName);
   await api(`/nodes/${dependency.nodes[0].id}`, 'PUT', { enabled: false });
   const invalid = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'shadowrocket' });
   assert.equal(invalid.status, 422);
@@ -213,12 +217,15 @@ test('pure duplicate names, disables and source deletion follow one ordinary sel
   assert.equal(pure.success, true, pure.message);
   const lines = decoded(pure.data).split('\n');
   assert.deepEqual(lines.map(line => decodeURIComponent(line.split('#')[1])).sort(), ['Twin, A=B', 'Twin, A=B (2)']);
+  const sliceNames: string[] = [];
   for (const source of [a, b]) {
     const provider = await fetch(`${origin}/s/${profile.token}/source/${source.id}/rocket`);
     assert.equal(provider.headers.get('X-SubOne-Mode'), 'nodes');
     assert.equal(provider.headers.get('X-SubOne-DoH'), 'ignored');
-    const body = decoded(await provider.text()); assert.ok(lines.includes(body)); assert.equal(body.split('\n').length, 1);
+    const body = decoded(await provider.text()); assert.equal(body.split('\n').length, 1);
+    sliceNames.push(decodeURIComponent(body.split('#')[1]));
   }
+  assert.deepEqual(sliceNames.sort(), ['Twin_ A_B', 'Twin_ A_B (2)']);
   await stopApp(); await startApp();
   assert.equal(await fetch(`${origin}/s/${profile.token}/rocket?format=base64`).then(response => response.text()), pure.data);
   await api(`/nodes/${a.nodes[0].id}`, 'PUT', { enabled: false });

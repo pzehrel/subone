@@ -33,7 +33,7 @@ export interface GenerationOptions {
   baseUrl?: string;
   subToken?: string;
   format?: string;
-  outputRole?: 'source';
+  outputRole?: 'source' | 'nodes';
 }
 export interface GenerationPlan {
   target: { type: ClientType; version?: string; mode: 'complete' | 'nodes' };

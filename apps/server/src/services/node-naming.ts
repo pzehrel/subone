@@ -28,9 +28,12 @@ export function nameOutputNodes(nodes: ProxyNode[], sources: SubscriptionSource[
     const input = namingInput(node);
     copy.name = input;
     const region = detectRegion(input);
+    copy.countryCode = region?.code;
+    copy.countryEmoji = region?.emoji;
     if (!region) return copy;
-    const index = (counts.get(region.name) || 0) + 1;
-    counts.set(region.name, index);
+    const placeKey = `${region.code || ''}:${region.name}`;
+    const index = (counts.get(placeKey) || 0) + 1;
+    counts.set(placeKey, index);
     const source = sources.find(source => source.id === node.sourceId);
     const template = source?.nameTemplate ?? DEFAULT_NAME_TEMPLATE;
     if (!template) return copy;
