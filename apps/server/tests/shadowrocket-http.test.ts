@@ -196,11 +196,11 @@ test('native Shadowrocket mounted and filtered groups cannot bypass the ordinary
   const required = (await api('/groups', 'POST', { name: 'Excluded mounted Rocket', type: 'select', sources: [excluded.id] })).data;
   const content = template.replace('[Proxy Group]\n', '[Proxy Group]\nNative filter = select, Excluded mounted Rocket\n').replace('DOMAIN,kept.example,DIRECT', 'FINAL,Native filter');
   const profile = await profileFor([ordinary], content);
-  const invalid = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'shadowrocket' });
-  assert.equal(invalid.status, 422);
-  assert.equal(invalid.generation.nodeCount, 1); assert.equal(invalid.generation.dependencyNodeCount, 0);
-  assert.ok(invalid.generation.diagnostics.some((diagnostic: any) => diagnostic.code === 'shadowrocket-outbound-reference-missing'));
-  assert.equal((await fetch(`${origin}/s/${profile.token}/shadowrocket`)).status, 422);
+  const result = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'shadowrocket' });
+  assert.equal(result.status, 200);
+  assert.equal(result.generation.nodeCount, 1); assert.equal(result.generation.dependencyNodeCount, 0);
+  assert.match(result.data, /^Excluded mounted Rocket = select, REJECT$/m);
+  assert.equal((await fetch(`${origin}/s/${profile.token}/shadowrocket`)).status, 200);
   const pure = await fetch(`${origin}/s/${profile.token}/source/${ordinary.id}/rocket`);
   assert.equal(pure.status, 200); assert.match(decoded(await pure.text()), /filter.ordinary.example/);
   assert.equal(await fetch(`${origin}/s/${profile.token}/source/${excluded.id}/rocket`).then(response => response.text()), '');
@@ -287,19 +287,20 @@ test('URI protocol omissions are explicit while supported nodes remain available
   assert.equal(full.success, true, full.message); assert.match(full.data, /^SOCKS omitted = socks5, uri.socks.example,/m);
 });
 
-test('empty Shadowrocket native filter and includeAll groups retain repair intent instead of direct fallback', async () => {
+test('empty Shadowrocket native filter and includeAll groups use the reject member', async () => {
   const source = await addSource('/rocket-empty-filter', [], 'filter.allowed.example');
   const filtered = (await api('/groups', 'POST', { name: 'No matching Rocket', type: 'urltest', filter: '^NeverMatch$', interval: 45 })).data;
   const content = template.replace('DOMAIN,kept.example,DIRECT', 'FINAL,No matching Rocket');
   const profile = await profileFor([source], content, { selectedGroupIds: [filtered.id] });
   const result = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'shadowrocket' });
-  assert.equal(result.status, 422);
+  assert.equal(result.status, 200);
   assert.equal(result.generation.dependencyNodeCount, 0);
-  assert.ok(result.generation.diagnostics.some((diagnostic: any) => diagnostic.code === 'shadowrocket-outbound-reference-missing'));
+  assert.match(result.data, /^No matching Rocket = url-test, REJECT,/m);
   const includeAll = (await api('/groups', 'POST', { name: 'Empty All Rocket', type: 'select', includeAll: true })).data;
   const empty = await profileFor([source], template.replace('DOMAIN,kept.example,DIRECT', 'FINAL,Empty All Rocket'), { selectedGroupIds: [includeAll.id], nodeFilter: { mode: 'manual', selectedNodeIds: [] } });
   const all = await api('/generate/preview', 'POST', { profileId: empty.id, customType: 'shadowrocket' });
-  assert.equal(all.status, 422); assert.equal(all.generation.nodeCount, 0); assert.equal(all.generation.dependencyNodeCount, 0);
+  assert.equal(all.status, 200); assert.equal(all.generation.nodeCount, 0); assert.equal(all.generation.dependencyNodeCount, 0);
+  assert.match(all.data, /^Empty All Rocket = select, REJECT$/m);
   assert.equal(await fetch(`${origin}/s/${empty.token}/source/${source.id}/rocket`).then(response => response.text()), '');
 });
 

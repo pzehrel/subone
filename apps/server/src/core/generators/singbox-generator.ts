@@ -1,3 +1,4 @@
+import type { OutputGroup } from './group-nodes';
 import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
 import { adaptRulesetForSingbox, formatRuleTag } from './ruleset-adapter';
 import { resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag } from './common';
@@ -366,7 +367,7 @@ export function nodeToSingboxOutbound(node: ProxyNode): any {
 export function generateSingboxConfig(
   templateJson: string,
   nodes: ProxyNode[],
-  proxyGroups: ProxyGroupItem[] = [],
+  proxyGroups: OutputGroup[] = [],
   rulesList: UnifiedRuleItem[] = [],
   sources: any[] = []
 ): string {
@@ -376,7 +377,7 @@ export function generateSingboxConfig(
 export function generateSingboxDocument(
   templateJson: string,
   nodes: ProxyNode[],
-  proxyGroups: ProxyGroupItem[] = [],
+  proxyGroups: OutputGroup[] = [],
   rulesList: UnifiedRuleItem[] = [],
   sources: any[] = [],
   ordinaryNodeIds?: ReadonlySet<string>,
@@ -438,7 +439,7 @@ export function generateSingboxDocument(
 export function injectUnifiedToSingbox(
   doc: any,
   proxyOutbounds: any[],
-  proxyGroups: ProxyGroupItem[],
+  proxyGroups: OutputGroup[],
   rulesList: UnifiedRuleItem[],
   sources: any[] = [],
   ordinaryNodeIds?: ReadonlySet<string>,
@@ -453,6 +454,58 @@ export function injectUnifiedToSingbox(
   const effectiveGroups = proxyGroups;
   const validGroupTags = new Set(effectiveGroups.map(g => g.name));
   const validNodeTags = new Set(proxyOutbounds.map(outbound => outbound.tag));
+
+  function legacyGroupMembers(grp: ProxyGroupItem): string[] {
+    const targetSources = (grp.sources && grp.sources.length > 0)
+      ? grp.sources
+      : (grp.use && grp.use.length > 0 ? grp.use : []);
+
+    const groupCandidates = ordinaryGroupIds && !ordinaryGroupIds.has(grp.id) && targetSources.length ? proxyOutbounds : ordinaryOutbounds;
+    let matchedNodes: any[] = [];
+    if (targetSources.length > 0) {
+      const targetNormalized = new Set(targetSources.map(s => cleanSourceOrGroupName(s).toLowerCase()));
+      matchedNodes = groupCandidates.filter(p => {
+        const sName = cleanSourceOrGroupName(p._sourceName || '').toLowerCase();
+        const sId = (p._sourceId || '').trim().toLowerCase();
+        return targetNormalized.has(sName) || targetNormalized.has(sId);
+      });
+    } else {
+      matchedNodes = [...groupCandidates];
+    }
+
+    if (grp.filter && grp.filter.trim()) {
+      try {
+        const cleanFilter = grp.filter.trim().replace(/^\(\?i\)/i, '').replace(/\(\?i\)/gi, '');
+        const reg = new RegExp(cleanFilter, 'i');
+        matchedNodes = matchedNodes.filter(p => reg.test(p.tag));
+      } catch (e) {
+        console.warn(`[Singbox] Invalid filter regex in group ${grp.name}:`, grp.filter);
+      }
+    }
+
+    let outboundsList: string[];
+    if (targetSources.length === 0 && !grp.filter && grp.proxies && grp.proxies.length > 0) {
+      outboundsList = [...grp.proxies];
+    } else {
+      outboundsList = matchedNodes.map(p => p.tag);
+      if (grp.proxies && grp.proxies.length > 0) {
+        outboundsList = [...grp.proxies, ...outboundsList];
+      }
+    }
+
+    // Preserve explicit members so final connection validation can diagnose missing/cyclic paths.
+    outboundsList = outboundsList.filter(target => !!target && !!target.trim());
+
+    // Deduplicate while preserving order
+    outboundsList = Array.from(new Set(outboundsList));
+
+    // ALWAYS ensure outboundsList is not empty to prevent "missing tags" error in Sing-box
+    if (outboundsList.length === 0 && !targetSources.length && !grp.filter && !grp.proxies?.length) {
+      outboundsList = ['🎯 本地直连'];
+    }
+
+    return outboundsList;
+  }
 
   const groupOutbounds: any[] = [];
   effectiveGroups.forEach(grp => {
@@ -525,54 +578,7 @@ export function injectUnifiedToSingbox(
       return;
     }
 
-    const targetSources = (grp.sources && grp.sources.length > 0)
-      ? grp.sources
-      : (grp.use && grp.use.length > 0 ? grp.use : []);
-
-    const groupCandidates = ordinaryGroupIds && !ordinaryGroupIds.has(grp.id) && targetSources.length ? proxyOutbounds : ordinaryOutbounds;
-    let matchedNodes: any[] = [];
-    if (targetSources.length > 0) {
-      const targetNormalized = new Set(targetSources.map(s => cleanSourceOrGroupName(s).toLowerCase()));
-      matchedNodes = groupCandidates.filter(p => {
-        const sName = cleanSourceOrGroupName(p._sourceName || '').toLowerCase();
-        const sId = (p._sourceId || '').trim().toLowerCase();
-        return targetNormalized.has(sName) || targetNormalized.has(sId);
-      });
-    } else {
-      matchedNodes = [...groupCandidates];
-    }
-
-    if (grp.filter && grp.filter.trim()) {
-      try {
-        const cleanFilter = grp.filter.trim().replace(/^\(\?i\)/i, '').replace(/\(\?i\)/gi, '');
-        const reg = new RegExp(cleanFilter, 'i');
-        matchedNodes = matchedNodes.filter(p => reg.test(p.tag));
-      } catch (e) {
-        console.warn(`[Singbox] Invalid filter regex in group ${grp.name}:`, grp.filter);
-      }
-    }
-
-    let outboundsList: string[] = [];
-    if (targetSources.length === 0 && !grp.filter && grp.proxies && grp.proxies.length > 0) {
-      outboundsList = [...grp.proxies];
-    } else {
-      outboundsList = matchedNodes.map(p => p.tag);
-      if (grp.proxies && grp.proxies.length > 0) {
-        outboundsList = [...grp.proxies, ...outboundsList];
-      }
-    }
-
-    // Preserve explicit members so final connection validation can diagnose missing/cyclic paths.
-    outboundsList = outboundsList.filter(target => !!target && !!target.trim());
-
-    // Deduplicate while preserving order
-    outboundsList = Array.from(new Set(outboundsList));
-
-    // ALWAYS ensure outboundsList is not empty to prevent "missing tags" error in Sing-box
-    if (outboundsList.length === 0 && !targetSources.length && !grp.filter && !grp.proxies?.length) {
-      outboundsList = ['🎯 本地直连'];
-    }
-
+    const outboundsList = grp.membersResolved ? grp.proxies! : legacyGroupMembers(grp);
     if (grp.type === 'urltest' || grp.type === 'fallback') {
       const urltestOutbound: any = {
         tag: grp.name,

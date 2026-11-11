@@ -94,7 +94,7 @@ export function renderQuantumultXNodes(input: GenerationPlan, sourceId?: string)
 
 /** Complete only retained native/managed outbound references, never unapplied source DNS. */
 registerRuntimeDependencyCollector('quantumultx', plan => {
-  const { result, visit } = managedReferenceTraversal(plan, { resolveNames: true, expandGroup: group => !!((group.sources ?? group.use)?.length || group.filter || group.includeAll || !group.proxies?.length) });
+  const { result, visit } = managedReferenceTraversal(plan, { resolveNames: true });
   for (const reference of plan.template?.connectionReferences || []) {
     let final = false;
     try { const slot = JSON.parse(JSON.parse(reference.slot)[0]); final = slot[1] === 'filter_local' && slot[2] === 'final'; } catch { /* Another client's slot is not used here. */ }

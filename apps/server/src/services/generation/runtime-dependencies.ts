@@ -141,21 +141,13 @@ function collectSingboxRuntimeDependencies(plan: GenerationPlan): RuntimeDepende
     for (const member of raw.outbounds ?? raw.proxies ?? []) if (typeof member === 'string') outbound(source, sourceReference(source, member), owner, [...reason, group.name]);
     if (typeof raw.detour === 'string') outbound(source, sourceReference(source, raw.detour), owner, [...reason, group.name]);
   };
-  const ordinaryGroups = new Set(plan.ordinaryGroupIds);
   const managedGroup = (id: string, owner: string, reason: string[], ordinary = false): void => {
-    if (ordinary) ordinaryGroups.add(id);
     if (!once(`${owner}:managed:${id}:${ordinary}`)) return;
     result.groups.push({ groupId: id, bindingSourceId: owner, reason, ordinary });
     const group = plan.inventory.groups.find(group => group.id === id);
     if (!group || ['direct', 'reject'].includes(group.type)) return;
     for (const member of group.proxies || []) templateOutbound(member, owner, [...reason, group.name], ordinary);
-    // Mounted candidates follow the same ordinary selection as generated automatic groups.
-    const mounts = group.sources ?? group.use;
-    const candidatesPool = ordinaryGroups.has(id) ? plan.ordinaryNodes : plan.inventory.nodes.filter(entry => entry.state === 'enabled').map(entry => entry.node);
-    let candidates = mounts?.length ? candidatesPool.filter(candidate => {
-      const entry = plan.inventory.nodes.find(entry => entry.node.id === candidate.id)!; const source = sourceOf(entry.sourceId); return mounts.includes(entry.sourceId) || !!source && mounts.includes(source.name); }) : plan.ordinaryNodes;
-    if (group.filter) { try { const regex = new RegExp(group.filter.replace(/\(\?i\)/gi, ''), 'i'); candidates = candidates.filter(node => regex.test(node.name)); } catch { /* Actual generator reports invalid patterns. */ } }
-    if (group.type !== 'relay' && (mounts?.length || group.filter || !group.proxies?.length)) for (const candidate of candidates) node(candidate.id, owner, [...reason, group.name]);
+    for (const nodeId of plan.dynamicNodeIds?.get(id) || []) node(nodeId, owner, [...reason, group.name]);
   };
   const templateOutbound = (tag: string, owner: string, reason: string[], ordinary = false): void => {
     const native = tag.startsWith('template:');
@@ -225,6 +217,7 @@ function collectSingboxRuntimeDependencies(plan: GenerationPlan): RuntimeDepende
     else resolver(undefined, resolverTag(template.route?.default_domain_resolver), owner, nextReason);
   };
   const ordinaryOwner = plan.bindings[0]?.sourceId || '';
+  for (const id of plan.ordinaryGroupIds) managedGroup(id, ordinaryOwner, ['sing-box policy'], true);
   const routing = { ...template, route: { ...template.route, ...(plan.rules.some(rule => rule.enabled && rule.type === 'FINAL') ? { final: undefined } : {}) } };
   for (const target of singboxRoutingTargets(routing)) templateOutbound(target, ordinaryOwner, ['sing-box routing', target], true);
   for (const binding of plan.bindings) for (const id of binding.nodeIds) node(id, binding.sourceId, [binding.sourceName]);

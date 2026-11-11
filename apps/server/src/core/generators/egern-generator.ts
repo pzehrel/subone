@@ -1,8 +1,8 @@
 import yaml from 'js-yaml';
-import type { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
+import type { ProxyNode, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
 import { cleanSourceOrGroupName, formatCidr, formatSourceGroupTag } from './common';
 import { egernRuleSource } from './egern-ruleset';
-import { resolveGroupNodes } from './group-nodes';
+import { resolveGroupNodes, type OutputGroup } from './group-nodes';
 
 export class EgernConfigError extends Error {
   constructor(public code: string, message: string) { super(message); this.name = 'EgernConfigError'; }
@@ -170,14 +170,14 @@ function parseTemplate(text: string): NativeEntry {
   return document;
 }
 
-export function generateEgernDocument(templateYaml: string, nodes: ProxyNode[], proxyGroups: ProxyGroupItem[] = [], rulesList: UnifiedRuleItem[] = [], sources: SubscriptionSource[] = [], options?: EgernGeneratorOptions): NativeEntry {
+export function generateEgernDocument(templateYaml: string, nodes: ProxyNode[], proxyGroups: OutputGroup[] = [], rulesList: UnifiedRuleItem[] = [], sources: SubscriptionSource[] = [], options?: EgernGeneratorOptions): NativeEntry {
   return injectUnifiedToEgern(parseTemplate(templateYaml), nodes.map(nodeToEgernProxy), nodes, proxyGroups, rulesList, sources, options);
 }
-export function generateEgernConfig(templateYaml: string, nodes: ProxyNode[], proxyGroups: ProxyGroupItem[] = [], rulesList: UnifiedRuleItem[] = [], sources: SubscriptionSource[] = [], options?: EgernGeneratorOptions): string {
+export function generateEgernConfig(templateYaml: string, nodes: ProxyNode[], proxyGroups: OutputGroup[] = [], rulesList: UnifiedRuleItem[] = [], sources: SubscriptionSource[] = [], options?: EgernGeneratorOptions): string {
   return yaml.dump(generateEgernDocument(templateYaml, nodes, proxyGroups, rulesList, sources, options), { indent: 2, lineWidth: -1, noRefs: true });
 }
 
-export function injectUnifiedToEgern(doc: NativeEntry, egernProxies: NativeEntry[], nodes: ProxyNode[], proxyGroups: ProxyGroupItem[], rulesList: UnifiedRuleItem[], sources: SubscriptionSource[] = [], options?: EgernGeneratorOptions): NativeEntry {
+export function injectUnifiedToEgern(doc: NativeEntry, egernProxies: NativeEntry[], nodes: ProxyNode[], proxyGroups: OutputGroup[], rulesList: UnifiedRuleItem[], sources: SubscriptionSource[] = [], options?: EgernGeneratorOptions): NativeEntry {
   const ordinary = nodes.filter(node => !options?.ordinaryNodeIds || options.ordinaryNodeIds.has(node.id));
   doc.proxies = [...(doc.proxies || []), ...egernProxies];
   const groups = proxyGroups.map(group => ({ ...group }));
@@ -199,6 +199,7 @@ export function injectUnifiedToEgern(doc: NativeEntry, egernProxies: NativeEntry
     const candidates = options?.dependencyGroupIds?.has(group.id) && !options.ordinaryGroupIds?.has(group.id) ? nodes : ordinary;
     const groupSources = options?.dependencyGroupIds?.has(group.id) ? options.inventorySources || sources : sources;
     if (group.type === 'direct' || group.type === 'reject') value.policies = [group.type === 'direct' ? 'DIRECT' : 'REJECT'];
+    else if (group.membersResolved) value.policies = group.proxies!.map(name => name === '🎯 本地直连' ? 'DIRECT' : name);
     else {
       const mounted = (group.sources ?? group.use)?.length || group.filter || group.includeAll || ['♻️ 自动选择', '👉 手动选择'].includes(group.name);
       const members = [...(group.proxies || []), ...(mounted || !group.proxies?.length ? resolveGroupNodes(group, candidates, groupSources).map(node => node.name) : [])];

@@ -368,3 +368,52 @@ test('deleting a source also clears stable references to its automatically creat
   assert.equal(saved.connectionReferences.some((entry: any) => entry.target === `group:${group.id}`), false);
   assert.ok(saved.connectionReferences.some((entry: any) => entry.target === 'unresolved:Automatic source group'));
 });
+
+test('a required nested group uses final names and cannot keep a node whose index relied on an excluded sibling', async () => {
+  const exits = await addSource('/indexed-exits', { outbounds: [
+    { type: 'socks', tag: '大阪 former first', server: '192.0.2.211', server_port: 1080 },
+    { type: 'socks', tag: 'Osaka former second', server: '192.0.2.212', server_port: 1080 },
+  ] });
+  await api('/sources/' + exits.id, 'PUT', { nameTemplate: '{region} {region_index}' });
+  const inner = (await api('/groups', 'POST', { name: 'Indexed exits', type: 'select', sources: [exits.id], filter: '^大阪 02$' })).data;
+  const outer = (await api('/groups', 'POST', { name: 'Nested indexed connection', type: 'select', proxies: ['group:' + inner.id] })).data;
+  const ordinary = await addSource('/indexed-ordinary', { outbounds: [{ type: 'socks', tag: 'Main connection', server: 'index.completion.example', server_port: 1080 }], dns: { servers: [{ type: 'https', server: 'dns.index.completion.example' }] } });
+  const content = structuredClone(template);
+  (content.dns.servers[0] as any).detour = outer.name;
+  const profile = await profileFor([ordinary.nodes[0], exits.nodes[0]], content);
+  const valid = await preview(profile);
+  assert.equal(valid.status, 200, JSON.stringify(valid));
+  const doc = JSON.parse(valid.data);
+  assert.deepEqual(doc.outbounds.find((entry: any) => entry.tag === inner.name).outbounds, ['大阪 02']);
+  assert.equal(doc.outbounds.find((entry: any) => entry.server === '192.0.2.212').tag, '大阪 02');
+  assert.deepEqual(valid.generation.dependencyNodes.map((node: any) => node.id), [exits.nodes[1].id]);
+
+  await api('/profiles/' + profile.id, 'PUT', { nodeFilter: { mode: 'manual', selectedNodeIds: [ordinary.nodes[0].id] } });
+  for (const selectedGroupIds of [[profile.group.id], [profile.group.id, outer.id]]) {
+    await api('/profiles/' + profile.id, 'PUT', { selectedGroupIds });
+    const invalid = await preview(profile);
+    assert.equal(invalid.status, 422);
+    assert.match(JSON.stringify(invalid.generation.diagnostics), /Indexed exits/);
+    assert.equal(invalid.generation.dependencyNodeCount, 0);
+    assert.equal((await fetch(origin + '/s/' + profile.token + '/singbox')).status, 422);
+  }
+});
+
+test('a required member can get its final index from its own necessary node chain', async () => {
+  const exits = await addSource('/chained-indexed-exits', { outbounds: [
+    { type: 'socks', tag: '大阪 first hop', server: '192.0.2.213', server_port: 1080 },
+    { type: 'socks', tag: '大阪 exit', server: '192.0.2.214', server_port: 1080, detour: '大阪 first hop' },
+  ] });
+  await api('/sources/' + exits.id, 'PUT', { nameTemplate: '{region} {region_index}' });
+  const inner = (await api('/groups', 'POST', { name: 'Indexed chain exits', type: 'select', sources: [exits.id], filter: '^大阪 02$' })).data;
+  const main = await addSource('/indexed-chain-main', { outbounds: [{ type: 'socks', tag: 'Chain main', server: 'chained-index.completion.example', server_port: 1080 }], dns: { servers: [{ type: 'https', server: 'dns.chained-index.completion.example' }] } });
+  const content = structuredClone(template);
+  (content.dns.servers[0] as any).detour = inner.name;
+  const profile = await profileFor(main.nodes, content);
+  const result = await preview(profile);
+  assert.equal(result.status, 200, JSON.stringify(result));
+  const doc = JSON.parse(result.data);
+  assert.deepEqual(doc.outbounds.find((entry: any) => entry.tag === inner.name).outbounds, ['大阪 02']);
+  assert.equal(doc.outbounds.find((entry: any) => entry.tag === '大阪 02').detour, '大阪 01');
+  assert.equal(result.generation.dependencyNodeCount, 2);
+});

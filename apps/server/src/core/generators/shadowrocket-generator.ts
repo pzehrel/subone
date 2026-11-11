@@ -1,7 +1,7 @@
-import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
+import { ProxyNode, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
 import { adaptRulesetForShadowrocket } from './ruleset-adapter';
 import { formatCidr } from './common';
-import { resolveGroupNodes } from './group-nodes';
+import { resolveGroupNodes, type OutputGroup } from './group-nodes';
 
 export function nodeToShadowrocketProxy(node: ProxyNode): string {
   const name = node.name.replace(/[=,]/g, '_');
@@ -308,7 +308,7 @@ function appendIniSection(content: string, section: string, additions: string[])
 export function generateShadowrocketConfig(
   templateConf: string,
   nodes: ProxyNode[],
-  proxyGroups: ProxyGroupItem[] = [],
+  proxyGroups: OutputGroup[] = [],
   rulesList: UnifiedRuleItem[] = [],
   sources: SubscriptionSource[] = [],
   options?: ShadowrocketGeneratorOptions,
@@ -321,7 +321,7 @@ export function generateShadowrocketConfig(
 export function injectUnifiedToShadowrocket(
   templateConf: string,
   nodes: ProxyNode[],
-  proxyGroups: ProxyGroupItem[],
+  proxyGroups: OutputGroup[],
   rulesList: UnifiedRuleItem[],
   sources: SubscriptionSource[] = [],
   options?: ShadowrocketGeneratorOptions,
@@ -331,7 +331,7 @@ export function injectUnifiedToShadowrocket(
     if (group.type === 'direct' || group.type === 'reject') return `${group.name} = select, ${group.type.toUpperCase()}`;
     const members = [...(group.proxies || [])].map(member => member === '🎯 本地直连' ? 'DIRECT' : member);
     const mounts = group.sources ?? group.use;
-    if (group.type !== 'relay' && (mounts?.length || group.filter || !members.length)) {
+    if (!group.membersResolved && group.type !== 'relay' && (mounts?.length || group.filter || !members.length)) {
       for (const node of resolveGroupNodes(group, ordinary, options?.runtimeSources || sources)) if (!members.includes(node.name)) members.push(node.name);
     }
     if (!members.length && !group.proxies?.length && !mounts?.length && !group.filter && !group.includeAll) members.push('DIRECT');

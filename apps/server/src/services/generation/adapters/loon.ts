@@ -65,7 +65,8 @@ export function adaptLoonDns(plan: GenerationPlan): Map<string, readonly string[
 
 /** Only retained template outbound slots create dependencies; unapplied source DoH does not. */
 registerRuntimeDependencyCollector('loon', plan => {
-  const { result, visit } = managedReferenceTraversal(plan, { resolveNames: true, expandGroup: group => group.type !== 'relay' && !!((group.sources ?? group.use)?.length || group.filter || !group.proxies?.length) });
+  const { result, visit } = managedReferenceTraversal(plan, { resolveNames: true });
+  for (const id of plan.ordinaryGroupIds) visit(`group:${id}`, ['Loon policy']);
   for (const reference of plan.template?.connectionReferences || []) {
     if (plan.rules.some(rule => rule.enabled && rule.type === 'FINAL') && reference.slot.includes('FINAL,')) continue;
     visit(reference.target, ['Loon template', reference.literal]);

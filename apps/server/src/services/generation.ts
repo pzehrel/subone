@@ -1,13 +1,15 @@
-import { nameOutputNodes } from './node-naming';
+import { outputAllocator } from './generation/group-members';
+import { bindNodes, completeOutputDependencies } from './generation/dependency-completion';
 import yaml from 'js-yaml';
+import { dynamicGroupNodes } from '../core/generators/group-nodes';
 import { getAppConfig } from '../context';
 import { generateMihomoConfig } from '../core/generators/mihomo-generator';
 import { generateSingboxDocument } from '../core/generators/singbox-generator';
 import { generateLoonConfig, nodeToLoonProxy } from '../core/generators/loon-generator';
 import { generateShadowrocketConfig, generateShadowrocketBase64, nodeToUri, nodeToShadowrocketProxy } from '../core/generators/shadowrocket-generator';
 import { getEffectiveNodes, getEffectiveNodesForProfile, getEffectiveGroupsForProfile, getEffectiveRulesForProfile, getEffectiveSourcesForProfile } from './profile-service';
-import { resolveOutputReferences, prepareTemplateReferences, resolveTemplateReferences, templateOutboundNames, nodeReference, groupReference } from './node-references';
-import { createRuntimeInventory, collectRuntimeDependencies, validateSingboxRuntime } from './generation/runtime-dependencies';
+import { prepareTemplateReferences, resolveTemplateReferences, nodeReference, groupReference } from './node-references';
+import { createRuntimeInventory, validateSingboxRuntime } from './generation/runtime-dependencies';
 import { adaptSingboxDns } from './generation/adapters/singbox';
 import { renderEgern, renderEgernSource } from './generation/adapters/egern';
 import { adaptLoonDns, validateLoonRuntime } from './generation/adapters/loon';
@@ -55,60 +57,16 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
     baseUrl: options.baseUrl || '', subToken: options.subToken || options.profile?.token || 'preview-token',
     subscriptionName: options.profile?.name,
   };
-  const bindNodes = () => {
-    const nodes = [...plan.ordinaryNodes, ...plan.dependencyNodes];
-    plan.bindings = plan.inventory.sources.flatMap(source => {
-      const nodeIds = nodes.filter(node => node.sourceId === source.id).map(node => node.id);
-      if (!nodeIds.length) return [];
-      return [{ sourceId: source.id, sourceName: source.name, batchId: source.doh?.batchId, updatedAt: source.doh?.updatedAt,
-        nodeIds, services: structuredClone(source.doh?.services || []), status: nodeOnly ? 'ignored' as const : 'template' as const,
-        method: nodeOnly ? 'nodes-only' : 'template-dns', appliedServiceIds: [], diagnostics: [] }];
-    });
-  };
   // Capability errors apply even when a target would otherwise omit that protocol.
   if (options.target === 'quantumultx') validateQuantumultXNodeChains({ ...plan, ordinaryNodes: selected });
   if (!nodeOnly && options.target === 'shadowrocket' && selected.some(node => !supportsNode(node))) {
-    bindNodes();
+    bindNodes(plan);
     adaptShadowrocketDns({ ...plan, ordinaryNodes: selected.filter(node => !supportsNode(node)), groups: [] });
     const generation = generationMetadata(plan);
     if (generation.diagnostics.some(diagnostic => diagnostic.severity === 'error')) throw new GenerationError('连接依赖需修复', generation);
   }
-  // Completion works on stable identities, before allocating any client-facing names.
-  // Each newly required source can introduce its own DNS/bootstrap connections.
-  let changed: boolean;
-  do {
-    bindNodes();
-    changed = false;
-    let required = collectRuntimeDependencies(plan);
-    const ordinaryGroups = required.groups.filter(requirement => requirement.ordinary && !plan.ordinaryGroupIds.includes(requirement.groupId));
-    if (ordinaryGroups.length) {
-      plan.ordinaryGroupIds.push(...new Set(ordinaryGroups.map(requirement => requirement.groupId)));
-      // Classify every ordinary root before connection completion can widen a shared group.
-      required = collectRuntimeDependencies(plan);
-      changed = true;
-    }
-    const included = new Set([...plan.ordinaryNodes, ...plan.dependencyNodes].map(node => node.id));
-    for (const requirement of required.nodes) {
-      if (requirement.state !== 'omitted' || included.has(requirement.nodeId)) continue;
-      const entry = plan.inventory.nodes.find(entry => entry.node.id === requirement.nodeId);
-      if (!entry || entry.state !== 'enabled') continue;
-      if (!supportsNode(entry.node)) {
-        const generation = generationMetadata(plan);
-        generation.diagnostics.push({ code: options.target === 'quantumultx' ? 'quantumultx-reference-missing' : 'required-node-unsupported', severity: 'error', sourceId: entry.sourceId, message: `目标客户端无法输出必要节点：${entry.node.name}` });
-        throw new GenerationError('必要连接需修复', generation);
-      }
-      plan.dependencyNodes.push(structuredClone(entry.node));
-      plan.dependencyReasons!.push(requirement);
-      included.add(entry.node.id); changed = true;
-    }
-    for (const requirement of required.groups) {
-      if (plan.groups.some(group => group.id === requirement.groupId)) continue;
-      const group = plan.inventory.groups.find(group => group.id === requirement.groupId);
-      if (!group) continue;
-      plan.groups.push(structuredClone(group)); plan.dependencyGroupIds.push(group.id); changed = true;
-    }
-    plan.templateContent = stableTemplate([...plan.ordinaryNodes, ...plan.dependencyNodes], plan.groups);
-  } while (changed);
+  const allocate = outputAllocator(plan, uriNodes);
+  const necessaryGroups = completeOutputDependencies(plan, supportsNode, allocate);
   if (uriNodes) {
     // Preserve existing omission diagnostics, but omitted URI protocols never consume a number.
     diagnosePureNodes({ ...plan, ordinaryNodes: plan.ordinaryNodes.filter(node => !supportsNode(node)) });
@@ -116,11 +74,29 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
     const written = new Set(plan.ordinaryNodes.map(node => node.id));
     plan.bindings = plan.bindings.map(binding => ({ ...binding, nodeIds: binding.nodeIds.filter(id => written.has(id)) }));
   }
-  const resolved = resolveOutputReferences(nameOutputNodes([...plan.ordinaryNodes, ...plan.dependencyNodes], plan.inventory.sources), nodeOnly ? [] : plan.groups, plan.inventory.sources, uriNodes ? 'uri' : options.target, nodeOnly ? [] : templateOutboundNames(template));
+  const resolved = allocate([...plan.ordinaryNodes, ...plan.dependencyNodes]);
   const ordinaryIds = new Set(plan.ordinaryNodes.map(node => node.id));
   plan.ordinaryNodes = resolved.nodes.filter(node => ordinaryIds.has(node.id));
   plan.dependencyNodes = resolved.nodes.filter(node => !ordinaryIds.has(node.id));
-  plan.groups = resolved.groups;
+  plan.groups = resolved.groups.map((group, index) => {
+    const connectionMembers = plan.dynamicNodeIds?.get(group.id);
+    const dynamic = plan.ordinaryGroupIds.includes(group.id)
+      ? dynamicGroupNodes(plan.groups[index], plan.ordinaryNodes, plan.inventory.sources)
+      : resolved.nodes.filter(node => connectionMembers?.includes(node.id));
+    const members = [...new Set([...(group.proxies || []), ...dynamic.map(node => node.name)])];
+    if (!members.length && !['direct', 'reject'].includes(group.type)) {
+      if (necessaryGroups.has(group.id)) {
+        const generation = generationMetadata(plan);
+        generation.diagnostics.push({ code: 'source-doh-dependency-missing', severity: 'error', message: `必要策略组「${group.name}」没有可用成员，请调整成员或筛选条件` });
+        throw new GenerationError('必要连接需修复', generation);
+      }
+      members.push('REJECT');
+      // A relay requires hops and a QX destination hash requires servers. Render their empty fallback as a selector.
+      const needsSelector = group.type === 'relay' || options.target === 'quantumultx' && group.type === 'load-balance' && group.strategy === 'consistent-hashing';
+      return { ...group, type: needsSelector ? 'select' : group.type, proxies: members, membersResolved: true };
+    }
+    return { ...group, proxies: members, membersResolved: true };
+  });
   plan.sources = plan.sources.map(source => ({ ...source, nodes: plan.ordinaryNodes.filter(node => node.sourceId === source.id) }));
   plan.templateContent = resolveTemplateReferences(template, resolved.nodes, resolved.groups);
   plan.rules = plan.rules.map(rule => {

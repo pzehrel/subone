@@ -1,6 +1,6 @@
 import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
 import { adaptRulesetForLoon, formatRuleTag } from './ruleset-adapter';
-import { resolveGroupNodes } from './group-nodes';
+import { resolveGroupNodes, type OutputGroup } from './group-nodes';
 import { sourceSubscriptionUrl, resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag } from './common';
 
 function formatServer(server: string): string {
@@ -202,7 +202,7 @@ export interface LoonGeneratorOptions {
 export function generateLoonConfig(
   templateMcf: string,
   nodes: ProxyNode[],
-  proxyGroups: ProxyGroupItem[] = [],
+  proxyGroups: OutputGroup[] = [],
   rulesList: UnifiedRuleItem[] = [],
   sources: SubscriptionSource[] = [],
   options?: LoonGeneratorOptions
@@ -276,7 +276,7 @@ export function generateLoonConfig(
 export function injectUnifiedToLoon(
   templateMcf: string,
   nodes: ProxyNode[],
-  proxyGroups: ProxyGroupItem[],
+  proxyGroups: OutputGroup[],
   rulesList: UnifiedRuleItem[],
   sources: SubscriptionSource[] = [],
   options?: LoonGeneratorOptions
@@ -302,7 +302,7 @@ export function injectUnifiedToLoon(
     ? formatSourceGroupTag(customSources[0])
     : '🖥️ 独立节点组';
 
-  const effectiveGroups: ProxyGroupItem[] = proxyGroups.map(g => ({
+  const effectiveGroups: OutputGroup[] = proxyGroups.map(g => ({
     ...g,
     proxies: g.proxies ? [...g.proxies] : undefined,
     use: g.use ? [...g.use] : undefined,
@@ -315,7 +315,7 @@ export function injectUnifiedToLoon(
     cleanSourceOrGroupName(g.name) === '独立节点组' ||
     cleanSourceOrGroupName(g.name) === '自建节点'
   );
-  if (customGrp) {
+  if (customGrp && !customGrp.membersResolved) {
     customGrp.name = customTagName;
     customGrp.use = [cleanSourceOrGroupName(customSources[0]?.name || '独立节点组')];
     const idx = effectiveGroups.indexOf(customGrp);
@@ -447,10 +447,10 @@ export function injectUnifiedToLoon(
   const groupLines: string[] = [];
 
   effectiveGroups.forEach(grp => {
-    if (options?.dependencyGroupIds?.has(grp.id) && !['direct', 'reject'].includes(grp.type)) {
+    if ((grp.membersResolved || options?.dependencyGroupIds?.has(grp.id)) && !['direct', 'reject'].includes(grp.type)) {
       const members = [...(grp.proxies || [])];
-      if (grp.type !== 'relay' && ((grp.sources ?? grp.use)?.length || grp.filter || !members.length)) {
-        for (const node of resolveGroupNodes(grp, nodes, options.runtimeSources || sources)) if (!members.includes(node.name)) members.push(node.name);
+      if (!grp.membersResolved && grp.type !== 'relay' && ((grp.sources ?? grp.use)?.length || grp.filter || !members.length)) {
+        for (const node of resolveGroupNodes(grp, nodes, options?.runtimeSources || sources)) if (!members.includes(node.name)) members.push(node.name);
       }
       if (!members.length && !(grp.sources ?? grp.use)?.length && !grp.proxies?.length) members.push('DIRECT');
       const type = grp.type === 'urltest' ? 'url-test' : grp.type;
