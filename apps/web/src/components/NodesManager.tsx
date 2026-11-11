@@ -72,7 +72,7 @@ export function NodesManager({ sources, focusSourceId, onUpdateNode, onRefreshSo
 
   const saveNode = async (event: FormEvent) => {
     event.preventDefault();
-    if (!editingNode || busyNode || !name.trim()) return;
+    if (!editingNode || busyNode) return;
     setBusyNode(editingNode.id);
     setFormError('');
     try {
@@ -146,7 +146,7 @@ export function NodesManager({ sources, focusSourceId, onUpdateNode, onRefreshSo
       {editingNode && <ModalForm onSubmit={saveNode}>
         <ModalBody>
           {formError && <p role="alert" className="text-xs text-ui-danger">{formError}</p>}
-          <Field><Label>本地名称</Label><Input required value={name} onChange={event => setName(event.target.value)} /></Field>
+          <Field><Label>本地名称</Label><Input value={name} onChange={event => setName(event.target.value)} /></Field>
           <Field><Label>服务器地址</Label><Input value={editingNode.server} readOnly /></Field>
           <div className="grid grid-cols-2 gap-3"><Field><Label>端口</Label><Input value={editingNode.port} readOnly /></Field><Field><Label>协议</Label><Input value={editingNode.type.toUpperCase()} readOnly /></Field></div>
           <Field><div className="flex items-center justify-between"><Label>连接链接</Label><button type="button" className={iconButton} title="复制连接链接" aria-label="复制连接链接" onClick={() => copyNode(editingNode)}>{copiedNode === editingNode.id ? <Check size={14} className="text-ui-success" /> : <Copy size={14} />}</button></div><Textarea variant="code" rows={4} value={nodeToUri(editingNode)} readOnly /></Field>
