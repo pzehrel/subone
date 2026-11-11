@@ -252,6 +252,8 @@ test('Loon preserves ordered Relay members and diagnoses cycles in the actual na
   assert.ok(valid.data.includes(`Loon Relay = relay, ${bName}, ${aName}`));
   const managed = (await api('/groups', 'POST', { name: 'Managed Cycle', type: 'select', proxies: ['Native cycle'] })).data;
   const cyclic = await profileFor([a], template.replace('[Proxy Group]\n', '[Proxy Group]\nNative cycle = select, Managed Cycle\n'), { selectedGroupIds: [managed.id] });
+  const repaired = await api(`/groups/${managed.id}`, 'PUT', { proxies: ['Native cycle'] });
+  assert.deepEqual(repaired.data.proxies, ['template:Native cycle']);
   const broken = await api('/generate/preview', 'POST', { profileId: cyclic.id, customType: 'loon', expandNodes: true });
   assert.equal(broken.status, 422);
   assert.ok(broken.generation.diagnostics.some((diagnostic: any) => diagnostic.code === 'source-doh-cycle'));

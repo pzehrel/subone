@@ -301,6 +301,8 @@ test('Shadowrocket validates every carried native group branch and managed FINAL
   const managed = (await api('/groups', 'POST', { name: 'Managed cycle Rocket', type: 'select', proxies: ['Native cycle Rocket'] })).data;
   const cyclicContent = template.replace('[Proxy Group]\n', '[Proxy Group]\nNative cycle Rocket = select, DIRECT, Managed cycle Rocket\n');
   const cyclic = await profileFor([source], cyclicContent, { selectedGroupIds: [managed.id] });
+  const repaired = await api(`/groups/${managed.id}`, 'PUT', { proxies: ['Native cycle Rocket'] });
+  assert.deepEqual(repaired.data.proxies, ['template:Native cycle Rocket']);
   const broken = await api('/generate/preview', 'POST', { profileId: cyclic.id, customType: 'shadowrocket' });
   assert.equal(broken.status, 422);
   assert.ok(broken.generation.diagnostics.some((diagnostic: any) => diagnostic.code === 'source-doh-cycle'));

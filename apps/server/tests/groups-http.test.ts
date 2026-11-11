@@ -94,14 +94,14 @@ test('either source mount alias can explicitly clear mounts while unrelated edit
   assert.deepEqual(created.data.sources, ['missing-source-id']);
   assert.deepEqual(created.data.use, ['missing-source-id']);
   const renamed = await api(`/groups/${created.data.id}`, 'PUT', { name: 'Repair later' });
-  assert.deepEqual(renamed.data.proxies, ['node:missing-id', 'Missing outbound']);
+  assert.deepEqual(renamed.data.proxies, ['node:missing-id', 'unresolved:Missing outbound']);
   assert.deepEqual(renamed.data.sources, ['missing-source-id']);
   const clearedUse = await api(`/groups/${created.data.id}`, 'PUT', { use: [], filter: '' });
   assert.equal(clearedUse.success, true, clearedUse.message);
   assert.deepEqual(clearedUse.data.sources, []);
   assert.deepEqual(clearedUse.data.use, []);
   assert.equal(clearedUse.data.filter, undefined);
-  assert.deepEqual(clearedUse.data.proxies, ['node:missing-id', 'Missing outbound']);
+  assert.deepEqual(clearedUse.data.proxies, ['node:missing-id', 'unresolved:Missing outbound']);
   const remounted = await api(`/groups/${created.data.id}`, 'PUT', { use: ['other-missing-source'] });
   assert.deepEqual(remounted.data.sources, ['other-missing-source']);
   assert.deepEqual(remounted.data.use, ['other-missing-source']);
