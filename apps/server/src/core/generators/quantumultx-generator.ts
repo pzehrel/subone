@@ -1,6 +1,6 @@
 import { quantumultXOwnedNames, quantumultXEntries } from '../quantumultx-config';
 import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
-import { resolveGroupNodes } from './group-nodes';
+import { resolveGroupNodes, type OutputGroup } from './group-nodes';
 import { UnsupportedProxyGroupError } from './errors';
 import { adaptRulesetForQuantumultX, formatRuleTag } from './ruleset-adapter';
 import { sourceSubscriptionUrl, resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag, resolveGroupIcon, DEFAULT_QX_ICON_BASE } from './common';
@@ -168,7 +168,7 @@ export interface QuantumultXGeneratorOptions {
 export function generateQuantumultXConfig(
   templateConf: string,
   nodes: ProxyNode[],
-  proxyGroups: ProxyGroupItem[] = [],
+  proxyGroups: OutputGroup[] = [],
   rulesList: UnifiedRuleItem[] = [],
   sources: SubscriptionSource[] = [],
   options?: QuantumultXGeneratorOptions
@@ -260,7 +260,7 @@ function quantumultXGroupType(group: ProxyGroupItem): string {
 export function injectUnifiedToQuantumultX(
   templateConf: string,
   nodes: ProxyNode[],
-  proxyGroups: ProxyGroupItem[],
+  proxyGroups: OutputGroup[],
   rulesList: UnifiedRuleItem[],
   sources: SubscriptionSource[] = [],
   options?: QuantumultXGeneratorOptions
@@ -274,7 +274,7 @@ export function injectUnifiedToQuantumultX(
   const remoteRules = activeRules.filter(r => r.kind === 'remote');
   const localRules = activeRules.filter(r => r.kind === 'local' && r.type !== 'FINAL');
 
-  const effectiveGroups: ProxyGroupItem[] = proxyGroups.map(g => ({
+  const effectiveGroups: OutputGroup[] = proxyGroups.map(g => ({
     ...g,
     proxies: g.proxies ? [...g.proxies] : undefined,
     use: g.use ? [...g.use] : undefined,
@@ -303,7 +303,7 @@ export function injectUnifiedToQuantumultX(
     cleanSourceOrGroupName(g.name) === '独立节点组' ||
     cleanSourceOrGroupName(g.name) === '自建节点'
   );
-  if (customGrp) {
+  if (customGrp && !customGrp.membersResolved) {
     customGrp.name = customTagName;
     customGrp.use = [cleanSourceOrGroupName(customSources[0]?.name || '独立节点组')];
     const idx = effectiveGroups.indexOf(customGrp);
@@ -435,13 +435,16 @@ export function injectUnifiedToQuantumultX(
       throw new UnsupportedProxyGroupError('Quantumult X', grp.name);
     }
     const groupType = quantumultXGroupType(grp);
-    if (options?.dependencyGroupIds?.has(grp.id) && !['direct', 'reject'].includes(grp.type)) {
+    if ((grp.membersResolved || options?.dependencyGroupIds?.has(grp.id)) && !['direct', 'reject'].includes(grp.type)) {
       const members = [...(grp.proxies || [])];
-      if ((grp.sources ?? grp.use)?.length || grp.filter || grp.includeAll || !members.length) {
-        for (const node of resolveGroupNodes(grp, nodes, options.runtimeSources || sources).filter(isSupportedByQuantumultX)) if (!members.includes(node.name)) members.push(node.name);
+      if (!grp.membersResolved && ((grp.sources ?? grp.use)?.length || grp.filter || grp.includeAll || !members.length)) {
+        for (const node of resolveGroupNodes(grp, nodes, options?.runtimeSources || sources).filter(isSupportedByQuantumultX)) if (!members.includes(node.name)) members.push(node.name);
       }
       if (!members.length && !(grp.sources ?? grp.use)?.length && !grp.proxies?.length) members.push('direct');
-      addGroupLine(policyWithMembers(groupType, grp, members.map(member => /^(DIRECT|REJECT)$/i.test(member) ? member.toLowerCase() : member)), grp);
+      const policy = policyWithMembers(groupType, grp, members.map(member => /^(DIRECT|REJECT)$/i.test(member) ? member.toLowerCase() : member));
+      const timing = grp.membersResolved && groupType === 'url-latency-benchmark'
+        ? `, check-interval=${grp.interval ?? 300}, tolerance=${grp.tolerance ?? 50}` : '';
+      addGroupLine(policy + timing, grp);
       return;
     }
     if (grp.includeAll || ((grp.sources || grp.use || []).length > 0 && !['direct', 'reject'].includes(grp.type))) {

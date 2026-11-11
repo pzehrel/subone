@@ -93,7 +93,7 @@ test('the packaged Egern workflow generates native groups and protected provider
   for (const rule of remote) assert.ok(urls.includes(`${origin}/s/${profile.token}/rules/${rule.id}/egern`));
   assert.doesNotMatch(result.data, /\.srs|proxy-groups|filter-sources/);
   if (process.env.SUBONE_GENERATION_CONFIG25) await writeFile(process.env.SUBONE_GENERATION_CONFIG25, result.data);
-  assert.deepEqual(doc.policy_groups.find((entry: any) => entry.auto_test?.name === '🇯🇵 日本节点').auto_test.policies, ['DIRECT']);
+  assert.deepEqual(doc.policy_groups.find((entry: any) => entry.auto_test?.name === '🇯🇵 日本节点').auto_test.policies, ['REJECT']);
   const actual = await fetch(`${origin}/s/${profile.token}/egern?expand=true`); assert.equal(actual.status, 200); assert.equal(await actual.text(), result.data);
   if (process.env.SUBONE_EGERN_RULES_VERIFY) for (const url of urls) { const provider = await fetch(url); assert.equal(provider.status, 200, url); const data: any = yaml.load(await provider.text()); assert.ok(Object.keys(data).some(key => key.endsWith('_set')), url); }
 });
@@ -336,7 +336,7 @@ test('unsupported strategy or schema is rejected explicitly and retained templat
   assert.equal(invalid.status, 400); assert.equal(invalid.success, false);
   assert.deepEqual((await api('/groups')).data, before);
   let result = await preview(profile); assert.equal(result.success, true, result.message);
-  for (const change of [{ type: 'relay' }, { type: 'urltest', lazy: true }, { type: 'load-balance', lazy: undefined, strategy: 'sticky-sessions' }]) {
+  for (const change of [{ type: 'relay', proxies: ['node:' + source.nodes[0].id] }, { type: 'urltest', lazy: true }, { type: 'load-balance', lazy: undefined, strategy: 'sticky-sessions' }]) {
     assert.equal((await api(`/groups/${groups[0].id}`, 'PUT', change)).success, true);
     result = await preview(profile); assert.equal(result.status, 422); assert.match(result.generation.diagnostics.at(-1).code, /^egern-group/);
   }

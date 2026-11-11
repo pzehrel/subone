@@ -39,7 +39,7 @@ export function diagnosePureNodes(plan: GenerationPlan): void {
 
 /** Complete only ordinary native template/group references; source DNS is deliberately unused. */
 registerRuntimeDependencyCollector('shadowrocket', plan => {
-  const { result, visit } = managedReferenceTraversal(plan, { expandGroup: group => group.type !== 'relay' && !!((group.sources ?? group.use)?.length || group.filter || !group.proxies?.length) });
+  const { result, visit } = managedReferenceTraversal(plan, {});
   for (const group of plan.groups) visit(`group:${group.id}`, ['Shadowrocket group', group.name]);
   for (const reference of plan.template?.connectionReferences || []) {
     if (plan.rules.some(rule => rule.enabled && rule.type === 'FINAL') && /final\s*,/i.test(reference.slot)) continue;

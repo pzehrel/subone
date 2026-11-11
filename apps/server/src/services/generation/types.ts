@@ -1,5 +1,6 @@
+import type { OutputGroup } from '../../core/generators/group-nodes';
 import type { RuntimeInventory, RuntimePathEntry, RuntimeNodeRequirement } from './runtime-dependencies';
-import type { ClientType, ConfigTemplate, ProxyGroupItem, ProxyNode, SourceDohService, SubscriptionProfile, SubscriptionSource, UnifiedRuleItem } from '../../types';
+import type { ClientType, ConfigTemplate, ProxyNode, SourceDohService, SubscriptionProfile, SubscriptionSource, UnifiedRuleItem } from '../../types';
 
 export interface GenerationDiagnostic {
   code: string;
@@ -43,9 +44,10 @@ export interface GenerationPlan {
   ordinaryNodes: ProxyNode[];
   dependencyNodes: ProxyNode[];
   dependencyGroupIds: string[];
+  dynamicNodeIds?: ReadonlyMap<string, string[]>;
   ordinaryGroupIds: string[];
   dependencyReasons?: RuntimeNodeRequirement[];
-  groups: ProxyGroupItem[];
+  groups: OutputGroup[];
   rules: UnifiedRuleItem[];
   sources: SubscriptionSource[];
   bindings: GenerationBinding[];

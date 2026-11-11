@@ -506,9 +506,9 @@ test('an ordinary FINAL selector cannot pull profile-excluded mounted source nod
   const group = (await api('/groups', 'POST', { name: 'Empty ordinary final QX', type: 'select', sources: [b.id] })).data;
   const content = template.replace('final, direct', 'final, Empty ordinary final QX');
   const { profile } = await profileFor([a], content, { mode: 'manual', selectedNodeIds: [a.nodes[0].id] });
-  const result = await preview(profile, false); assert.equal(result.status, 422, JSON.stringify(result));
+  const result = await preview(profile, false); assert.equal(result.status, 200, JSON.stringify(result));
   assert.equal(result.generation.nodeCount, 1); assert.equal(result.generation.dependencyNodeCount, 0);
-  assert.ok(result.generation.diagnostics.some((entry: any) => entry.code === 'quantumultx-reference-missing' && entry.message.includes(group.name)));
+  assert.match(result.data, /^static=Empty ordinary final QX, reject(?:,|$)/m);
   const provider = await fetch(`${origin}/s/${profile.token}/source/${a.id}?target=quantumultx`).then(response => response.text()); assert.match(provider, /ordinary.final.example/); assert.doesNotMatch(provider, /excluded.final.example/);
 });
 

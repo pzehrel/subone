@@ -83,9 +83,10 @@ test('Loon retained FINAL does not import a source excluded from ordinary candid
   const group = (await api('/groups', 'POST', { name: 'Excluded FINAL mount', type: 'select', sources: [excluded.id] })).data;
   const selected = await profile('loon', `[General]\ndns-server = system\n[Proxy]\n[Proxy Group]\n[Rule]\nFINAL,${group.name}\n`, allowed);
   const preview = await api('/generate/preview', 'POST', { profileId: selected.id, customType: 'loon', expandNodes: true });
-  assert.equal(preview.status, 422, JSON.stringify(preview));
+  assert.equal(preview.status, 200, JSON.stringify(preview));
+  assert.deepEqual(groupMembers('loon', preview.data, group.name), ['REJECT']);
   assert.equal(preview.generation.dependencyNodeCount, 0);
-  const actual = await fetch(`${origin}/s/${selected.token}/loon?expand=true`); assert.equal(actual.status, 422);
+  const actual = await fetch(`${origin}/s/${selected.token}/loon?expand=true`); assert.equal(actual.status, 200); assert.equal(await actual.text(), preview.data);
 });
 
 test('retained ordinary rules and FINAL resolve unselected managed groups using allowed candidates in every complete format', async () => {
@@ -110,10 +111,10 @@ test('ordinary rule and FINAL mounts cannot restore excluded candidates in any c
   for (const target of targets) for (const final of [true, false]) {
     const selected = await profile(target, template(target, group.name, final), allowed);
     const preview = await api('/generate/preview', 'POST', { profileId: selected.id, customType: target, expandNodes: true });
-    assert.equal(preview.status, 422, `${target} ${final}: ${JSON.stringify(preview)}`);
+    assert.equal(preview.status, 200, `${target} ${final}: ${JSON.stringify(preview)}`);
     assert.equal(preview.generation.dependencyNodeCount, 0, `${target} ${final}`);
-    assert.ok(preview.generation.diagnostics.some((entry: any) => entry.severity === 'error'));
-    const actual = await fetch(`${origin}/s/${selected.token}/${target}?expand=true`); assert.equal(actual.status, 422, `${target} ${final}`);
+    assert.deepEqual(groupMembers(target, preview.data, group.name), [target === 'quantumultx' ? 'reject' : 'REJECT']);
+    const actual = await fetch(`${origin}/s/${selected.token}/${target}?expand=true`); assert.equal(actual.status, 200, `${target} ${final}`); assert.equal(await actual.text(), preview.data);
   }
 });
 
@@ -130,10 +131,12 @@ test('explicit stable node pins complete dependencies while other ordinary mount
     assert.deepEqual(groupMembers(target, valid.data, pinned.name), [excluded.nodes[0].name]);
     assert.doesNotMatch(valid.data, /(?:group|node|unresolved|ambiguous):/);
     const mixed = await profile(target, withRule(target, template(target, mounted.name), pinned.name), allowed);
-    const invalid = await api('/generate/preview', 'POST', { profileId: mixed.id, customType: target, expandNodes: true });
-    assert.equal(invalid.status, 422, `${target}: ${JSON.stringify(invalid)}`);
-    assert.equal(invalid.generation.dependencyNodeCount, 1, target);
-    const actual = await fetch(`${origin}/s/${mixed.token}/${target}?expand=true`); assert.equal(actual.status, 422, target);
+    const result = await api('/generate/preview', 'POST', { profileId: mixed.id, customType: target, expandNodes: true });
+    assert.equal(result.status, 200, `${target}: ${JSON.stringify(result)}`);
+    assert.equal(result.generation.dependencyNodeCount, 1, target);
+    assert.deepEqual(groupMembers(target, result.data, mounted.name), [target === 'quantumultx' ? 'reject' : 'REJECT']);
+    assert.deepEqual(groupMembers(target, result.data, pinned.name), [excluded.nodes[0].name]);
+    const actual = await fetch(`${origin}/s/${mixed.token}/${target}?expand=true`); assert.equal(actual.status, 200, target); assert.equal(await actual.text(), result.data);
   }
 });
 
@@ -151,4 +154,74 @@ test('ordinary native group roots remain valid when complete output uses protect
     const provider = await fetch(`${origin}/s/${selected.token}/source/${allowed.id}/${target}`); assert.equal(provider.status, 200, target);
     assert.ok((await provider.text()).length, target);
   }
+});
+
+test('six downloads and previews merge explicit members with matches on final names and reject ordinary empty groups', async () => {
+  const entries = ['大阪 inbound', 'Osaka backup', '東京 fixed'].map((name, index) => ({
+    name, type: 'ss', server: '192.0.2.' + (181 + index), port: 443, cipher: 'aes-128-gcm', password: 'fixture',
+  }));
+  const saved = (await api('/sources', 'POST', { name: 'Final names', acquisition: 'manual', content: yaml.dump({ proxies: entries }), nameTemplate: '{region_emoji} {region}' })).data;
+  const add = async (name: string, filter: string, proxies: string[] = []) => (await api('/groups', 'POST', { name, type: 'select', sources: [saved.id], filter, proxies })).data;
+  const anchored = await add('Anchored empty', '^大阪');
+  const explicit = await add('Pinned only', '^大阪', ['node:' + saved.nodes[2].id]);
+  const suffix = await add('Merged suffix', '大阪 \\(2\\)$', ['node:' + saved.nodes[2].id]);
+  for (const target of targets) {
+    const tpl = (await api('/templates', 'POST', { name: target + ' final members', type: target, content: template(target, explicit.name) })).data;
+    const selected = (await api('/profiles', 'POST', { name: 'Final membership', nodeFilter: { mode: 'all', sourceIds: [saved.id] }, selectedGroupIds: [anchored.id, explicit.id, suffix.id], selectedRuleIds: ['no-rules'], templates: { [target]: tpl.id } })).data;
+    const result = await api('/generate/preview', 'POST', { profileId: selected.id, customType: target });
+    assert.equal(result.status, 200, target + JSON.stringify(result));
+    assert.deepEqual(groupMembers(target, result.data, anchored.name), [target === 'quantumultx' ? 'reject' : 'REJECT'], target);
+    assert.deepEqual(groupMembers(target, result.data, explicit.name), ['🇯🇵 东京'], target);
+    assert.deepEqual(groupMembers(target, result.data, suffix.name), ['🇯🇵 东京', '🇯🇵 大阪 (2)'], target);
+    const download = await fetch(origin + '/s/' + selected.token + '/' + target);
+    assert.equal(download.status, 200, target);
+    assert.equal(await download.text(), result.data, target);
+  }
+});
+
+test('an ordinary relay with no hops emits only the native reject member in every target', async () => {
+  const allowed = await source('Empty relay candidate', '192.0.2.185');
+  const relay = (await api('/groups', 'POST', { name: 'Empty relay', type: 'relay', proxies: [] })).data;
+  for (const target of targets) {
+    const selected = await profile(target, template(target, relay.name), allowed);
+    const result = await api('/generate/preview', 'POST', { profileId: selected.id, customType: target });
+    assert.equal(result.status, 200, target + JSON.stringify(result));
+    assert.deepEqual(groupMembers(target, result.data, relay.name), [target === 'quantumultx' ? 'reject' : 'REJECT']);
+    assert.equal(await fetch(origin + '/s/' + selected.token + '/' + target).then(response => response.text()), result.data);
+  }
+});
+
+test('a stable source mount matches only that upstream when two sources have the same display name', async () => {
+  const first = await source('Mounted Osaka', '192.0.2.186');
+  const other = await source('Other Osaka', '192.0.2.187');
+  for (const entry of [first, other]) await api('/sources/' + entry.id, 'PUT', { name: 'Shared airport', nameTemplate: '{region} {region_index}' });
+  const group = (await api('/groups', 'POST', { name: 'One source only', type: 'select', sources: [first.id], filter: '大阪' })).data;
+  const selected = await profile('singbox', template('singbox', group.name), first);
+  await api('/profiles/' + selected.id, 'PUT', { nodeFilter: { mode: 'manual', selectedNodeIds: [first.nodes[0].id, other.nodes[0].id] } });
+  const result = await api('/generate/preview', 'POST', { profileId: selected.id, customType: 'singbox' });
+  assert.equal(result.status, 200, result.message);
+  assert.deepEqual(groupMembers('singbox', result.data, group.name), ['大阪 01']);
+});
+
+test('a selected group carries explicit node identities even without a native routing rule pointing to it', async () => {
+  const ordinary = await source('Ordinary selected group', '192.0.2.188');
+  const exit = await source('Pinned selected group', '192.0.2.189');
+  const pinned = (await api('/groups', 'POST', { name: 'Retained pin', type: 'select', proxies: ['node:' + exit.nodes[0].id], filter: '^never$' })).data;
+  for (const target of targets) {
+    const selected = await profile(target, template(target, 'DIRECT'), ordinary);
+    await api('/profiles/' + selected.id, 'PUT', { selectedGroupIds: [pinned.id] });
+    const result = await api('/generate/preview', 'POST', { profileId: selected.id, customType: target });
+    assert.equal(result.status, 200, target + JSON.stringify(result));
+    assert.equal(result.generation.dependencyNodeCount, 1, target);
+    assert.deepEqual(groupMembers(target, result.data, pinned.name), ['Pinned selected group'], target);
+  }
+});
+
+test('Quantumult X keeps latency policy settings when writing final members', async () => {
+  const allowed = await source('Latency choice', '192.0.2.190');
+  const group = (await api('/groups', 'POST', { name: 'Filtered latency', type: 'urltest', filter: 'Latency', tolerance: 77 })).data;
+  const selected = await profile('quantumultx', template('quantumultx', group.name), allowed);
+  const result = await api('/generate/preview', 'POST', { profileId: selected.id, customType: 'quantumultx' });
+  assert.equal(result.status, 200, result.message);
+  assert.match(result.data, /^url-latency-benchmark=Filtered latency, Latency choice, check-interval=300, tolerance=77(?:,|$)/m);
 });

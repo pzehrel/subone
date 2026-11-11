@@ -1,8 +1,8 @@
 import yaml from 'js-yaml';
-import { ProxyNode, ProxyGroupItem, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
+import { ProxyNode, UnifiedRuleItem, SubscriptionSource } from '../../types/index';
 
 import { adaptRulesetForMihomo, formatRuleTag } from './ruleset-adapter';
-import { resolveGroupNodes } from './group-nodes';
+import { resolveGroupNodes, type OutputGroup } from './group-nodes';
 import { UnsupportedProxyGroupError } from './errors';
 import { sourceSubscriptionUrl, resolveSafeOutbound, formatCidr, cleanSourceOrGroupName, formatSourceGroupTag } from './common';
 
@@ -297,7 +297,7 @@ export interface MihomoGeneratorOptions {
 export function generateMihomoConfig(
   templateYaml: string,
   nodes: ProxyNode[],
-  proxyGroups: ProxyGroupItem[] = [],
+  proxyGroups: OutputGroup[] = [],
   rulesList: UnifiedRuleItem[] = [],
   sources: SubscriptionSource[] = [],
   options?: MihomoGeneratorOptions
@@ -357,7 +357,7 @@ export function generateMihomoConfig(
 export function injectUnifiedToMihomo(
   doc: any,
   nodes: ProxyNode[],
-  proxyGroups: ProxyGroupItem[],
+  proxyGroups: OutputGroup[],
   rulesList: UnifiedRuleItem[],
   sources: SubscriptionSource[] = [],
   options?: MihomoGeneratorOptions
@@ -436,7 +436,7 @@ export function injectUnifiedToMihomo(
   const allProviderNames = allActiveRemoteSources.map(s => s.name.trim());
 
   // 2. Build Proxy Groups
-  const effectiveGroups: ProxyGroupItem[] = proxyGroups.map(g => ({
+  const effectiveGroups: OutputGroup[] = proxyGroups.map(g => ({
     ...g,
     proxies: g.proxies ? [...g.proxies] : undefined,
     use: g.use ? [...g.use] : (g.sources ? [...g.sources] : undefined),
@@ -503,6 +503,12 @@ export function injectUnifiedToMihomo(
       grpObj.url = grp.url || 'https://www.google.com/generate_204';
       grpObj.interval = grp.interval || 300;
       grpObj.tolerance = grp.tolerance || 50;
+    }
+
+    if (grp.membersResolved) {
+      grpObj.proxies = grp.proxies;
+      generatedGroups.push(grpObj);
+      return;
     }
 
     // 匹配来源
