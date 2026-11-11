@@ -298,7 +298,8 @@ test('info rules immediately reclassify cached nodes and filter every subscripti
     const response = await fetch(`${origin}/s/info-test/${target}?expand=false`);
     assert.equal(response.status, 200, await response.clone().text());
     const output = await response.text();
-    assert.ok(output.includes(target === 'qx' ? `${origin}/s/info-test/nodes/qx` : `${origin}/s/info-test/source/airport?target=`));
+    assert.ok(output.includes('Hong Kong'));
+    assert.doesNotMatch(output, /\/source\/|\/nodes\/qx/);
     assert.ok(!output.includes('expired-subscription'));
     const sourceResponse = await fetch(`${origin}/s/info-test/source/airport?target=${target}`);
     assert.equal(sourceResponse.status, 200);
@@ -450,7 +451,7 @@ test('refreshing a profile token replaces its subscription token', async () => {
   assert.equal(listed.data[0].token, refreshed.body.data.token);
 });
 
-test('preview provider links use the external HTTPS host and the selected profile token', async () => {
+test('non-expanded preview does not create managed provider links behind an external HTTPS host', async () => {
   const config = fixture();
   config.sources = [{ id: 'manual', name: 'Manual', type: 'manual', enabled: true, nodes: [] }];
   config.proxyGroups = [{ id: 'manual-group', name: 'Manual', type: 'select', sources: ['manual'] }];
@@ -469,9 +470,7 @@ test('preview provider links use the external HTTPS host and the selected profil
   });
   assert.equal(result.status, 200);
   assert.equal(result.body.success, true);
-  assert.ok(result.body.data.includes(
-    `https://subscriptions.example.test/s/${created.body.data.token}/source/manual?target=mihomo`,
-  ));
+  assert.doesNotMatch(result.body.data, /subscriptions\.example\.test|\/source\/manual|proxy-providers/);
 });
 
 test('unexpected generation errors retain the server-error response', async () => {

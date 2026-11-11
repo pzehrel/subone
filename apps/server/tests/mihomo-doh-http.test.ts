@@ -291,7 +291,8 @@ test('omitted necessary exits become static dependencies while ordinary groups, 
   assert.deepEqual((yaml.load(await response.text()) as any).proxies.map((entry: any) => entry.name), ['Ordinary selected']);
   const remote = await preview(profile, false); assert.equal(remote.success, true, JSON.stringify(remote));
   const remoteDoc: any = yaml.load(remote.data); assert.ok(remoteDoc.proxies.some((entry: any) => entry.name === 'Exit'));
-  assert.match(remoteDoc['proxy-providers'][source.name].url, new RegExp(`/s/${profile.token}/source/${source.id}\\?target=mihomo$`));
+  assert.equal(remote.data, result.data);
+  assert.equal(remoteDoc['proxy-providers']?.[source.name], undefined);
   await api(`/nodes/${exit.id}`, 'PUT', { enabled: false });
   const disabled = await preview(profile); assert.equal(disabled.status, 422);
   assert.ok(disabled.generation.diagnostics.some((entry: any) => entry.dependencyState === 'node-disabled'));

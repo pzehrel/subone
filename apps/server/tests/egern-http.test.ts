@@ -133,7 +133,7 @@ test('Egern HTTP output uses native typed nodes, groups and rules with native so
   assert.deepEqual((await api('/sources')).data.find((entry: any) => entry.id === source.id).doh, source.doh);
 });
 
-test('native provider mounts share profile selection, names and source lifecycle without adopting multi-source DNS', async () => {
+test('complete output and independent providers share profile selection, names and source lifecycle without adopting multi-source DNS', async () => {
   const a = await addSource('/provider-a', [
     { name: 'Shared', type: 'socks5', server: 'a.provider.example', port: 1080 },
     { name: 'Disabled', type: 'ss', server: 'disabled.provider.example', port: 443, cipher: 'aes-128-gcm', password: 'dummy' },
@@ -146,10 +146,10 @@ test('native provider mounts share profile selection, names and source lifecycle
   const result = await preview(profile, false); assert.equal(result.success, true, result.message);
   const doc: any = yaml.load(result.data); assertNativeReferences(doc);
   const group = typedValues(doc.policy_groups).find(group => group.name === groups[0].name);
-  assert.equal(group.urls.length, 2);
-  assert.ok(group.urls.every((url: string) => url.startsWith(`${origin}/s/${profile.token}/source/`)));
+  assert.equal(group.urls, undefined);
+  assert.equal(group.policies.length, 2);
   const providers: any[] = [];
-  for (const url of group.urls) {
+  for (const url of [a, b].map(source => `${origin}/s/${profile.token}/source/${source.id}?target=egern`)) {
     const response = await fetch(url); assert.equal(response.status, 200);
     const provider: any = yaml.load(await response.text()); assert.deepEqual(Object.keys(provider), ['proxies']);
     providers.push(...typedValues(provider.proxies));
