@@ -6,7 +6,7 @@ import { generateSingboxDocument } from '../core/generators/singbox-generator';
 import { generateLoonConfig, nodeToLoonProxy } from '../core/generators/loon-generator';
 import { generateShadowrocketConfig, generateShadowrocketBase64 } from '../core/generators/shadowrocket-generator';
 import { getEffectiveNodes, getEffectiveNodesForProfile, getEffectiveGroupsForProfile, getEffectiveRulesForProfile, getEffectiveSourcesForProfile } from './profile-service';
-import { requiresExpandedNodes, resolveOutputReferences, prepareTemplateReferences, resolveTemplateReferences, templateOutboundNames, nodeReference, groupReference } from './node-references';
+import { resolveOutputReferences, prepareTemplateReferences, resolveTemplateReferences, templateOutboundNames, nodeReference, groupReference } from './node-references';
 import { createRuntimeInventory, collectRuntimeDependencies, validateSingboxRuntime } from './generation/runtime-dependencies';
 import { adaptSingboxDns } from './generation/adapters/singbox';
 import { renderEgern, renderEgernSource } from './generation/adapters/egern';
@@ -38,7 +38,8 @@ export async function createGenerationPlan(options: GenerationOptions): Promise<
     rules: structuredClone(options.profile ? getEffectiveRulesForProfile(options.profile, config) : config.rulesList),
     sources: structuredClone(sources.filter(source => source.enabled && (ordinary.some(node => node.sourceId === source.id) || options.profile?.nodeFilter?.sourceIds?.includes(source.id) || groups.some(group => (group.sources ?? group.use)?.some(mount => mount === source.id || mount === source.name))))),
     bindings: [],
-    expandNodes: requiresExpandedNodes(groups) || (options.expandNodes ?? true),
+    // Complete configurations update managed definitions and references together.
+    expandNodes: true,
     baseUrl: options.baseUrl || '', subToken: options.subToken || options.profile?.token || 'preview-token',
     subscriptionName: options.profile?.name,
   };

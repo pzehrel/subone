@@ -349,10 +349,11 @@ test('provider and expanded output use the same selected names and usage without
   assert.doesNotMatch(remote.data, new RegExp(upstreamOrigin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.doesNotMatch(remote.data, /qx-provider-[ab]|\/source\//);
   const urls = [...remote.data.matchAll(/^(https?:\/\/[^,]+), tag=/gm)].map(match => match[1]).filter(url => url.endsWith('/nodes/qx'));
-  assert.deepEqual(urls, [`${origin}/s/${profile.token}/nodes/qx`]);
-  assert.match(remote.data, /\/nodes\/qx, tag=QX profile,/);
+  assert.deepEqual(urls, []);
+  assert.equal(remote.data, expanded.data);
+  const resourceUrl = `${origin}/s/${profile.token}/nodes/qx`;
   const providerNames: string[] = [];
-  for (const url of urls) {
+  for (const url of [resourceUrl]) {
     const response = await fetch(url); assert.equal(response.status, 200); const content = await response.text();
     assert.doesNotMatch(content, /\[dns\]|doh|hidden\.provider|omitted\.provider/);
     providerNames.push(...[...content.matchAll(/tag=([^\n]+)$/gm)].map(match => match[1]));
@@ -360,7 +361,7 @@ test('provider and expanded output use the same selected names and usage without
   assert.deepEqual(providerNames.sort(), names);
   assert.equal((await fetch(`${origin}/s/invalid-token/nodes/qx`)).status, 404);
   await api(`/profiles/${profile.id}`, 'PUT', { enabled: false });
-  assert.equal((await fetch(urls[0])).status, 404);
+  assert.equal((await fetch(resourceUrl)).status, 404);
 });
 
 test('retained native references report disabled and deleted managed targets instead of retargeting', async () => {
@@ -490,8 +491,8 @@ test('retained native template references complete eligible omitted nodes and gr
   assert.match(result.data, /^static = Native closure, Dependency group QX, Dependency closure QX, direct$/m);
   const ordinaryPolicy = result.data.split('\n').find((line: string) => line.startsWith(`static=${group.name},`)); assert.doesNotMatch(ordinaryPolicy, /Dependency closure/); assert.match(ordinaryPolicy, /, Ordinary closure QX(?:,|$)/);
   const actual = await fetch(`${origin}/s/${profile.token}/quantumultx?expand=false`); assert.equal(await actual.text(), result.data); assert.match(actual.headers.get('subscription-userinfo') || '', /total=1000/);
-  const urls = [...result.data.matchAll(/^(https?:\/\/[^,]+), tag=/gm)].map(match => match[1]).filter(url => url.endsWith('/nodes/qx')); assert.equal(urls.length, 1);
-  const provider = await fetch(urls[0]).then(response => response.text()); assert.match(provider, /ordinary\.closure/); assert.doesNotMatch(provider, /dependency\.closure/);
+  const urls = [...result.data.matchAll(/^(https?:\/\/[^,]+), tag=/gm)].map(match => match[1]).filter(url => url.endsWith('/nodes/qx')); assert.equal(urls.length, 0);
+  const provider = await fetch(`${origin}/s/${profile.token}/nodes/qx`).then(response => response.text()); assert.match(provider, /ordinary\.closure/); assert.doesNotMatch(provider, /dependency\.closure/);
   const previousOrigin = origin; await stopApp(); await startApp(); const reloaded = await preview(profile, false); assert.deepEqual(reloaded.generation, result.generation); assert.equal(reloaded.data.replaceAll(origin, previousOrigin), result.data);
   await api(`/nodes/${b.nodes[0].id}`, 'PUT', { enabled: false }); const disabled = await preview(profile, false); assert.equal(disabled.status, 422, JSON.stringify(disabled));
   assert.ok(disabled.generation.diagnostics.some((entry: any) => entry.code === 'quantumultx-reference-missing'));
