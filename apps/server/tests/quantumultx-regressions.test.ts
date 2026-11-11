@@ -28,6 +28,16 @@ test('complete Quantumult X hash policies reference their local server candidate
   assert.doesNotMatch(policy, /(?:resource|server)-tag-regex=|, direct(?:,|$)/);
 });
 
+test('AnyTLS preserves explicit certificate verification and leaves an absent option at the client default', () => {
+  const node: ProxyNode = { id: 'anytls', name: 'AnyTLS', type: 'anytls', server: 'anytls.node.invalid', port: 443, password: 'fixture-password', sni: 'tls.node.invalid' };
+  for (const skipCertVerify of [true, false, undefined]) {
+    const output = nodeToQuantumultXProxy({ ...node, skipCertVerify });
+    if (skipCertVerify === undefined) assert.doesNotMatch(output, /tls-verification=/);
+    else assert.ok(output.includes(`, tls-verification=${!skipCertVerify},`), output);
+    assert.match(output, /, tls-host=tls\.node\.invalid,/);
+  }
+});
+
 test('VMess TCP TLS uses Quantumult X obfs fields instead of tls=true', () => {
   const node: ProxyNode = {
     id: 'vmess-tls', name: 'VMess TLS', type: 'vmess',

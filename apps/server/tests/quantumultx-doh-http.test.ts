@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -48,6 +48,92 @@ async function profileFor(sources: any[], content = template, filter?: any, grou
   return { profile, group, tpl };
 }
 const preview = (profile: any, expandNodes = true) => api('/generate/preview', 'POST', { profileId: profile.id, customType: 'quantumultx', expandNodes });
+
+test('AnyTLS certificate verification survives QuanX import, full download and both node resources', async () => {
+  const path = '/qx-anytls-verification';
+  bodies.set(path, '[server_local]\n' + [false, true].map(verification => `anytls=anytls-${verification}.example:443, password=fixture-password, over-tls=true, tls-host=tls.example, tls-verification=${verification}, tag=AnyTLS ${verification}`).join('\n'));
+  const created = await api('/sources', 'POST', { name: 'AnyTLS verification', url: upstreamOrigin + path });
+  assert.equal(created.success, true, JSON.stringify(created));
+  const source = created.data;
+  assert.deepEqual(source.nodes.map((node: any) => node.skipCertVerify), [true, false]);
+  const { profile } = await profileFor([source]);
+  const assertVerification = (content: string) => {
+    for (const verification of [false, true]) assert.match(content, new RegExp(`^anytls=anytls-${verification}\\.example:443,.*tls-host=tls\\.example, tls-verification=${verification},.*tag=AnyTLS ${verification}$`, 'm'));
+  };
+  const result = await preview(profile);
+  assert.equal(result.success, true, JSON.stringify(result));
+  assertVerification(result.data);
+  for (const resource of ['qx', 'nodes/qx', `source/${source.id}?target=quantumultx`]) {
+    const response = await fetch(`${origin}/s/${profile.token}/${resource}`);
+    assert.equal(response.status, 200);
+    assertVerification(await response.text());
+  }
+});
+
+const aliasHosts = { 'entry.source.example': 'real.backend.test', 'unused.source.example': 'unused.backend.test', '*.wildcard.example': 'wildcard.backend.test', 'ip.source.example': '192.0.2.42' };
+async function addAliasedSource(path: string) {
+  return add(path, ['https://192.0.2.10/dns-query'], {
+    hosts: aliasHosts,
+    proxies: [{ name: 'Aliased Trojan', type: 'trojan', server: 'entry.source.example', port: 443, password: 'fixture-password', sni: 'tls.example', 'skip-cert-verify': true }],
+  });
+}
+function assertAliasDns(content: string) {
+  assert.match(content, /^alias = \/entry\.source\.example\/real\.backend\.test$/m);
+  for (const domain of ['entry.source.example', 'real.backend.test']) assert.ok(content.includes(`doh-server = /${domain}/https://192.0.2.10/dns-query`), content);
+  assert.doesNotMatch(dnsSection(content), /unused\.|wildcard\.|ip\.source|192\.0\.2\.42/);
+}
+
+test('Mihomo node domain aliases are saved and emitted with their source DNS in QuanX downloads', async () => {
+  const source = await addAliasedSource('/qx-mihomo-alias');
+  assert.equal(source.doh.domainAliases?.['entry.source.example'], 'real.backend.test');
+  const { profile } = await profileFor([source]);
+  const result = await preview(profile);
+  assert.equal(result.success, true, JSON.stringify(result));
+  assertAliasDns(result.data);
+  assert.match(result.data, /^trojan=entry\.source\.example:443,.*tls-host=tls\.example, tls-verification=false,/m);
+  const response = await fetch(`${origin}/s/${profile.token}/qx`);
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), result.data);
+});
+
+for (const snapshot of ['successful-document', 'failed-latest-response', 'base64-raw-only'] as const) {
+  test(`Mihomo aliases recover from an existing ${snapshot} cache without refetching the upstream`, async () => {
+    const path = `/qx-mihomo-alias-cache-${snapshot}`;
+    let requests = 0;
+    const count = (request: { url?: string }) => { if (request.url === path) requests++; };
+    upstream.on('request', count);
+    try {
+      const source = await addAliasedSource(path);
+      const { profile } = await profileFor([source]);
+      assert.equal(requests, 1);
+      await stopApp();
+      try {
+        const file = join(directory, 'data/subone_data.json');
+        const data = JSON.parse(await readFile(file, 'utf8'));
+        const saved = data.sources.find((entry: any) => entry.id === source.id);
+        delete saved.doh.domainAliases;
+        if (snapshot === 'failed-latest-response') {
+          saved.rawSubscription.parseStatus = 'failed';
+          saved.rawSubscription.content = yaml.dump({ hosts: { 'entry.source.example': 'failed-response.example' } });
+        }
+        if (snapshot === 'base64-raw-only') {
+          delete saved.parsedConfig;
+          saved.rawSubscription.content = Buffer.from(saved.rawSubscription.content).toString('base64');
+          saved.rawSubscription.encoding = 'base64';
+        }
+        await writeFile(file, JSON.stringify(data));
+      } finally { await startApp(); }
+      const result = await preview(profile);
+      assert.equal(result.success, true, JSON.stringify(result));
+      assertAliasDns(result.data);
+      assert.doesNotMatch(result.data, /failed-response\.example/);
+      const response = await fetch(`${origin}/s/${profile.token}/qx`);
+      assert.equal(response.status, 200);
+      assert.equal(await response.text(), result.data);
+      assert.equal(requests, 1);
+    } finally { upstream.off('request', count); }
+  });
+}
 
 test('default Quantumult X downloads contain the selected nodes without fetching resources or adding source groups', async () => {
   const a = await add('/qx-initial-a', [], { proxies: [{ name: 'Initial Trojan', type: 'trojan', server: 'trojan.initial.example', port: 443, password: 'fixture-password' }] });
