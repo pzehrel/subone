@@ -1,4 +1,4 @@
-import { ProxyNode } from '../types';
+import type { ProxyNode } from '../types';
 
 /**
  * Format server address (brackets IPv6 if not already bracketed)
@@ -15,13 +15,37 @@ function formatServer(server: string): string {
  * Convert any ProxyNode object into a standard, usable proxy client URL link
  * (vless://, hysteria2://, anytls://, trojan://, ss://, vmess://, wireguard://, snell://, tuic://, etc.)
  */
-export function nodeToUri(node: any): string {
-  // 1. If original raw URI link was preserved, prioritize it
+export function nodeToUri(node: ProxyNode): string {
+  const name = node.name || 'node';
+  const label = encodeURIComponent(name);
+
+  // Preserve connection parameters verbatim while using the management display name.
   if (typeof node.raw === 'string' && node.raw.includes('://')) {
-    return node.raw.trim();
+    const raw = node.raw.trim();
+    const embeddedLabel = /^(vmess|v2rayn):\/\//i.exec(raw);
+    if (embeddedLabel) {
+      try {
+        const prefix = embeddedLabel[0];
+        const content = raw.slice(prefix.length).split('#')[0];
+        const protocolHint = embeddedLabel[1].toLowerCase() === 'v2rayn'
+          ? /^(?:vmess|vless|trojan|shadowsocks|ss)\//i.exec(content)?.[0] || ''
+          : '';
+        const encoded = content.slice(protocolHint.length).replace(/-/g, '+').replace(/_/g, '/');
+        const payload = JSON.parse(decodeURIComponent(escape(atob(encoded))));
+        if (embeddedLabel[1].toLowerCase() === 'vmess') payload.ps = name;
+        else {
+          payload.Remarks = name;
+          if ('remarks' in payload) payload.remarks = name;
+        }
+        return `${prefix}${protocolHint}${btoa(unescape(encodeURIComponent(JSON.stringify(payload))))}`;
+      } catch {
+        // A malformed preserved payload can still use the parsed connection below.
+      }
+    } else {
+      return `${raw.split('#')[0]}#${label}`;
+    }
   }
 
-  const name = (node.name || 'node').replace(/[\r\n#]+/g, ' ').trim();
   const type = (node.type || '').toLowerCase();
   const server = formatServer(node.server || '');
   const port = node.port || 443;
@@ -47,7 +71,7 @@ export function nodeToUri(node: any): string {
       }
       uri += `/?plugin=${encodeURIComponent(pluginParam)}`;
     }
-    return `${uri}#${name}`;
+    return `${uri}#${label}`;
   }
 
   // 3. Trojan (trojan://)
@@ -66,7 +90,7 @@ export function nodeToUri(node: any): string {
       if (node.grpcServiceName) params.set('serviceName', node.grpcServiceName);
     }
     const qs = params.toString();
-    return `trojan://${encodeURIComponent(node.password || '')}@${server}:${port}${qs ? '?' + qs : ''}#${name}`;
+    return `trojan://${encodeURIComponent(node.password || '')}@${server}:${port}${qs ? '?' + qs : ''}#${label}`;
   }
 
   // 4. VLESS (vless://)
@@ -96,7 +120,7 @@ export function nodeToUri(node: any): string {
       params.set('type', net);
     }
     const qs = params.toString();
-    return `vless://${node.uuid || ''}@${server}:${port}${qs ? '?' + qs : ''}#${name}`;
+    return `vless://${node.uuid || ''}@${server}:${port}${qs ? '?' + qs : ''}#${label}`;
   }
 
   // 5. Hysteria2 (hysteria2://)
@@ -117,7 +141,7 @@ export function nodeToUri(node: any): string {
       if (ports) params.set('mport', ports);
     }
     const qs = params.toString();
-    return `hysteria2://${encodeURIComponent(node.password || '')}@${server}:${port}${qs ? '?' + qs : ''}#${name}`;
+    return `hysteria2://${encodeURIComponent(node.password || '')}@${server}:${port}${qs ? '?' + qs : ''}#${label}`;
   }
 
   // 6. AnyTLS (anytls://)
@@ -127,7 +151,7 @@ export function nodeToUri(node: any): string {
     if (node.skipCertVerify) params.set('insecure', '1');
     if (node.fingerprint) params.set('fp', node.fingerprint);
     const qs = params.toString();
-    return `anytls://${encodeURIComponent(node.password || '')}@${server}:${port}${qs ? '?' + qs : ''}#${name}`;
+    return `anytls://${encodeURIComponent(node.password || '')}@${server}:${port}${qs ? '?' + qs : ''}#${label}`;
   }
 
   // 7. VMess (vmess://)
@@ -163,7 +187,7 @@ export function nodeToUri(node: any): string {
     if (node.presharedKey) params.set('presharedkey', node.presharedKey);
     if (node.reserved && node.reserved.length > 0) params.set('reserved', node.reserved.join(','));
     const qs = params.toString();
-    return `wireguard://${encodeURIComponent(node.privateKey || '')}@${server}:${port}${qs ? '?' + qs : ''}#${name}`;
+    return `wireguard://${encodeURIComponent(node.privateKey || '')}@${server}:${port}${qs ? '?' + qs : ''}#${label}`;
   }
 
   // 9. Snell (snell://)
@@ -173,7 +197,7 @@ export function nodeToUri(node: any): string {
     if (node.obfs) params.set('obfs', node.obfs);
     if (node.obfsHost) params.set('obfs-host', node.obfsHost);
     const qs = params.toString();
-    return `snell://${encodeURIComponent(node.psk || node.password || '')}@${server}:${port}${qs ? '?' + qs : ''}#${name}`;
+    return `snell://${encodeURIComponent(node.psk || node.password || '')}@${server}:${port}${qs ? '?' + qs : ''}#${label}`;
   }
 
   // 10. TUIC (tuic://)
@@ -184,21 +208,21 @@ export function nodeToUri(node: any): string {
     if (node.congestionControl) params.set('congestion_control', node.congestionControl);
     const qs = params.toString();
     const user = node.uuid ? `${encodeURIComponent(node.uuid)}:${encodeURIComponent(node.password || '')}` : encodeURIComponent(node.password || '');
-    return `tuic://${user}@${server}:${port}${qs ? '?' + qs : ''}#${name}`;
+    return `tuic://${user}@${server}:${port}${qs ? '?' + qs : ''}#${label}`;
   }
 
   // 11. SOCKS5 (socks5://)
   if (type === 'socks5') {
     const auth = node.username ? `${encodeURIComponent(node.username)}:${encodeURIComponent(node.password || '')}@` : '';
-    return `socks5://${auth}${server}:${port}#${name}`;
+    return `socks5://${auth}${server}:${port}#${label}`;
   }
 
   // 12. HTTP (http://)
   if (type === 'http') {
     const auth = node.username ? `${encodeURIComponent(node.username)}:${encodeURIComponent(node.password || '')}@` : '';
-    return `http://${auth}${server}:${port}#${name}`;
+    return `http://${auth}${server}:${port}#${label}`;
   }
 
   // Generic fallback URI
-  return `${type}://${server}:${port}#${name}`;
+  return `${type}://${server}:${port}#${label}`;
 }
