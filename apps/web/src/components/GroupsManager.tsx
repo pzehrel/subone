@@ -11,13 +11,12 @@ import { Table, TableCell, TableHead } from './ui/Table';
 import { Textarea } from './ui/Textarea';
 import { GroupsIcon } from './ui/module-icons';
 import { HelpTooltip } from './HelpTooltip';
-import type { ProxyGroupItem, ProxyNode, SourceIconsConfig, SubscriptionSource } from '../types';
+import type { ProxyGroupItem, ProxyNode, SubscriptionSource } from '../types';
 
 interface GroupsManagerProps {
   groups: ProxyGroupItem[];
   sources?: SubscriptionSource[];
   nodes?: ProxyNode[];
-  sourceIcons?: SourceIconsConfig;
   onAddGroup: (group: Partial<ProxyGroupItem>) => Promise<void>;
   onUpdateGroup: (id: string, group: Partial<ProxyGroupItem>) => Promise<void>;
   onDeleteGroup: (id: string) => Promise<void>;
@@ -34,15 +33,7 @@ const initialForm: Partial<ProxyGroupItem> = {
   tolerance: 50, url: 'https://www.google.com/generate_204', interval: 300,
 };
 
-const cleanName = (name: string, icons?: SourceIconsConfig) => {
-  let value = name;
-  for (const icon of [icons?.custom, icons?.filter, icons?.remote]) {
-    if (icon && value.startsWith(icon)) value = value.slice(icon.length).trim();
-  }
-  return value.replace(/^[\p{Extended_Pictographic}\uFE0F\u200D\s]+/u, '').trim().toLowerCase();
-};
-
-export function GroupsManager({ groups, sources = [], nodes = [], sourceIcons, onAddGroup, onUpdateGroup, onDeleteGroup, onBatchImportGroups }: GroupsManagerProps) {
+export function GroupsManager({ groups, sources = [], nodes = [], onAddGroup, onUpdateGroup, onDeleteGroup, onBatchImportGroups }: GroupsManagerProps) {
   const [editor, setEditor] = useState<ProxyGroupItem | 'new' | null>(null);
   const [form, setForm] = useState<Partial<ProxyGroupItem>>(initialForm);
   const [formError, setFormError] = useState('');
@@ -66,6 +57,8 @@ export function GroupsManager({ groups, sources = [], nodes = [], sourceIcons, o
     return `${node.name} · ${source?.name || node.sourceName || node.sourceId || '未知来源'}`;
   };
   const outbound = (value: string) => {
+    if (value.startsWith('template:')) return { value, label: `${value.slice(9)} · 模板`, available: true, kind: 'template' };
+    if (/^(unresolved|ambiguous):/.test(value)) return { value, label: value.slice(value.indexOf(':') + 1), available: false, kind: 'unavailable' };
     if (value.startsWith('node:')) {
       const node = savedNodes.get(value.slice(5));
       return { value, label: node ? nodeLabel(node) : value, available: !!node && activeIds.has(node.id), kind: 'node' };
@@ -85,27 +78,6 @@ export function GroupsManager({ groups, sources = [], nodes = [], sourceIcons, o
     ...activeNodes.map(node => ({ value: `node:${node.id}`, label: nodeLabel(node) })),
   ];
   const isTerminal = (group: ProxyGroupItem) => group.type === 'direct' || group.type === 'reject';
-  const implicitSource = (group: ProxyGroupItem) => sources.find(source => cleanName(source.name, sourceIcons) === cleanName(group.name, sourceIcons));
-  const matchesNodeSource = (group: ProxyGroupItem) => !isTerminal(group) && (!!(group.sources ?? group.use)?.length || !!group.filter || !!group.includeAll || !!implicitSource(group) || ['♻️ 自动选择', '👉 手动选择'].includes(group.name));
-  // This preview shows direct active matches. Referenced groups are never expanded here.
-  const matchedNodes = (group: ProxyGroupItem) => {
-    if (isTerminal(group)) return [];
-    const mounts = group.sources ?? group.use ?? [];
-    const selectedSources = new Set(mounts.map(value => sourceFor(value)?.id).filter(Boolean));
-    const implicit = implicitSource(group);
-    let dynamic = matchesNodeSource(group) ? activeNodes : [];
-    if (mounts.length) dynamic = dynamic.filter(node => selectedSources.has(node.sourceId));
-    else if (implicit && !group.filter && !group.includeAll) dynamic = dynamic.filter(node => node.sourceId === implicit.id);
-    if (group.filter) {
-      try {
-        const regex = new RegExp(group.filter.replace(/\(\?i\)/g, ''), 'i');
-        dynamic = dynamic.filter(node => regex.test(node.name));
-      } catch { dynamic = []; }
-    }
-    const explicit = new Set((group.proxies || []).filter(value => value.startsWith('node:')).map(value => value.slice(5)));
-    const dynamicIds = new Set(dynamic.map(node => node.id));
-    return activeNodes.filter(node => explicit.has(node.id) || dynamicIds.has(node.id));
-  };
   const sourceNames = (group: ProxyGroupItem) => (group.sources ?? group.use ?? []).map(value => {
     const source = sourceFor(value);
     return `${source?.name || value}${source?.enabled ? '' : ' · 不可用'}`;
@@ -197,7 +169,6 @@ export function GroupsManager({ groups, sources = [], nodes = [], sourceIcons, o
     {group.filter && <div className="flex items-center gap-1.5 text-[10px] text-ui-muted"><span className="shrink-0">正则</span><code className="truncate font-mono" title={group.filter}>{group.filter}</code></div>}
     {!sourceNames(group).length && !group.proxies?.length && !group.filter && <span className="text-ui-muted text-xs">{group.type === 'direct' ? 'DIRECT' : group.type === 'reject' ? 'REJECT' : '—'}</span>}
   </div>;
-  const previewButton = (group: ProxyGroupItem) => <button className="text-xs text-ui-accent hover:underline cursor-pointer whitespace-nowrap" aria-label={`预览 ${group.name}`} onClick={() => setPreviewId(group.id)}>{matchesNodeSource(group) || matchedNodes(group).length ? `${matchedNodes(group).length} 节点` : '查看出站'}</button>;
   const actions = (group: ProxyGroupItem) => <div className="ui-table-actions">
     <button className={iconButton} title="编辑" aria-label={`编辑 ${group.name}`} onClick={() => openEditor(group)}><Edit2 size={14} /></button>
     <Popconfirm title="删除策略组？" description={group.name} confirmText="删除" danger onConfirm={() => onDeleteGroup(group.id)}><button className="ui-icon-button-danger p-1.5 rounded-lg" title="删除" aria-label={`删除 ${group.name}`}><Trash2 size={14} /></button></Popconfirm>
@@ -209,17 +180,16 @@ export function GroupsManager({ groups, sources = [], nodes = [], sourceIcons, o
       <div className="flex items-center gap-2"><button className="ui-button-secondary" onClick={openYaml}><Code size={14} />YAML 编辑</button><button className="ui-button-primary" onClick={() => openEditor()}><Plus size={14} />新建策略组</button></div>
     </section>
     <section className={`${panel} overflow-hidden`}>
-      <div className="hidden sm:block"><Table label="策略组列表"><thead><tr><TableHead>策略组</TableHead><TableHead>类型</TableHead><TableHead>来源 / 出站</TableHead><TableHead>节点</TableHead><TableHead fixed="right" className="text-right">操作</TableHead></tr></thead><tbody>{groups.map(group => <tr key={group.id}>
-        <TableCell minWidth={180} maxWidth={260}><button className="block max-w-full truncate text-xs font-bold text-left hover:text-ui-accent cursor-pointer" title={group.name} onClick={() => setPreviewId(group.id)}>{group.name}</button></TableCell>
+      <div className="hidden sm:block"><Table label="策略组列表"><thead><tr><TableHead>策略组</TableHead><TableHead>类型</TableHead><TableHead>来源 / 出站</TableHead><TableHead fixed="right" className="text-right">操作</TableHead></tr></thead><tbody>{groups.map(group => <tr key={group.id}>
+        <TableCell minWidth={180} maxWidth={260}><button aria-label={`查看 ${group.name}`} className="block max-w-full truncate text-xs font-bold text-left hover:text-ui-accent cursor-pointer" title={group.name} onClick={() => setPreviewId(group.id)}>{group.name}</button></TableCell>
         <TableCell minWidth={95}>{typeBadge(group)}</TableCell>
         <TableCell minWidth={220} maxWidth={380}>{composition(group)}</TableCell>
-        <TableCell minWidth={70}>{previewButton(group)}</TableCell>
         <TableCell fixed="right" className="text-right">{actions(group)}</TableCell>
       </tr>)}</tbody></Table></div>
       <div className="sm:hidden divide-y divide-ui-divider">{groups.map(group => <article key={group.id} className="p-4 space-y-3 min-w-0">
         <div className="flex items-start justify-between gap-3"><button className="min-w-0 text-left text-xs font-bold break-all hover:text-ui-accent cursor-pointer" onClick={() => setPreviewId(group.id)}>{group.name}</button><span className="shrink-0">{typeBadge(group)}</span></div>
         {composition(group)}
-        <div className="border-t border-ui-divider pt-2.5 flex items-center justify-between">{previewButton(group)}{actions(group)}</div>
+        <div className="border-t border-ui-divider pt-2.5 flex items-center justify-end">{actions(group)}</div>
       </article>)}</div>
       {!groups.length && <p className="p-12 text-center text-xs text-ui-muted">暂无策略组</p>}
     </section>
@@ -270,13 +240,12 @@ export function GroupsManager({ groups, sources = [], nodes = [], sourceIcons, o
 
     <Modal open={!!preview} title={preview?.name || '策略组'} size="lg" onClose={() => setPreviewId(null)}>
       {preview && <><ModalBody>
-        <div className="flex items-center gap-2">{typeBadge(preview)}<span className="text-xs text-ui-muted">{matchedNodes(preview).length} 个匹配节点</span></div>
+        <div className="flex items-center gap-2">{typeBadge(preview)}</div>
         {(preview.type === 'direct' || preview.type === 'reject') && <p className="text-xs text-ui-secondary">{preview.type === 'direct' ? 'DIRECT' : 'REJECT'}</p>}
         {!isTerminal(preview) && !!preview.proxies?.length && <Field><Label>出站</Label><div className="flex flex-wrap items-center gap-1.5">{preview.proxies.map((value, index) => <span key={index} className="inline-flex items-center gap-1.5 max-w-full">{preview.type === 'relay' && index > 0 && <ChevronRight size={12} className="shrink-0 text-ui-muted" />}<Badge className="max-w-full"><span className="truncate" title={outbound(value).label}>{outbound(value).label}{!outbound(value).available && ' · 不可用'}</span></Badge></span>)}</div></Field>}
         {!isTerminal(preview) && sourceNames(preview).length > 0 && <Field><Label>上游订阅</Label><p className="text-xs text-ui-secondary break-all">{sourceNames(preview).join('、')}</p></Field>}
-        {!isTerminal(preview) && <Field><Label>匹配节点</Label><div className="rounded-xl border border-ui-border divide-y divide-ui-divider max-h-80 overflow-auto">{matchedNodes(preview).map(node => <div key={node.id} className="flex items-center justify-between gap-3 p-3 text-xs">
-          <div className="min-w-0"><p className="font-medium truncate" title={node.name}>{node.countryEmoji} {node.name}</p><p className="text-[10px] text-ui-muted mt-1">{sources.find(source => source.id === node.sourceId)?.name || node.sourceName}</p><p className="text-[10px] text-ui-muted font-mono truncate mt-1">{node.server}:{node.port}</p></div><Badge className="font-mono shrink-0">{node.type.toUpperCase()}</Badge>
-        </div>)}{!matchedNodes(preview).length && <p className="p-6 text-center text-xs text-ui-muted">暂无匹配节点</p>}</div></Field>}
+        {preview.filter && <Field><Label>节点过滤正则</Label><code className="text-xs break-all">{preview.filter}</code></Field>}
+        {!isTerminal(preview) && <p className="text-xs text-ui-muted">在下游订阅的文件预览中查看最终成员。</p>}
       </ModalBody><ModalFooter><button className="ui-button-secondary" onClick={() => { setPreviewId(null); openEditor(preview); }}>编辑策略组</button><button className="ui-button-secondary" onClick={() => setPreviewId(null)}>关闭</button></ModalFooter></>}
     </Modal>
 

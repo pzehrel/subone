@@ -598,7 +598,6 @@ export function App() {
             groups={config.proxyGroups || []}
             sources={config.sources || []}
             nodes={nodes}
-            sourceIcons={config.settings?.sourceIcons}
             onAddGroup={handleAddGroup}
             onUpdateGroup={handleUpdateGroup}
             onDeleteGroup={handleDeleteGroup}

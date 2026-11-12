@@ -71,28 +71,7 @@ export function applyExtractionRules(
         }
       }
 
-      // Clone node and apply rename patterns
-      const nodeCopy: ProxyNode = { ...node };
-      if (rule.renamePattern) {
-        let newName = nodeCopy.name;
-        if (rule.renamePattern.replaceFrom) {
-          try {
-            const reg = new RegExp(rule.renamePattern.replaceFrom, 'g');
-            newName = newName.replace(reg, rule.renamePattern.replaceTo || '');
-          } catch (e) {
-            newName = newName.split(rule.renamePattern.replaceFrom).join(rule.renamePattern.replaceTo || '');
-          }
-        }
-        if (rule.renamePattern.prefix) {
-          newName = `${rule.renamePattern.prefix}${newName}`;
-        }
-        if (rule.renamePattern.suffix) {
-          newName = `${newName}${rule.renamePattern.suffix}`;
-        }
-        nodeCopy.name = newName.trim();
-      }
-
-      selectedNodes.push(nodeCopy);
+      selectedNodes.push({ ...node });
       processedKeys.add(nodeKey);
     }
   }
@@ -115,25 +94,5 @@ export function deduplicateNodes(nodes: ProxyNode[]): ProxyNode[] {
     }
   }
 
-  // Second pass: name deduplication for actually different nodes (Clash requires unique names)
-  const nameCounts = new Map<string, number>();
-  const result: ProxyNode[] = [];
-
-  for (const node of physicalUnique) {
-    let name = node.name.trim() || `${node.type.toUpperCase()}-${node.server}`;
-    if (nameCounts.has(name)) {
-      const count = nameCounts.get(name)! + 1;
-      nameCounts.set(name, count);
-      name = `${name} (${count})`;
-    } else {
-      nameCounts.set(name, 1);
-    }
-
-    result.push({
-      ...node,
-      name,
-    });
-  }
-
-  return result;
+  return physicalUnique.map(node => ({ ...node }));
 }

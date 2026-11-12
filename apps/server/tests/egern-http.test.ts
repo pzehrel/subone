@@ -93,7 +93,7 @@ test('the packaged Egern workflow generates native groups and protected provider
   for (const rule of remote) assert.ok(urls.includes(`${origin}/s/${profile.token}/rules/${rule.id}/egern`));
   assert.doesNotMatch(result.data, /\.srs|proxy-groups|filter-sources/);
   if (process.env.SUBONE_GENERATION_CONFIG25) await writeFile(process.env.SUBONE_GENERATION_CONFIG25, result.data);
-  assert.deepEqual(doc.policy_groups.find((entry: any) => entry.auto_test?.name === '🇯🇵 日本节点').auto_test.policies, ['DIRECT']);
+  assert.deepEqual(doc.policy_groups.find((entry: any) => entry.auto_test?.name === '🇯🇵 日本节点').auto_test.policies, ['REJECT']);
   const actual = await fetch(`${origin}/s/${profile.token}/egern?expand=true`); assert.equal(actual.status, 200); assert.equal(await actual.text(), result.data);
   if (process.env.SUBONE_EGERN_RULES_VERIFY) for (const url of urls) { const provider = await fetch(url); assert.equal(provider.status, 200, url); const data: any = yaml.load(await provider.text()); assert.ok(Object.keys(data).some(key => key.endsWith('_set')), url); }
 });
@@ -133,7 +133,7 @@ test('Egern HTTP output uses native typed nodes, groups and rules with native so
   assert.deepEqual((await api('/sources')).data.find((entry: any) => entry.id === source.id).doh, source.doh);
 });
 
-test('native provider mounts share profile selection, names and source lifecycle without adopting multi-source DNS', async () => {
+test('complete output and independent providers share profile selection, names and source lifecycle without adopting multi-source DNS', async () => {
   const a = await addSource('/provider-a', [
     { name: 'Shared', type: 'socks5', server: 'a.provider.example', port: 1080 },
     { name: 'Disabled', type: 'ss', server: 'disabled.provider.example', port: 443, cipher: 'aes-128-gcm', password: 'dummy' },
@@ -146,10 +146,10 @@ test('native provider mounts share profile selection, names and source lifecycle
   const result = await preview(profile, false); assert.equal(result.success, true, result.message);
   const doc: any = yaml.load(result.data); assertNativeReferences(doc);
   const group = typedValues(doc.policy_groups).find(group => group.name === groups[0].name);
-  assert.equal(group.urls.length, 2);
-  assert.ok(group.urls.every((url: string) => url.startsWith(`${origin}/s/${profile.token}/source/`)));
+  assert.equal(group.urls, undefined);
+  assert.equal(group.policies.length, 2);
   const providers: any[] = [];
-  for (const url of group.urls) {
+  for (const url of [a, b].map(source => `${origin}/s/${profile.token}/source/${source.id}?target=egern`)) {
     const response = await fetch(url); assert.equal(response.status, 200);
     const provider: any = yaml.load(await response.text()); assert.deepEqual(Object.keys(provider), ['proxies']);
     providers.push(...typedValues(provider.proxies));
@@ -184,6 +184,7 @@ test('native template references and managed references follow stable renames wi
     { name: 'Template node', type: 'socks5', server: 'collision.native.example', port: 1081 },
     { name: 'DIRECT', type: 'socks5', server: 'builtin.native.example', port: 1082 },
   ], []);
+  await api(`/sources/${source.id}`, 'PUT', { nameTemplate: '' });
   const content = {
     ...nativeTemplate,
     proxies: [{ socks5: { ...nativeTemplate.proxies[0].socks5, prev_hop: 'Stable upstream' } }],
@@ -255,7 +256,7 @@ test('native strategy parameters, ordered multi-value rules, explicit Egern rule
   const { profile, groups, rule } = await profileFor(source, [
     { name: 'Native failover', type: 'fallback', proxies: [`node:${source.nodes[1].id}`, `node:${source.nodes[0].id}`], interval: 60, url: 'https://health.example/check' },
     { name: 'Native round robin', type: 'load-balance', sources: [source.id], strategy: 'round-robin' },
-    { name: 'Native HK regex', type: 'urltest', sources: [source.id], filter: '(?i)hk', tolerance: 15, interval: 0 },
+    { name: 'Native HK regex', type: 'urltest', sources: [source.id], filter: '香港', tolerance: 15, interval: 0 },
     { name: 'Native direct', type: 'direct' }, { name: 'Native reject', type: 'reject' },
   ]);
   bodies.set('/native-rules.yaml', 'domain_suffix_set: [remote.example]\nip_cidr_set: [192.0.2.0/24]\n');
@@ -274,9 +275,9 @@ test('native strategy parameters, ordered multi-value rules, explicit Egern rule
   const doc: any = yaml.load(result.data); assertNativeReferences(doc);
   assert.doesNotMatch(result.data, /info\.strategy\.example|剩余流量/);
   const find = (type: string, name: string) => doc.policy_groups.find((entry: any) => entry[type]?.name === name)?.[type];
-  assert.deepEqual(find('fallback', groups[0].name), { name: groups[0].name, policies: ['JP chosen', 'HK chosen'], interval: 60, latency_test_url: 'https://health.example/check' });
+  assert.deepEqual(find('fallback', groups[0].name), { name: groups[0].name, policies: ['strategy-rules_日本 01', 'strategy-rules_香港 01'], interval: 60, latency_test_url: 'https://health.example/check' });
   assert.equal(find('load_balance', groups[1].name).algorithm, 'round_robin');
-  assert.deepEqual(find('auto_test', groups[2].name).policies, ['HK chosen']); assert.equal(find('auto_test', groups[2].name).interval, 0);
+  assert.deepEqual(find('auto_test', groups[2].name).policies, ['strategy-rules_香港 01']); assert.equal(find('auto_test', groups[2].name).interval, 0);
   assert.deepEqual(find('select', groups[3].name).policies, ['DIRECT']); assert.deepEqual(find('select', groups[4].name).policies, ['REJECT']);
   assert.deepEqual(doc.rules.filter((entry: any) => ['alpha.example', 'beta.example'].includes(entry.domain_suffix?.match)), [{ domain_suffix: { match: 'alpha.example', policy: groups[0].name } }, { domain_suffix: { match: 'beta.example', policy: groups[0].name } }]);
   assert.ok(doc.rules.some((entry: any) => entry.ip_cidr?.match === '192.0.2.0/24')); assert.ok(doc.rules.some((entry: any) => entry.ip_cidr6?.match === '2001:db8::/32'));
@@ -335,7 +336,7 @@ test('unsupported strategy or schema is rejected explicitly and retained templat
   assert.equal(invalid.status, 400); assert.equal(invalid.success, false);
   assert.deepEqual((await api('/groups')).data, before);
   let result = await preview(profile); assert.equal(result.success, true, result.message);
-  for (const change of [{ type: 'relay' }, { type: 'urltest', lazy: true }, { type: 'load-balance', lazy: undefined, strategy: 'sticky-sessions' }]) {
+  for (const change of [{ type: 'relay', proxies: ['node:' + source.nodes[0].id] }, { type: 'urltest', lazy: true }, { type: 'load-balance', lazy: undefined, strategy: 'sticky-sessions' }]) {
     assert.equal((await api(`/groups/${groups[0].id}`, 'PUT', change)).success, true);
     result = await preview(profile); assert.equal(result.status, 422); assert.match(result.generation.diagnostics.at(-1).code, /^egern-group/);
   }

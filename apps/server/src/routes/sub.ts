@@ -150,7 +150,7 @@ subRouter.get('/s/:subToken/nodes/qx', async (c) => {
   const profile = getAppConfig().profiles?.find(profile => profile.enabled !== false && profile.token === c.req.param('subToken'));
   if (!profile) return c.text('404 Not Found', 404);
   try {
-    const plan = await createGenerationPlan({ target: 'quantumultx', outputRole: 'source', profile,
+    const plan = await createGenerationPlan({ target: 'quantumultx', outputRole: 'nodes', profile,
       templateContent: getEffectiveTemplateForProfile(profile, 'quantumultx')?.content || '', baseUrl: getBaseUrl(c.req) });
     const result = renderQuantumultXNodes(plan);
     const userinfo = formatSubscriptionUserinfo(aggregateSubscriptionInfo(plan.sources.map(source => source.subscriptionInfo)));

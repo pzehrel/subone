@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { ProxyNode, SubscriptionSource } from '../types';
+import { nodeInputFields } from './node-naming';
+import type { CountryPatternRule, ProxyNode, SubscriptionSource } from '../types';
 
 function sorted(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sorted);
@@ -64,7 +65,7 @@ export function connectionFingerprint(node: ProxyNode, peers: ProxyNode[] = [], 
 }
 
 /** Apply a complete result against the latest saved local settings, scoped to one source. */
-export function prepareSourceNodes(candidate: SubscriptionSource, previous?: SubscriptionSource): void {
+export function prepareSourceNodes(candidate: SubscriptionSource, previous?: SubscriptionSource, countryRules?: CountryPatternRule[]): void {
   const incoming = [...(candidate.nodes || []), ...(candidate.infoNodes || [])];
   const old = previous?.id === candidate.id ? [...(previous.nodes || []), ...(previous.infoNodes || [])] : [];
   const oldByKey = new Map<string, ProxyNode[]>();
@@ -79,7 +80,7 @@ export function prepareSourceNodes(candidate: SubscriptionSource, previous?: Sub
     node.id = matched?.id || `node-${randomUUID()}`;
     node.localName = matched?.localName;
     node.enabled = matched?.enabled !== false;
-    node.name = node.localName ?? node.originalName;
+    Object.assign(node, nodeInputFields(node, countryRules));
     node.sourceId = candidate.id;
     node.sourceName = candidate.name;
   }

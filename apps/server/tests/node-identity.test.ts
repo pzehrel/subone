@@ -69,6 +69,20 @@ test('upstream rename and reorder preserve unique connection identities and loca
   assert.equal((await api(`/nodes/${first.id}`, 'PUT', { name: null, enabled: true })).data.name, 'First renamed');
 });
 
+test('local URI labels can be saved and cleared without changing the upstream connection or identity', async () => {
+  const raw = 'vless://11111111-1111-4111-8111-111111111111@label.example:443?security=tls&type=ws&path=%2Fws&x-unknown=a%2Bb#Upstream';
+  const created = await add('/uri-label', raw);
+  const original = created.nodes[0];
+  const saved = (await api(`/nodes/${original.id}`, 'PUT', { name: '大阪 #1 / 50% 🇯🇵' })).data;
+  assert.equal(saved.name, '大阪 #1 / 50% 🇯🇵');
+  assert.equal(saved.originalName, 'Upstream');
+  assert.equal(saved.raw, raw);
+  assert.equal(saved.id, original.id);
+  assert.equal((await api(`/sources/${created.id}/raw`)).data.content, raw);
+  const cleared = (await api(`/nodes/${original.id}`, 'PUT', { name: '' })).data;
+  assert.deepEqual(cleared, original);
+});
+
 test('complete raw changes and ambiguous duplicates receive fresh settings while source identity stays isolated', async () => {
   const initial = await add('/raw', clash([ss('Original', 'raw.example', { 'plugin-opts': { nested: { name: 'transport', tag: 'connection' }, enabled: false } })]));
   const original = initial.nodes[0];

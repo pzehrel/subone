@@ -1,3 +1,4 @@
+import { detectRegion } from './region';
 import { CountryPatternRule } from '../../types/index';
 
 export interface CountryInfo {
@@ -97,9 +98,22 @@ export const DEFAULT_COUNTRY_PATTERNS: CountryPatternRule[] = [
   }
 ];
 
+const stockById = new Map(DEFAULT_COUNTRY_PATTERNS.map(rule => [rule.id, { ...rule }]));
+const stockCodes = new Set(DEFAULT_COUNTRY_PATTERNS.map(rule => rule.code));
+
 export function detectCountry(nodeName: string, customPatterns?: CountryPatternRule[]): CountryInfo | null {
   const patterns = customPatterns && customPatterns.length > 0 ? customPatterns : DEFAULT_COUNTRY_PATTERNS;
+  const region = detectRegion(nodeName);
   for (const item of patterns) {
+    // Stock patterns predate whole-token aliases and ambiguity detection. Keep
+    // saved rule order and custom regexes, but match a stock rule by its canonical region.
+    const stock = stockById.get(item.id);
+    if (stock && item.pattern === stock.pattern) {
+      if (region?.code === stock.code) {
+        return { code: item.code, name: item.name, emoji: item.emoji === stock.emoji ? region.emoji || item.emoji : item.emoji };
+      }
+      continue;
+    }
     try {
       const cleanPattern = item.pattern.trim().replace(/^\(\?i\)/i, '').replace(/\(\?i\)/gi, '');
       const reg = new RegExp(cleanPattern, 'i');
@@ -120,5 +134,6 @@ export function detectCountry(nodeName: string, customPatterns?: CountryPatternR
       }
     }
   }
+  if (region?.code && region.emoji && !stockCodes.has(region.code)) return { code: region.code, name: region.name, emoji: region.emoji };
   return null;
 }

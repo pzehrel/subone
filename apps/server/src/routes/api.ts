@@ -1,3 +1,5 @@
+import { nodeInputFields, restoreInputFields } from '../services/node-naming';
+import { DEFAULT_NAME_TEMPLATE, validateSourceNaming } from '../../../../shared/source-naming';
 import { readManualInput } from './manual-input';
 import { createGenerationPlan, renderGeneration, GenerationError } from '../services/generation';
 import { Hono, type Handler } from 'hono';
@@ -92,7 +94,7 @@ apiRouter.put('/nodes/:id', (c) => {
     node.originalName ??= node.name;
     if ('name' in body) {
       node.localName = body.name?.trim() || undefined;
-      node.name = node.localName ?? node.originalName;
+      Object.assign(node, nodeInputFields(node, candidate.countryRules));
     }
     if ('enabled' in body) node.enabled = body.enabled;
     try { commitConfig(candidate); } catch (error: any) { return c.json({ success: false, message: error.message }, 500); }
@@ -121,16 +123,17 @@ apiRouter.post('/sources', async (c) => {
     if (!manual && (body.content !== undefined || body.contentFile !== undefined)) return c.json({ success: false, message: '请先选择手动输入' }, 400);
     const url = typeof body.url === 'string' ? body.url.trim() : '';
     if (!manual && !/^https?:\/\//.test(url)) return c.json({ success: false, message: '请填写 HTTP 订阅链接' }, 400);
-    try { validateInfoRegex(body); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
+    try { validateInfoRegex(body); validateSourceNaming(body); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
     const source: SubscriptionSource = {
       id: `src-${crypto.randomUUID()}`, name: cleanSourceOrGroupName((body.name || '新订阅').trim()), url: manual ? undefined : url, acquisition: manual ? 'manual' : 'url',
       enabled: body.enabled !== false, type: body.type || 'auto',
       trafficNodeRegex: body.trafficNodeRegex?.trim(), expiryNodeRegex: body.expiryNodeRegex?.trim(),
+      extractRegex: body.extractRegex ?? '', nameTemplate: body.nameTemplate ?? DEFAULT_NAME_TEMPLATE,
     };
     try {
       source.nodes = manual ? receiveSourceContent(source, content!, appConfig.countryRules) : await fetchAndParseSource(source, appConfig.countryRules);
     } catch (error: any) { return c.json({ success: false, message: error.message || '上游更新失败' }, 422); }
-    prepareSourceNodes(source);
+    prepareSourceNodes(source, undefined, appConfig.countryRules);
     bindSourceDoh(source);
     source.nodeCount = source.nodes.length;
     const candidate = structuredClone(appConfig);
@@ -150,7 +153,7 @@ apiRouter.put('/sources/:id', async (c) => {
   const body = c.get('body');
   const current = appConfig.sources.find(s => s.id === c.req.param('id'));
   if (!current) return c.json({ success: false, message: 'Source not found' }, 404);
-  try { validateInfoRegex(body); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
+  try { validateInfoRegex(body); validateSourceNaming({ ...current, ...body }); } catch (error: any) { return c.json({ success: false, message: error.message }, 400); }
   if (body.acquisition !== undefined && !['url', 'manual'].includes(body.acquisition)) return c.json({ success: false, message: '输入方式无效' }, 400);
   const acquisition = body.acquisition ?? current.acquisition ?? 'url';
   const manual = acquisition === 'manual';
@@ -163,6 +166,8 @@ apiRouter.put('/sources/:id', async (c) => {
   if (body.url !== undefined && (typeof body.url !== 'string' || !/^https?:\/\//.test(body.url.trim()))) return c.json({ success: false, message: '请填写 HTTP 订阅链接' }, 400);
   if (switching && !manual && (typeof body.url !== 'string' || !/^https?:\/\//.test(body.url.trim()))) return c.json({ success: false, message: '请填写 HTTP 订阅链接' }, 400);
   const candidate = structuredClone(current);
+  if (body.extractRegex !== undefined) candidate.extractRegex = body.extractRegex;
+  if (body.nameTemplate !== undefined) candidate.nameTemplate = body.nameTemplate;
   candidate.acquisition = acquisition;
   if (manual) candidate.url = undefined;
   if (typeof body.name === 'string' && body.name.trim()) candidate.name = cleanSourceOrGroupName(body.name.trim());
@@ -239,6 +244,11 @@ apiRouter.post('/sources/refresh-all', async (c) => {
 
 
 // 3. Country Matching & Grouping Rules (国家/地区识别规则)
+function saveCountryRules() {
+  restoreInputFields(appConfig.sources, appConfig.countryRules);
+  saveConfig(appConfig);
+}
+
 apiRouter.get('/country-rules', (c) => {
   return c.json({ success: true, data: appConfig.countryRules || INITIAL_COUNTRY_RULES });
 });
@@ -255,7 +265,7 @@ apiRouter.post('/country-rules', (c) => {
   };
   if (!appConfig.countryRules) appConfig.countryRules = [...INITIAL_COUNTRY_RULES];
   appConfig.countryRules.push(newRule);
-  saveConfig(appConfig);
+  saveCountryRules();
   return c.json({ success: true, data: newRule });
 });
 
@@ -265,20 +275,20 @@ apiRouter.put('/country-rules/:id', (c) => {
   const idx = appConfig.countryRules.findIndex(r => r.id === c.req.param('id'));
   if (idx === -1) return c.json({ success: false, message: 'Country rule not found' }, 404);
   appConfig.countryRules[idx] = { ...appConfig.countryRules[idx], ...body };
-  saveConfig(appConfig);
+  saveCountryRules();
   return c.json({ success: true, data: appConfig.countryRules[idx] });
 });
 
 apiRouter.delete('/country-rules/:id', (c) => {
   if (!appConfig.countryRules) appConfig.countryRules = [...INITIAL_COUNTRY_RULES];
   appConfig.countryRules = appConfig.countryRules.filter(r => r.id !== c.req.param('id'));
-  saveConfig(appConfig);
+  saveCountryRules();
   return c.json({ success: true, message: 'Country rule deleted' });
 });
 
 apiRouter.post('/country-rules/reset', (c) => {
   appConfig.countryRules = [...INITIAL_COUNTRY_RULES];
-  saveConfig(appConfig);
+  saveCountryRules();
   return c.json({ success: true, data: appConfig.countryRules });
 });
 

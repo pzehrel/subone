@@ -368,3 +368,111 @@ test('deleting a source also clears stable references to its automatically creat
   assert.equal(saved.connectionReferences.some((entry: any) => entry.target === `group:${group.id}`), false);
   assert.ok(saved.connectionReferences.some((entry: any) => entry.target === 'unresolved:Automatic source group'));
 });
+
+test('a required nested group uses final names and cannot keep a node whose index relied on an excluded sibling', async () => {
+  const exits = await addSource('/indexed-exits', { outbounds: [
+    { type: 'socks', tag: '大阪 former first', server: '192.0.2.211', server_port: 1080 },
+    { type: 'socks', tag: 'Osaka former second', server: '192.0.2.212', server_port: 1080 },
+  ] });
+  await api('/sources/' + exits.id, 'PUT', { nameTemplate: '{region} {region_index}' });
+  const inner = (await api('/groups', 'POST', { name: 'Indexed exits', type: 'select', sources: [exits.id], filter: '^大阪 02$' })).data;
+  const outer = (await api('/groups', 'POST', { name: 'Nested indexed connection', type: 'select', proxies: ['group:' + inner.id] })).data;
+  const ordinary = await addSource('/indexed-ordinary', { outbounds: [{ type: 'socks', tag: 'Main connection', server: 'index.completion.example', server_port: 1080 }], dns: { servers: [{ type: 'https', server: 'dns.index.completion.example' }] } });
+  const content = structuredClone(template);
+  (content.dns.servers[0] as any).detour = outer.name;
+  const profile = await profileFor([ordinary.nodes[0], exits.nodes[0]], content);
+  const valid = await preview(profile);
+  assert.equal(valid.status, 200, JSON.stringify(valid));
+  const doc = JSON.parse(valid.data);
+  assert.deepEqual(doc.outbounds.find((entry: any) => entry.tag === inner.name).outbounds, ['大阪 02']);
+  assert.equal(doc.outbounds.find((entry: any) => entry.server === '192.0.2.212').tag, '大阪 02');
+  assert.deepEqual(valid.generation.dependencyNodes.map((node: any) => node.id), [exits.nodes[1].id]);
+
+  await api('/profiles/' + profile.id, 'PUT', { nodeFilter: { mode: 'manual', selectedNodeIds: [ordinary.nodes[0].id] } });
+  for (const selectedGroupIds of [[profile.group.id], [profile.group.id, outer.id]]) {
+    await api('/profiles/' + profile.id, 'PUT', { selectedGroupIds });
+    const invalid = await preview(profile);
+    assert.equal(invalid.status, 422);
+    assert.match(JSON.stringify(invalid.generation.diagnostics), /Indexed exits/);
+    assert.equal(invalid.generation.dependencyNodeCount, 0);
+    assert.equal((await fetch(origin + '/s/' + profile.token + '/singbox')).status, 422);
+  }
+});
+
+test('a required member can get its final index from its own necessary node chain', async () => {
+  const exits = await addSource('/chained-indexed-exits', { outbounds: [
+    { type: 'socks', tag: '大阪 first hop', server: '192.0.2.213', server_port: 1080 },
+    { type: 'socks', tag: '大阪 exit', server: '192.0.2.214', server_port: 1080, detour: '大阪 first hop' },
+  ] });
+  await api('/sources/' + exits.id, 'PUT', { nameTemplate: '{region} {region_index}' });
+  const inner = (await api('/groups', 'POST', { name: 'Indexed chain exits', type: 'select', sources: [exits.id], filter: '^大阪 02$' })).data;
+  const main = await addSource('/indexed-chain-main', { outbounds: [{ type: 'socks', tag: 'Chain main', server: 'chained-index.completion.example', server_port: 1080 }], dns: { servers: [{ type: 'https', server: 'dns.chained-index.completion.example' }] } });
+  const content = structuredClone(template);
+  (content.dns.servers[0] as any).detour = inner.name;
+  const profile = await profileFor(main.nodes, content);
+  const result = await preview(profile);
+  assert.equal(result.status, 200, JSON.stringify(result));
+  const doc = JSON.parse(result.data);
+  assert.deepEqual(doc.outbounds.find((entry: any) => entry.tag === inner.name).outbounds, ['大阪 02']);
+  assert.equal(doc.outbounds.find((entry: any) => entry.tag === '大阪 02').detour, '大阪 01');
+  assert.equal(result.generation.dependencyNodeCount, 2);
+});
+
+for (const count of [1, 200]) {
+  test(`jointly valid necessary members retain their shared numbering with ${count} candidate exits`, async () => {
+    const names = ['X', 'P', ...Array.from({ length: count }, (_, index) => 'A' + index), 'B'];
+    const exits = await addSource('/joint-exits-' + count, { outbounds: names.map((label, index) => ({
+      type: 'socks', tag: '大阪 ' + label, server: '198.51.100.' + (index + 1), server_port: 1080,
+      ...(label === 'B' ? { detour: '大阪 P' } : {}),
+    })) });
+    await api('/sources/' + exits.id, 'PUT', { extractRegex: '(?<label>[XPAB])[0-9]*$', nameTemplate: '{label}{region_index}' });
+    const group = (await api('/groups', 'POST', { name: 'Joint exits ' + count, type: 'select', sources: [exits.id], filter: '^(A02|B03)$' })).data;
+    const main = await addSource('/joint-main-' + count, {
+      outbounds: [{ type: 'socks', tag: 'Main', server: 'joint.completion.example', server_port: 1080 }],
+      dns: { servers: [{ type: 'https', server: 'dns.joint.completion.example' }] },
+    });
+    const content = structuredClone(template);
+    (content.dns.servers[0] as any).detour = group.name;
+    const result = await preview(await profileFor(main.nodes, content));
+    assert.equal(result.status, 200, JSON.stringify(result));
+    const doc = JSON.parse(result.data);
+    assert.deepEqual(doc.outbounds.find((entry: any) => entry.tag === group.name).outbounds.sort(), ['A02', 'B03']);
+    assert.equal(doc.outbounds.find((entry: any) => entry.tag === 'B03').detour, 'P01');
+    assert.equal(result.generation.dependencyNodeCount, 3);
+    assert.ok(!doc.outbounds.some((entry: any) => entry.server === '198.51.100.1'));
+  });
+}
+
+for (const separateMounts of [false, true]) {
+  test(`jointly necessary groups find a shared valid numbering across ${separateMounts ? 'distinct' : 'identical'} source mounts`, async () => {
+    const node = (label: string, octet: number, extra = {}) => ({ type: 'socks', tag: '大阪 ' + label, server: '198.51.100.' + octet, server_port: 1080, ...extra });
+    const suffix = separateMounts ? 'separate' : 'shared';
+    // In separate mounts the saved predecessor source still sorts before the A source.
+    const hop = node('P', 4), a = node('A', 5), b = node('B', 6, { detour: '大阪 P' });
+    const first = await addSource('/coupled-1-' + suffix, { outbounds: separateMounts ? [hop, b] : [hop, a, b] });
+    const second = separateMounts ? await addSource('/coupled-2-' + suffix, { outbounds: [a] }) : first;
+    for (const source of new Set([first, second])) {
+      await api('/sources/' + source.id, 'PUT', { extractRegex: '(?<label>[PAB])$', nameTemplate: '{label}{region_index}' });
+    }
+    const group = async (name: string, fields: object) => (await api('/groups', 'POST', { name: name + '-' + suffix, type: 'select', ...fields })).data;
+    // P,B,A in separate sources. P,A,B when one source owns all three.
+    const aName = separateMounts ? 'A03' : 'A02';
+    const bName = separateMounts ? 'B02' : 'B03';
+    const left = await group('Coupled A', { sources: [second.id], filter: '^' + aName + '$' });
+    const right = await group('Coupled B', { sources: [first.id], filter: '^' + bName + '$' });
+    const parent = await group('Coupled parent', { proxies: ['group:' + left.id, 'group:' + right.id] });
+    const main = await addSource('/coupled-main-' + suffix, {
+      outbounds: [{ type: 'socks', tag: 'Main', server: 'coupled.completion.example', server_port: 1080 }],
+      dns: { servers: [{ type: 'https', server: 'dns.coupled.completion.example' }] },
+    });
+    const content = structuredClone(template);
+    (content.dns.servers[0] as any).detour = parent.name;
+    const result = await preview(await profileFor(main.nodes, content));
+    assert.equal(result.status, 200, JSON.stringify(result));
+    const doc = JSON.parse(result.data);
+    assert.deepEqual(doc.outbounds.find((entry: any) => entry.tag === left.name).outbounds, [aName]);
+    assert.deepEqual(doc.outbounds.find((entry: any) => entry.tag === right.name).outbounds, [bName]);
+    assert.equal(doc.outbounds.find((entry: any) => entry.tag === bName).detour, 'P01');
+    assert.equal(result.generation.dependencyNodeCount, 3);
+  });
+}

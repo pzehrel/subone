@@ -14,12 +14,13 @@ export function normalizeGroupReferences(group: ProxyGroupItem, config: AppConfi
   const nodes = config.sources.flatMap(source => [...(source.nodes || []), ...(source.infoNodes || [])]);
   const result = { ...group };
   result.proxies = group.proxies?.map(value => {
-    if (nodeReferenceId(value) || groupReferenceId(value) || value.startsWith('unresolved:') || value.startsWith('ambiguous:')) return value;
+    if (nodeReferenceId(value) || groupReferenceId(value) || value.startsWith('template:') || value.startsWith('unresolved:') || value.startsWith('ambiguous:')) return value;
     const nodeMatches = nodes.filter(node => node.name === value || node.id === value);
     const groupMatches = config.proxyGroups.filter(candidate => candidate.name === value);
-    const builtinCollision = nodeMatches.length + groupMatches.length > 0 && /^(direct|reject|block|pass|global|reject-drop)$/i.test(value) ? 1 : 0;
-    if (nodeMatches.length + groupMatches.length + builtinCollision > 1) throw new Error(`出站名称不唯一：${value}`);
-    return nodeMatches.length === 1 ? nodeReference(nodeMatches[0].id) : groupMatches.length === 1 ? groupReference(groupMatches[0].id) : value;
+    const nativeMatch = !builtins.test(value) && config.templates.some(template => templateOutboundNames(template).has(value)) ? 1 : 0;
+    const builtinCollision = nodeMatches.length + groupMatches.length > 0 && builtins.test(value) ? 1 : 0;
+    if (nodeMatches.length + groupMatches.length + builtinCollision + nativeMatch > 1) throw new Error(`出站名称不唯一：${value}`);
+    return nodeMatches.length === 1 ? nodeReference(nodeMatches[0].id) : groupMatches.length === 1 ? groupReference(groupMatches[0].id) : nativeMatch ? `template:${value}` : builtins.test(value) ? value : `unresolved:${value}`;
   });
   const mounts = group.sources ?? group.use;
   if (mounts) {
@@ -36,26 +37,32 @@ export function normalizeGroupReferences(group: ProxyGroupItem, config: AppConfi
   return result;
 }
 
+export function clientNodeBaseName(node: ProxyNode, name: string, client?: ClientType | 'uri'): string {
+  let base = name.trim() || `${node.type.toUpperCase()}-${node.server}`;
+  if (client && !['singbox', 'mihomo', 'egern', 'uri'].includes(client)) base = base.replace(/[=,\r\n]/g, '_');
+  return base;
+}
+
 /** Allocate client names once, then resolve all stable edges against this exact selected set. */
 export function resolveOutputReferences(nodes: ProxyNode[], groups: ProxyGroupItem[], sources: SubscriptionSource[], client?: ClientType | 'uri', reservedNames: Iterable<string> = []): { nodes: ProxyNode[]; groups: ProxyGroupItem[]; sources: SubscriptionSource[] } {
   const enabledSources = new Set(sources.filter(source => source.enabled).map(source => source.id));
   const selected = nodes.filter(node => node.enabled !== false && (!node.sourceId || enabledSources.has(node.sourceId)));
-  const used = new Set([...reservedNames, ...(client === 'uri' ? [] : ['direct', 'reject', 'block', 'pass', 'global', 'reject-drop', 'dns-out', 'compatible'].flatMap(name => [name, name.toUpperCase()]))]);
+  const owned = new Set(reservedNames);
+  const used = new Set([...owned, ...(client === 'uri' ? [] : ['direct', 'reject', 'block', 'pass', 'global', 'reject-drop', 'dns-out', 'compatible'].flatMap(name => [name, name.toUpperCase()]))]);
   const names = new Map<string, string>();
   const groupNames = new Map<string, string>();
   for (const group of [...groups].sort((a, b) => a.id.localeCompare(b.id))) {
     let base = group.name.trim() || 'Group';
     if (client && !['singbox', 'mihomo', 'egern', 'uri'].includes(client)) base = base.replace(/[=,\r\n]/g, '_');
     let name = base; let suffix = 2;
-    while (used.has(name)) name = `${base} (${suffix++})`;
+    while (used.has(name) || client !== 'uri' && builtins.test(name)) name = `${base} (${suffix++})`;
     used.add(name); groupNames.set(group.id, name);
   }
   if (client !== 'uri') used.add('🎯 本地直连');
   for (const node of [...selected].sort((a, b) => a.id.localeCompare(b.id))) {
-    let base = node.name.trim() || `${node.type.toUpperCase()}-${node.server}`;
-    if (client && !['singbox', 'mihomo', 'egern', 'uri'].includes(client)) base = base.replace(/[=,\r\n]/g, '_');
+    const base = clientNodeBaseName(node, node.name, client);
     let name = base; let suffix = 2;
-    while (used.has(name)) name = `${base} (${suffix++})`;
+    while (used.has(name) || client !== 'uri' && builtins.test(name)) name = `${base} (${suffix++})`;
     used.add(name); names.set(node.id, name);
   }
   const outputNodes = selected.map(node => {
@@ -79,6 +86,10 @@ export function resolveOutputReferences(nodes: ProxyNode[], groups: ProxyGroupIt
       const groupId = groupReferenceId(value);
       const legacyMatches = groups.filter(candidate => candidate.name === value);
       const legacyName = legacyMatches.length === 1 && groupNames.get(legacyMatches[0].id);
+      if (value.startsWith('template:')) {
+        const name = value.slice(9);
+        return [owned.has(name) ? name : `unresolved:${name}`];
+      }
       return id ? [names.get(id) || value] : groupId ? [groupNames.get(groupId) || value] : [legacyName || value];
     }) })),
     sources: sources.filter(source => source.enabled).map(source => ({ ...source, nodes: outputNodes.filter(node => node.sourceId === source.id) })),
@@ -86,7 +97,7 @@ export function resolveOutputReferences(nodes: ProxyNode[], groups: ProxyGroupIt
 }
 
 interface TemplateSlot { slot: string; literal: string; write(value: string): void }
-const builtins = /^(direct|reject|block|pass|global|reject-drop|rules|dns-out)$/i;
+const builtins = /^(direct|reject|block|pass|global|reject-drop|rules|dns-out|compatible)$/i;
 const templateArray = (value: any): any[] => Array.isArray(value) ? value : [];
 const stableJson = (value: any): string => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
   ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);

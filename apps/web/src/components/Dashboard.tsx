@@ -1267,7 +1267,7 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
                             setExpandedGroupPreview(prev => prev === source.id ? null : source.id);
                           }}
                           className="p-1 text-ui-muted hover:text-ui-text hover:bg-ui-hover rounded transition-colors cursor-pointer"
-                          title="快速预览组内节点"
+                          title="查看上游节点"
                         >
                           <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isPeeking ? 'rotate-180 text-ui-accent' : ''}`} />
                         </button>
@@ -1278,11 +1278,11 @@ const ProfileEditModal: React.FC<ProfileEditModalProps> = ({
                     {isPeeking && (
                       <div className="px-3.5 pb-3 pt-1 border-t border-ui-border/60 bg-ui-subtle/80 space-y-1.5 text-xs animate-in fade-in duration-150">
                         <div className="text-[10px] text-ui-muted font-medium">
-                          组内包含节点列表 ({nodesList.length} 个):
+                          上游节点（{nodesList.length} 个）
                         </div>
                         <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
                           {nodesList.length === 0 ? (
-                            <div className="text-[11px] text-ui-muted py-1">当前组内无节点</div>
+                            <div className="text-[11px] text-ui-muted py-1">该上游暂无节点</div>
                           ) : (
                             nodesList.map(n => (
                               <div key={n.id} className="flex items-center justify-between text-[11px] py-0.5">

@@ -144,7 +144,8 @@ test('retained Loon template references complete runtime dependencies without ad
   assert.equal(await fetch(`${origin}/s/${profile.token}/source/${dependency.id}?target=loon`).then(response => response.text()), '[Proxy]');
   const remote = await fetch(`${origin}/s/${profile.token}/loon?expand=false`).then(response => response.text());
   assert.ok(remote.includes(dependencyLine));
-  assert.ok(remote.includes(`/source/${ordinary.id}?target=loon`));
+  assert.equal(remote, preview.data);
+  assert.doesNotMatch(remote, /\/source\//);
   assert.doesNotMatch(remote, new RegExp(`/source/${dependency.id}`));
   assert.ok(ordinaryName);
   assert.equal((await api(`/nodes/${dependency.nodes[0].id}`, 'PUT', { enabled: false })).success, true);
@@ -251,6 +252,8 @@ test('Loon preserves ordered Relay members and diagnoses cycles in the actual na
   assert.ok(valid.data.includes(`Loon Relay = relay, ${bName}, ${aName}`));
   const managed = (await api('/groups', 'POST', { name: 'Managed Cycle', type: 'select', proxies: ['Native cycle'] })).data;
   const cyclic = await profileFor([a], template.replace('[Proxy Group]\n', '[Proxy Group]\nNative cycle = select, Managed Cycle\n'), { selectedGroupIds: [managed.id] });
+  const repaired = await api(`/groups/${managed.id}`, 'PUT', { proxies: ['Native cycle'] });
+  assert.deepEqual(repaired.data.proxies, ['template:Native cycle']);
   const broken = await api('/generate/preview', 'POST', { profileId: cyclic.id, customType: 'loon', expandNodes: true });
   assert.equal(broken.status, 422);
   assert.ok(broken.generation.diagnostics.some((diagnostic: any) => diagnostic.code === 'source-doh-cycle'));

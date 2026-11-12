@@ -74,7 +74,7 @@ test('Shadowrocket adopts each source DoH list in native Host mappings', async (
   assert.deepEqual((await api('/sources')).data.find((entry: any) => entry.id === a.id).doh, a.doh);
 });
 
-test('pure Base64 and URI source endpoints preserve local punctuation names and ignore every unused DNS graph', async () => {
+test('pure Base64 retains punctuation while source slices use the complete target name and ignore unused DNS graphs', async () => {
   bodies.set('/rocket-pure', JSON.stringify({ outbounds: [
     { type: 'trojan', tag: 'Original', server: 'pure.node.example', server_port: 443, password: 'secret' },
     { type: 'trojan', tag: 'DNS exit', server: 'unused.dns.exit.example', server_port: 443, password: 'other' },
@@ -99,7 +99,9 @@ test('pure Base64 and URI source endpoints preserve local punctuation names and 
     `/s/${profile.token}/source/${source.id}?target=shadowrocket`, `/s/${profile.token}/source/${source.id}/rocket`,
     `/s/${profile.token}/source/${source.id}?target=singbox`, `/s/${profile.token}/source/${source.id}/singbox`,
   ]) {
-    const response = await fetch(origin + path); assert.equal(response.status, 200, path); assert.equal(await response.text(), preview.data, path);
+    const response = await fetch(origin + path); assert.equal(response.status, 200, path);
+    const expected = /source\/.*(?:shadowrocket|rocket)/.test(path) ? 'trojan://secret@pure.node.example:443#Local_%20A_B' : decoded(preview.data);
+    assert.equal(decoded(await response.text()), expected, path);
   }
   const saved = (await api('/sources')).data.find((entry: any) => entry.id === source.id);
   assert.equal(saved.nodes.find((node: any) => node.id === ordinary.id).raw.tag, 'Original');
@@ -177,7 +179,9 @@ test('retained Shadowrocket template dependencies remain outside ordinary candid
   const pure = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'shadowrocket', format: 'base64' });
   assert.equal(pure.generation.dependencyNodeCount, 0); assert.doesNotMatch(decoded(pure.data), /dependency.runtime|dns.unused/);
   assert.equal(await fetch(`${origin}/s/${profile.token}/source/${dependency.id}/rocket`).then(response => response.text()), '');
-  assert.equal(await fetch(`${origin}/s/${profile.token}/source/${ordinary.id}/rocket`).then(response => response.text()), pure.data);
+  const ordinaryName = preview.data.split('\n').find((line: string) => line.includes(' = trojan, ordinary.runtime.example'))!.split(' = ')[0];
+  const slice = await fetch(`${origin}/s/${profile.token}/source/${ordinary.id}/rocket`).then(response => response.text());
+  assert.equal(decodeURIComponent(decoded(slice).split('#')[1]), ordinaryName);
   await api(`/nodes/${dependency.nodes[0].id}`, 'PUT', { enabled: false });
   const invalid = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'shadowrocket' });
   assert.equal(invalid.status, 422);
@@ -192,11 +196,11 @@ test('native Shadowrocket mounted and filtered groups cannot bypass the ordinary
   const required = (await api('/groups', 'POST', { name: 'Excluded mounted Rocket', type: 'select', sources: [excluded.id] })).data;
   const content = template.replace('[Proxy Group]\n', '[Proxy Group]\nNative filter = select, Excluded mounted Rocket\n').replace('DOMAIN,kept.example,DIRECT', 'FINAL,Native filter');
   const profile = await profileFor([ordinary], content);
-  const invalid = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'shadowrocket' });
-  assert.equal(invalid.status, 422);
-  assert.equal(invalid.generation.nodeCount, 1); assert.equal(invalid.generation.dependencyNodeCount, 0);
-  assert.ok(invalid.generation.diagnostics.some((diagnostic: any) => diagnostic.code === 'shadowrocket-outbound-reference-missing'));
-  assert.equal((await fetch(`${origin}/s/${profile.token}/shadowrocket`)).status, 422);
+  const result = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'shadowrocket' });
+  assert.equal(result.status, 200);
+  assert.equal(result.generation.nodeCount, 1); assert.equal(result.generation.dependencyNodeCount, 0);
+  assert.match(result.data, /^Excluded mounted Rocket = select, REJECT$/m);
+  assert.equal((await fetch(`${origin}/s/${profile.token}/shadowrocket`)).status, 200);
   const pure = await fetch(`${origin}/s/${profile.token}/source/${ordinary.id}/rocket`);
   assert.equal(pure.status, 200); assert.match(decoded(await pure.text()), /filter.ordinary.example/);
   assert.equal(await fetch(`${origin}/s/${profile.token}/source/${excluded.id}/rocket`).then(response => response.text()), '');
@@ -213,12 +217,15 @@ test('pure duplicate names, disables and source deletion follow one ordinary sel
   assert.equal(pure.success, true, pure.message);
   const lines = decoded(pure.data).split('\n');
   assert.deepEqual(lines.map(line => decodeURIComponent(line.split('#')[1])).sort(), ['Twin, A=B', 'Twin, A=B (2)']);
+  const sliceNames: string[] = [];
   for (const source of [a, b]) {
     const provider = await fetch(`${origin}/s/${profile.token}/source/${source.id}/rocket`);
     assert.equal(provider.headers.get('X-SubOne-Mode'), 'nodes');
     assert.equal(provider.headers.get('X-SubOne-DoH'), 'ignored');
-    const body = decoded(await provider.text()); assert.ok(lines.includes(body)); assert.equal(body.split('\n').length, 1);
+    const body = decoded(await provider.text()); assert.equal(body.split('\n').length, 1);
+    sliceNames.push(decodeURIComponent(body.split('#')[1]));
   }
+  assert.deepEqual(sliceNames.sort(), ['Twin_ A_B', 'Twin_ A_B (2)']);
   await stopApp(); await startApp();
   assert.equal(await fetch(`${origin}/s/${profile.token}/rocket?format=base64`).then(response => response.text()), pure.data);
   await api(`/nodes/${a.nodes[0].id}`, 'PUT', { enabled: false });
@@ -280,19 +287,20 @@ test('URI protocol omissions are explicit while supported nodes remain available
   assert.equal(full.success, true, full.message); assert.match(full.data, /^SOCKS omitted = socks5, uri.socks.example,/m);
 });
 
-test('empty Shadowrocket native filter and includeAll groups retain repair intent instead of direct fallback', async () => {
+test('empty Shadowrocket native filter and includeAll groups use the reject member', async () => {
   const source = await addSource('/rocket-empty-filter', [], 'filter.allowed.example');
   const filtered = (await api('/groups', 'POST', { name: 'No matching Rocket', type: 'urltest', filter: '^NeverMatch$', interval: 45 })).data;
   const content = template.replace('DOMAIN,kept.example,DIRECT', 'FINAL,No matching Rocket');
   const profile = await profileFor([source], content, { selectedGroupIds: [filtered.id] });
   const result = await api('/generate/preview', 'POST', { profileId: profile.id, customType: 'shadowrocket' });
-  assert.equal(result.status, 422);
+  assert.equal(result.status, 200);
   assert.equal(result.generation.dependencyNodeCount, 0);
-  assert.ok(result.generation.diagnostics.some((diagnostic: any) => diagnostic.code === 'shadowrocket-outbound-reference-missing'));
+  assert.match(result.data, /^No matching Rocket = url-test, REJECT,/m);
   const includeAll = (await api('/groups', 'POST', { name: 'Empty All Rocket', type: 'select', includeAll: true })).data;
   const empty = await profileFor([source], template.replace('DOMAIN,kept.example,DIRECT', 'FINAL,Empty All Rocket'), { selectedGroupIds: [includeAll.id], nodeFilter: { mode: 'manual', selectedNodeIds: [] } });
   const all = await api('/generate/preview', 'POST', { profileId: empty.id, customType: 'shadowrocket' });
-  assert.equal(all.status, 422); assert.equal(all.generation.nodeCount, 0); assert.equal(all.generation.dependencyNodeCount, 0);
+  assert.equal(all.status, 200); assert.equal(all.generation.nodeCount, 0); assert.equal(all.generation.dependencyNodeCount, 0);
+  assert.match(all.data, /^Empty All Rocket = select, REJECT$/m);
   assert.equal(await fetch(`${origin}/s/${empty.token}/source/${source.id}/rocket`).then(response => response.text()), '');
 });
 
@@ -301,6 +309,8 @@ test('Shadowrocket validates every carried native group branch and managed FINAL
   const managed = (await api('/groups', 'POST', { name: 'Managed cycle Rocket', type: 'select', proxies: ['Native cycle Rocket'] })).data;
   const cyclicContent = template.replace('[Proxy Group]\n', '[Proxy Group]\nNative cycle Rocket = select, DIRECT, Managed cycle Rocket\n');
   const cyclic = await profileFor([source], cyclicContent, { selectedGroupIds: [managed.id] });
+  const repaired = await api(`/groups/${managed.id}`, 'PUT', { proxies: ['Native cycle Rocket'] });
+  assert.deepEqual(repaired.data.proxies, ['template:Native cycle Rocket']);
   const broken = await api('/generate/preview', 'POST', { profileId: cyclic.id, customType: 'shadowrocket' });
   assert.equal(broken.status, 422);
   assert.ok(broken.generation.diagnostics.some((diagnostic: any) => diagnostic.code === 'source-doh-cycle'));

@@ -62,26 +62,17 @@ export function collectEgernDependencies(plan: GenerationPlan): RuntimeDependenc
     try { nodeToEgernProxy(entry.node); } catch { return; }
     if (entry.node.detourRef) reference(entry.node.detourRef, owner, [...reason, entry.node.name, 'prev_hop']);
   };
-  const ordinaryGroups = new Set(plan.ordinaryGroupIds);
   const group = (id: string, owner: string, reason: string[], ordinary = false) => {
-    if (ordinary) ordinaryGroups.add(id);
     if (!once(`${owner}:group:${id}:${ordinary}`)) return;
     result.groups.push({ groupId: id, bindingSourceId: owner, reason, ordinary });
     const value = plan.inventory.groups.find(group => group.id === id);
     if (!value || ['direct', 'reject', 'relay'].includes(value.type)) return;
     for (const member of value.proxies || []) reference(member, owner, [...reason, value.name], ordinary);
-    const mounts = value.sources ?? value.use;
-    const candidates = mounts?.length ? (ordinaryGroups.has(id) ? plan.ordinaryNodes.map(node => ({ node, sourceId: node.sourceId })) : plan.inventory.nodes).filter(entry => {
-      const source = plan.inventory.sources.find(source => source.id === entry.sourceId);
-      return !!entry.sourceId && mounts.includes(entry.sourceId) || !!source && mounts.includes(source.name);
-    }).map(entry => entry.node) : plan.ordinaryNodes;
-    let regex: RegExp | undefined;
-    try { if (value.filter) regex = new RegExp(value.filter.replace(/\(\?i\)/g, ''), 'i'); } catch { return; }
-    if (mounts?.length || value.filter || value.includeAll || !value.proxies?.length) for (const candidate of candidates) {
-      if (!regex || regex.test(candidate.name)) node(candidate.id, owner, [...reason, value.name]);
-    }
+    for (const nodeId of plan.dynamicNodeIds?.get(id) || []) node(nodeId, owner, [...reason, value.name]);
   };
   const reference = (name: string, owner: string, reason: string[], ordinary = false) => {
+    const native = name.startsWith('template:');
+    if (native) name = name.slice(9);
     const template = templateDefinitions.find(entry => entry?.name === name);
     if (template) {
       if (!once(`${owner}:template:${name}:${ordinary}`)) return;
@@ -91,6 +82,7 @@ export function collectEgernDependencies(plan: GenerationPlan): RuntimeDependenc
       for (const rule of template.rules || []) { const value = egernEntry(rule); if (value?.policy && !value.disabled) reference(value.policy, owner, [...reason, name], ordinary); }
       return;
     }
+    if (native) return;
     const nodeId = nodeReferenceId(name); const groupId = groupReferenceId(name);
     if (nodeId) return node(nodeId, owner, reason);
     if (groupId) return group(groupId, owner, reason, ordinary);
@@ -100,6 +92,7 @@ export function collectEgernDependencies(plan: GenerationPlan): RuntimeDependenc
     if (selectedGroup) group(selectedGroup.id, owner, reason, ordinary);
   };
   const owner = plan.bindings[0]?.sourceId || '';
+  if (plan.target.mode === 'complete') for (const id of plan.ordinaryGroupIds) group(id, owner, ['Egern policy'], true);
   for (const rule of Array.isArray(document.rules) ? document.rules : []) {
     if (!rule || typeof rule !== 'object' || Array.isArray(rule)) continue;
     if ('default' in rule && plan.rules.some(rule => rule.enabled && rule.type === 'FINAL')) continue;

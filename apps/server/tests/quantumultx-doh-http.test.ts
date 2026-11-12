@@ -177,7 +177,7 @@ test('QuanX downloads keep a single hash candidate explicit and restore hashing 
     assert.equal(result.success, true, JSON.stringify(result));
     const policy = result.data.split('\n').find((line: string) => line.startsWith('static=AUTO_TW,'));
     assert.ok(policy);
-    assert.deepEqual(quantumultXReferences({ quantumultxLines: ['[policy]', policy] }).map(reference => reference.literal), [source.nodes[0].name]);
+    assert.deepEqual(quantumultXReferences({ quantumultxLines: ['[policy]', policy] }).map(reference => reference.literal), ['qx-hash-single_台湾 01']);
     assert.doesNotMatch(policy, /(?:resource|server)-tag-regex=|, direct(?:,|$)/);
     const response = await fetch(`${origin}/s/${profile.token}/qx?expand=${expandNodes}`);
     assert.equal(response.status, 200);
@@ -196,7 +196,7 @@ test('QuanX downloads keep a single hash candidate explicit and restore hashing 
   assert.equal(updated.success, true, JSON.stringify(updated));
   const policy = updated.data.split('\n').find((line: string) => line.startsWith('dest-hash=AUTO_TW,'));
   assert.ok(policy);
-  assert.deepEqual(quantumultXReferences({ quantumultxLines: ['[policy]', policy] }).map(reference => reference.literal), ['🇨🇳 台湾W01 | IEPL | x2', '🇨🇳 台湾W03 | IEPL | x2']);
+  assert.deepEqual(quantumultXReferences({ quantumultxLines: ['[policy]', policy] }).map(reference => reference.literal), ['qx-hash-single_台湾 01', 'qx-hash-single_台湾 02']);
 });
 
 test('QuanX AUTO groups retain explicit local candidates for complete and resource-based downloads', async () => {
@@ -208,6 +208,7 @@ test('QuanX AUTO groups retain explicit local candidates for complete and resour
   const other = await add('/qx-auto-other', [], { proxies: [
     { name: 'SGP Excluded', type: 'socks5', server: 'sg-other.example', port: 1080 },
   ] });
+  for (const item of [source, other]) await api(`/sources/${item.id}`, 'PUT', { nameTemplate: '' });
   const group = (await api('/groups', 'POST', {
     name: 'AUTO_SGP', type: 'load-balance', strategy: 'consistent-hashing', sources: [source.id], filter: '^SGP',
   })).data;
@@ -349,10 +350,11 @@ test('provider and expanded output use the same selected names and usage without
   assert.doesNotMatch(remote.data, new RegExp(upstreamOrigin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.doesNotMatch(remote.data, /qx-provider-[ab]|\/source\//);
   const urls = [...remote.data.matchAll(/^(https?:\/\/[^,]+), tag=/gm)].map(match => match[1]).filter(url => url.endsWith('/nodes/qx'));
-  assert.deepEqual(urls, [`${origin}/s/${profile.token}/nodes/qx`]);
-  assert.match(remote.data, /\/nodes\/qx, tag=QX profile,/);
+  assert.deepEqual(urls, []);
+  assert.equal(remote.data, expanded.data);
+  const resourceUrl = `${origin}/s/${profile.token}/nodes/qx`;
   const providerNames: string[] = [];
-  for (const url of urls) {
+  for (const url of [resourceUrl]) {
     const response = await fetch(url); assert.equal(response.status, 200); const content = await response.text();
     assert.doesNotMatch(content, /\[dns\]|doh|hidden\.provider|omitted\.provider/);
     providerNames.push(...[...content.matchAll(/tag=([^\n]+)$/gm)].map(match => match[1]));
@@ -360,7 +362,7 @@ test('provider and expanded output use the same selected names and usage without
   assert.deepEqual(providerNames.sort(), names);
   assert.equal((await fetch(`${origin}/s/invalid-token/nodes/qx`)).status, 404);
   await api(`/profiles/${profile.id}`, 'PUT', { enabled: false });
-  assert.equal((await fetch(urls[0])).status, 404);
+  assert.equal((await fetch(resourceUrl)).status, 404);
 });
 
 test('retained native references report disabled and deleted managed targets instead of retargeting', async () => {
@@ -490,8 +492,8 @@ test('retained native template references complete eligible omitted nodes and gr
   assert.match(result.data, /^static = Native closure, Dependency group QX, Dependency closure QX, direct$/m);
   const ordinaryPolicy = result.data.split('\n').find((line: string) => line.startsWith(`static=${group.name},`)); assert.doesNotMatch(ordinaryPolicy, /Dependency closure/); assert.match(ordinaryPolicy, /, Ordinary closure QX(?:,|$)/);
   const actual = await fetch(`${origin}/s/${profile.token}/quantumultx?expand=false`); assert.equal(await actual.text(), result.data); assert.match(actual.headers.get('subscription-userinfo') || '', /total=1000/);
-  const urls = [...result.data.matchAll(/^(https?:\/\/[^,]+), tag=/gm)].map(match => match[1]).filter(url => url.endsWith('/nodes/qx')); assert.equal(urls.length, 1);
-  const provider = await fetch(urls[0]).then(response => response.text()); assert.match(provider, /ordinary\.closure/); assert.doesNotMatch(provider, /dependency\.closure/);
+  const urls = [...result.data.matchAll(/^(https?:\/\/[^,]+), tag=/gm)].map(match => match[1]).filter(url => url.endsWith('/nodes/qx')); assert.equal(urls.length, 0);
+  const provider = await fetch(`${origin}/s/${profile.token}/nodes/qx`).then(response => response.text()); assert.match(provider, /ordinary\.closure/); assert.doesNotMatch(provider, /dependency\.closure/);
   const previousOrigin = origin; await stopApp(); await startApp(); const reloaded = await preview(profile, false); assert.deepEqual(reloaded.generation, result.generation); assert.equal(reloaded.data.replaceAll(origin, previousOrigin), result.data);
   await api(`/nodes/${b.nodes[0].id}`, 'PUT', { enabled: false }); const disabled = await preview(profile, false); assert.equal(disabled.status, 422, JSON.stringify(disabled));
   assert.ok(disabled.generation.diagnostics.some((entry: any) => entry.code === 'quantumultx-reference-missing'));
@@ -504,9 +506,9 @@ test('an ordinary FINAL selector cannot pull profile-excluded mounted source nod
   const group = (await api('/groups', 'POST', { name: 'Empty ordinary final QX', type: 'select', sources: [b.id] })).data;
   const content = template.replace('final, direct', 'final, Empty ordinary final QX');
   const { profile } = await profileFor([a], content, { mode: 'manual', selectedNodeIds: [a.nodes[0].id] });
-  const result = await preview(profile, false); assert.equal(result.status, 422, JSON.stringify(result));
+  const result = await preview(profile, false); assert.equal(result.status, 200, JSON.stringify(result));
   assert.equal(result.generation.nodeCount, 1); assert.equal(result.generation.dependencyNodeCount, 0);
-  assert.ok(result.generation.diagnostics.some((entry: any) => entry.code === 'quantumultx-reference-missing' && entry.message.includes(group.name)));
+  assert.match(result.data, /^static=Empty ordinary final QX, reject(?:,|$)/m);
   const provider = await fetch(`${origin}/s/${profile.token}/source/${a.id}?target=quantumultx`).then(response => response.text()); assert.match(provider, /ordinary.final.example/); assert.doesNotMatch(provider, /excluded.final.example/);
 });
 

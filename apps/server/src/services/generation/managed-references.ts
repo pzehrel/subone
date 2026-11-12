@@ -1,12 +1,9 @@
-import type { ProxyGroupItem } from '../../types';
-import { resolveGroupNodes } from '../../core/generators/group-nodes';
 import type { RuntimeDependencyCollection } from './runtime-dependencies';
 import type { GenerationPlan } from './types';
 
 /** Walk managed references while each client supplies its native roots and expansion rules. */
 export function managedReferenceTraversal(plan: GenerationPlan, options: {
   resolveNames?: boolean;
-  expandGroup: (group: ProxyGroupItem) => boolean;
 }) {
   const result: RuntimeDependencyCollection = { nodes: [], groups: [] };
   const included = new Set([...plan.ordinaryNodes, ...plan.dependencyNodes].map(node => node.id));
@@ -26,12 +23,11 @@ export function managedReferenceTraversal(plan: GenerationPlan, options: {
       result.nodes.push({ nodeId: id, sourceId: entry?.sourceId, state: !entry ? 'missing' : entry.state !== 'enabled' ? entry.state : included.has(id) ? 'included' : 'omitted', bindingSourceId: owner, reason });
     } else if (target.startsWith('group:')) {
       const id = target.slice(6), group = plan.inventory.groups.find(group => group.id === id);
-      result.groups.push({ groupId: id, bindingSourceId: owner, reason });
+      result.groups.push({ groupId: id, bindingSourceId: owner, reason, ordinary: true });
       if (!group || ['direct', 'reject'].includes(group.type)) return;
       const path = [...reason, group.name];
       for (const member of group.proxies || []) visit(member, path);
-      // Dynamic ordinary candidates never draw from the wider dependency inventory.
-      if (options.expandGroup(group)) for (const node of resolveGroupNodes(group, plan.ordinaryNodes, plan.inventory.sources)) visit(`node:${node.id}`, path);
+      for (const nodeId of plan.dynamicNodeIds?.get(id) || []) visit(`node:${nodeId}`, path);
     }
   };
   return { result, visit };
