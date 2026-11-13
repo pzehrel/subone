@@ -66,7 +66,7 @@ export function validateQuantumultXNodeChains(plan: GenerationPlan): void {
     const original = plan.inventory.nodes.find(entry => entry.node.id === node.id)?.node || node;
     const detour = original.detourRef || original.detour || (original.raw && typeof original.raw === 'object' && (original.raw.detour || original.raw['dialer-proxy']));
     return detour ? [{ code: 'quantumultx-node-chain-unverified', severity: 'error' as const, sourceId: node.sourceId,
-      message: `Quantumult X 1.8.1 未证实节点链式出站字段，不能保留连接路径：${node.name}`,
+      message: `Quantumult X 1.8.0 未证实节点链式出站字段，不能保留连接路径：${node.name}`,
       path: [{ kind: 'outbound' as const, id: node.id, label: node.name }, { kind: 'outbound' as const, id: String(detour), label: String(detour) }] }] : [];
   });
   if (diagnostics.length) { const generation = generationMetadata(plan); generation.diagnostics.push(...diagnostics); throw new GenerationError('Quantumult X 节点连接路径无法表达', generation); }

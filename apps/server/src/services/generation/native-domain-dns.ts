@@ -7,10 +7,11 @@ import type { GenerationPlan } from './types';
 function portableRanges(plan: GenerationPlan, candidates: NodeDomainRange[]): { ranges: NodeDomainRange[]; urls: Map<NodeDomainRange, string[]> } {
   const ranges: NodeDomainRange[] = [], urls = new Map<NodeDomainRange, string[]>();
   for (const range of candidates) {
-    const values = range.services.map(portableDohUrl);
+    const services = range.services;
+    const values = services.map(portableDohUrl);
     if (values.some(value => !value)) {
       for (const binding of plan.bindings.filter(binding => range.nodeIds.some(id => binding.nodeIds.includes(id)))) {
-        for (const entry of range.services.filter(entry => !portableDohUrl(entry))) {
+        for (const entry of services.filter(entry => !portableDohUrl(entry))) {
           const issue = portableDohBootstrapIssue(entry) ?? { code: 'source-doh-options-unapplied', message: 'DoH 连接参数无法完整转换，保留模板 DNS' };
           binding.diagnostics.push({ ...issue, severity: 'warning', sourceId: binding.sourceId, serviceId: entry.service.id,
             message: `${rangePattern(range)}：${issue.message}` });
@@ -43,10 +44,13 @@ export function renderIniDomainDns(content: string, plan: GenerationPlan, target
   const { ranges, urls } = portableRanges(plan, all.ranges);
   const patterns = new Set(ranges.map(rangePattern));
   const aliases = [...all.aliases].filter(([domain]) => ranges.some(range => range.domains.includes(domain)));
-  const lines = ranges.map(range => target === 'quantumultx'
-    ? `doh-server = ${urls.get(range)!.map(url => `/${rangePattern(range)}/${url}`).join(', ')}`
-    : `${rangePattern(range)} = server:${urls.get(range)!.join(',')}`);
+  const lines = ranges.flatMap(range => target === 'quantumultx'
+    ? urls.get(range)!.map(url => `doh-server = /${rangePattern(range)}/${url}`)
+    : [`${rangePattern(range)} = server:${urls.get(range)!.join(',')}`]);
   if (target === 'quantumultx') {
+    if (ranges.some(range => urls.get(range)!.length > 1)) {
+      lines.unshift('# 同域多条 DoH：Quantumult X 1.8.0 仅使用首条，支持叠加的版本可使用多条。');
+    }
     lines.unshift(...aliases.map(([from, to]) => `alias = /${from}/${to}`));
     content = prependIniSection(content, 'dns', lines, line => {
       const match = /^(\s*(doh-server|server|address|alias)\s*=\s*)(.*)$/i.exec(line);
@@ -75,7 +79,8 @@ export function renderIniDomainDns(content: string, plan: GenerationPlan, target
       return line;
     });
   }
-  recordDomainDns(plan, all.ranges, `${target}-domain-doh`, new Map(ranges.map(range => [range, new Set(range.services.map(({ service }) => service.id))])));
+  recordDomainDns(plan, all.ranges, `${target}-domain-doh`, new Map(ranges.map(range => [range,
+    new Set(range.services.map(({ service }) => service.id))])));
   return content;
 }
 
