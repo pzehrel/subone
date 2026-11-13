@@ -1,6 +1,6 @@
 # 客户端支持与验证
 
-配置资料复核日期：2026-11-07；运行验证记录日期：2026-11-08。输入格式、输出目标与真实客户端加载是三项不同的支持范围。
+配置资料复核日期：2026-11-07；运行验证记录更新日期：2026-11-13。输入格式、输出目标与真实客户端加载是三项不同的支持范围。
 
 ## 上游输入
 
@@ -29,7 +29,7 @@ Base64 原文保留编码与内层格式信息；查看、复制和下载均使�
 | [sing-box 1.14.4](https://github.com/SagerNet/sing-box/releases/tag/v1.14.4) | 程序按域名范围为节点分配 `domain_resolver`，引用同域合并后的首项 DoH，并明确报告其余未采用项。使用 typed HTTPS DNS，保留已有出站、引导和连接选项处理。DNS 规则使用域名、后缀或正则字段，没有直接填写 glob 的字段。[节点解析](https://sing-box.sagernet.org/configuration/shared/dial/#domain_resolver)、[DNS 规则](https://sing-box.sagernet.org/configuration/dns/rule/) |
 | [Mihomo 1.19.33](https://github.com/MetaCubeX/mihomo/releases/tag/v1.19.33) | 将范围及完整 DoH 列表写入 `dns.proxy-server-nameserver-policy`。`*.example.com` 匹配单级子域；父域及多级子域另有原生语法。模板需提供有效的基础 DNS 和引导配置。合并后的规则参与必要连接及循环检查。[DNS](https://wiki.metacubex.one/config/dns/)、[通配语法](https://wiki.metacubex.one/en/handbook/syntax/#domain-wildcards) |
 | [Loon 3.5.3](https://apps.apple.com/hk/app/loon/id1373567447) | 节点通过 `server-dns="https://a/dns-query,https://b/dns-query"` 使用完整 DoH 列表；3.5.2 (996)+ 支持并发查询并采用首个有效结果。Host Map 支持 `*`、`?`。[节点 DNS](https://nsloon.app/en/docs/Node/#node-dns)、[Host 通配](https://nsloon.app/en/docs/Node/subscription/#host) |
-| [Quantumult X 1.8.1](https://apps.apple.com/us/app/quantumult-x/id1443988620) | 在 `[dns]` 输出域名限定的 `doh-server` 列表，每个 URL 显式携带范围；保留未被接管的模板 DNS。官方样例分别确认域名限定及同行多 DoH，Apple 客户端实际加载单独记录。[官方样例](https://raw.githubusercontent.com/crossutility/Quantumult-X/master/sample.conf) |
+| [Quantumult X](https://apps.apple.com/us/app/quantumult-x/id1443988620)，实测 1.8.0 build946（macOS） | 在 `[dns]` 为每个域名范围输出一项 `doh-server = /范围/URL`，采用同域合并后的首项 DoH，其余明确报告降级；保留未被接管的模板 DNS。单项绑定、glob 和别名已实测。同行多个域名限定 URL 的对照失败，同域分成多行的对照跟随首条匹配项，不能作为多服务故障切换输出。[官方样例](https://raw.githubusercontent.com/crossutility/Quantumult-X/master/sample.conf) |
 | [Egern 2.21.0](https://apps.apple.com/us/app/egern/id1616105820) | `forward` 的精确域名或 `domain_wildcard` 指向 `upstreams` 多 DoH 组。配置 `proxy_nameservers` 会绕过这些规则，因此要求先修复模板；不擅自修改其他域名的解析路径。代理 DNS 的原生上游连接为直连。[DNS](https://egernapp.com/docs/configuration/dns/) |
 | [Shadowrocket 2.2.93](https://apps.apple.com/us/app/shadowrocket/id932747118) | 在 `[Host]` 输出 `*.example.com = server:https://a/dns-query,https://b/dns-query`：一个 `server:` 前缀，URL 用逗号连接，无引号。官方 2.2.92 确认 Host 多服务器；具体写法由配置作者发布的完整原始配置交叉核对，后者属于社区资料。[官方公告](https://t.me/s/ShadowrocketNews?before=1650)、[原始配置第 308 行](https://github.com/budaobu/rules/blob/b97b9f322c23be5ad0dad096d9bafc9b3e124304/conf/lazy_rocket.conf#L308) |
 
@@ -64,7 +64,7 @@ Shadowrocket 完整输出支持 `load-balance` 分组，包含成员、测试 UR
 | 格式与引用 | 对目标结构、命名、原生引用、模板保留和不支持能力做自动检查。文件可解析、HTTP 200 或引用检查通过不代表真实客户端已加载。 |
 | sing-box 原生验证 | 官方 Linux 1.14.4 对 HTTP 生成配置执行 `check -c` 及隔离短时启动，已通过；IMM 106 节点输出另通过原生检查。 |
 | Mihomo 原生验证 | 本机 `verge-mihomo` 1.19.33 对 HTTP 生成配置执行 `-t` 及隔离短时启动，已通过；IMM 106 节点输出另通过原生检查。 |
-| Apple 客户端加载 | 2026-11-08 用户在 Quantumult X 1.8.0（Mac）确认：修复后的原订阅链接不加 `expand`、不手动更新资源，下载启用后直接可见 169 个节点。此前远程模式的全新地址导入仅发起配置请求，手动更新资源后可见节点。代理连接、DNS 与分流效果尚未验证。Loon、Egern、Shadowrocket 的真实应用加载仍为 **UNVERIFIED**。 |
+| Apple 客户端加载 | 2026-11-08 用户在 Quantumult X 1.8.0（Mac）确认：完整下载直接可见 169 个节点。2026-11-13 已补充在 1.8.0 build946、macOS 27.0.1 的节点解析与连接对照：单域单 DoH、原有 glob 和别名可用；无效绑定失败时配对 IP 节点仍可连接。保留 169 个节点的单 DoH 配置中，5 条代表性别名/解析路径及配对 IP 控制通过，用户另确认延迟优选组的测速和网页访问正常；未逐一测试全部节点或完整分流规则。Loon、Egern、Shadowrocket 的真实应用加载仍为 **UNVERIFIED**。 |
 | 六目标首次下载 | 2026-11-08 真实订阅的六种默认输出均直接包含 169 个节点，没有自动生成的远程节点资源或上游分组。新增 HTTP 交叉回归验证所选节点、禁用及排除节点、策略组和默认预览一致性；该检查无需客户端再次获取节点资源。Loon、Egern、Shadowrocket 仅完成输出及格式检查，尚未进行实机导入。 |
 
 2026-11-08 跨客户端修复的 `pnpm check` 与 `pnpm build` 通过；服务端 301 项、前端 3 项测试全部通过，零跳过。已启用 Mihomo 1.19.33 与 sing-box 1.14.4 的原生校验及隔离短时启动；真实订阅的两份 169 节点配置另分别通过原生配置检查。此前 Quantumult X 单项修复阶段为服务端 287 项、前端 3 项通过，4 项可选原生核心校验未启用。
@@ -74,3 +74,5 @@ Shadowrocket 完整输出支持 `load-balance` 分组，包含成员、测试 UR
 2026-11-07 已执行 `pnpm typecheck`、`pnpm lint`、`pnpm test` 与 `pnpm build`；类型检查、测试和构建通过，lint 保留已有告警。该次原生测试通过 `SUBONE_SINGBOX_BINARY` 和 `SUBONE_TEST_MIHOMO` 指定可用核心，两项检查均已启用。
 
 原生校验和短时启动只证明所测配置的解析、引用及初始化；没有验证外部 DNS 应答、代理握手或生产网络连通。不会把生成成功写成实机可用。
+
+2026-11-13 Quantumult X 对照还区分了输出能力与服务连通性：某上游首项 DoH 在原生绑定中间歇失败，macOS 日志显示 TCP RST 发生在 TLS 握手期间、HTTP/DNS 请求发送前；同一客户端也记录到成功连接。当前证据无法确认 RST 的发送方。临时采用后续服务的配置通过，不代表生成器可以自动改变上游顺序；正式输出仍遵循 ADR 0001 的首项与降级规则，也不替换为全局 DoH。

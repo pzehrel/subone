@@ -49,6 +49,38 @@ async function profileFor(sources: any[], content = template, filter?: any, grou
 }
 const preview = (profile: any, expandNodes = true) => api('/generate/preview', 'POST', { profileId: profile.id, customType: 'quantumultx', expandNodes });
 
+test('QuanX scoped single-DoH downgrade agrees across preview, download and reload without rewriting the source list', async () => {
+  const services = ['https://192.0.2.10/dns-query', 'https://192.0.2.11/dns-query'];
+  const source = await add('/qx-first-only', services, { proxies: [
+    { name: 'First', type: 'socks5', server: 'one.first-only.example', port: 1080 },
+    { name: 'Second', type: 'socks5', server: 'two.first-only.example', port: 1080 },
+  ] });
+  const { profile } = await profileFor([source]);
+  const expected = await preview(profile);
+  assert.equal(expected.success, true, JSON.stringify(expected));
+  assert.match(expected.data, /^doh-server = \/\*\.first-only\.example\/https:\/\/192\.0\.2\.10\/dns-query$/m);
+  assert.ok(!expected.data.includes(services[1]));
+  assert.equal(dnsSection(expected.data).replace(/^doh-server\s*=\s*\/.*\n/gm, ''), dns);
+  const binding = expected.generation.bindings[0];
+  assert.equal(binding.status, 'degraded');
+  assert.deepEqual(binding.appliedServiceIds, [source.doh.services[0].id]);
+  assert.deepEqual(binding.effectiveServices.map((service: any) => service.url), services.slice(0, 1));
+  assert.ok(binding.diagnostics.some((entry: any) => entry.code === 'source-doh-first-only'));
+  for (const reloaded of [false, true]) {
+    if (reloaded) { await stopApp(); await startApp(); }
+    for (const path of ['qx', 'quantumultx?expand=false']) {
+      const response = await fetch(`${origin}/s/${profile.token}/${path}`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('X-SubOne-DoH'), 'degraded');
+      assert.match(response.headers.get('X-SubOne-Diagnostics') || '', /source-doh-first-only/);
+      assert.equal(await response.text(), expected.data);
+    }
+    const saved = (await api('/sources')).data.find((entry: any) => entry.id === source.id);
+    assert.deepEqual(saved.doh.services, source.doh.services);
+    assert.deepEqual((await preview(profile)).generation, expected.generation);
+  }
+});
+
 test('AnyTLS certificate verification survives QuanX import, full download and both node resources', async () => {
   const path = '/qx-anytls-verification';
   bodies.set(path, '[server_local]\n' + [false, true].map(verification => `anytls=anytls-${verification}.example:443, password=fixture-password, over-tls=true, tls-host=tls.example, tls-verification=${verification}, tag=AnyTLS ${verification}`).join('\n'));
@@ -288,9 +320,9 @@ test('Quantumult X adopts supported source DNS while retaining unsupported conne
   assert.equal(result.generation.bindings.length, 3);
   for (const source of [a, b, c]) {
     const binding = result.generation.bindings.find((value: any) => value.sourceId === source.id);
-    assert.equal(binding.status, source.id === c.id ? 'applied' : 'unapplied'); assert.equal(binding.method, source.id === c.id ? 'quantumultx-domain-doh' : 'template-dns'); assert.equal(binding.batchId, source.doh.batchId);
-    assert.deepEqual(binding.appliedServiceIds, source.id === c.id ? c.doh.services.map((entry: any) => entry.id) : []); assert.deepEqual(binding.services.map((entry: any) => entry.url), source.doh.services.map((entry: any) => entry.url));
-    if (source.id !== c.id) assert.ok(binding.diagnostics.some((entry: any) => entry.code === 'source-doh-options-unapplied'));
+    assert.equal(binding.status, source.id === c.id ? 'applied' : 'degraded'); assert.equal(binding.method, 'quantumultx-domain-doh'); assert.equal(binding.batchId, source.doh.batchId);
+    assert.deepEqual(binding.appliedServiceIds, [source.doh.services[0].id]); assert.deepEqual(binding.services.map((entry: any) => entry.url), source.doh.services.map((entry: any) => entry.url));
+    if (source.id !== c.id) assert.deepEqual(binding.diagnostics.map((entry: any) => entry.code), ['source-doh-first-only']);
     else assert.equal(binding.diagnostics.length, 0);
   }
   assert.equal(result.generation.dependencyNodeCount, 0);

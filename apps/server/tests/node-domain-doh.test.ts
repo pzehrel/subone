@@ -40,13 +40,20 @@ export function makePlan(target: ClientType, sources: SubscriptionSource[]): Gen
   };
 }
 
-test('Quantumult X emits a generated wildcard and every upstream DoH instead of retaining template DNS only', () => {
+test('Quantumult X emits one scoped DoH and reports the remaining upstream services as a downgrade', () => {
   const urls = ['https://192.0.2.10/dns-query', 'https://192.0.2.11/dns-query', 'https://192.0.2.12/dns-query'];
   const source = makeSource('airport', ['one.airport.example', 'two.airport.example'], urls);
   const result = render(makePlan('quantumultx', [source]));
   assert.match(result.output, /doh-server\s*=\s*\/\*\.airport\.example\//);
-  for (const url of urls) assert.ok(result.output.includes(url), url);
-  assert.equal(result.generation.bindings[0].status, 'applied');
+  assert.match(result.output, /^doh-server = \/\*\.airport\.example\/https:\/\/192\.0\.2\.10\/dns-query$/m);
+  for (const url of urls.slice(1)) assert.ok(!result.output.includes(url), url);
+  const binding = result.generation.bindings[0];
+  assert.equal(binding.status, 'degraded');
+  assert.deepEqual(binding.appliedServiceIds, [source.doh!.services[0].id]);
+  assert.deepEqual(binding.effectiveServices?.map(service => service.url), urls.slice(0, 1));
+  assert.ok(binding.diagnostics.some(entry => entry.code === 'source-doh-first-only'));
+  assert.match(result.output, /^server=192\.0\.2\.53$/m);
+  assert.equal(source.doh!.services.length, 3, 'saved source intent retains every service');
 });
 
 const urls = ['https://192.0.2.10/dns-query', 'https://192.0.2.11/dns-query', 'https://192.0.2.12/dns-query'];
@@ -56,11 +63,12 @@ for (const target of Object.keys(templates) as ClientType[]) test(`${target}: sa
   const snapshot = JSON.stringify(plan);
   const result = render(plan);
   assert.ok(result.output.includes(urls[0].replace('https://', '').split('/')[0]), result.output);
-  if (target !== 'singbox') for (const url of urls) assert.ok(result.output.includes(url), url);
+  const firstOnly = target === 'singbox' || target === 'quantumultx';
+  if (!firstOnly) for (const url of urls) assert.ok(result.output.includes(url), url);
   for (const binding of result.generation.bindings) {
-    assert.equal(binding.status, target === 'singbox' ? 'degraded' : 'applied', JSON.stringify(binding));
+    assert.equal(binding.status, firstOnly ? 'degraded' : 'applied', JSON.stringify(binding));
     assert.deepEqual(binding.domainRanges, ['*.airport.example']);
-    assert.equal(binding.effectiveServices?.length, target === 'singbox' ? 1 : 3);
+    assert.equal(binding.effectiveServices?.length, firstOnly ? 1 : 3);
   }
   assert.equal(result.generation.bindings[2].services.length, 0, 'borrowed DoH must not rewrite source intent');
   assert.equal(JSON.stringify(plan), snapshot, 'render must not mutate the saved/input plan');
@@ -76,7 +84,7 @@ test('different same-domain DoH sets are merged rather than treated as a conflic
   assert.ok(result.generation.bindings.every(binding => binding.status === 'applied'));
 });
 
-for (const target of ['mihomo', 'quantumultx', 'shadowrocket', 'egern', 'loon'] as ClientType[]) test(`${target}: adoption in one range does not mark a skipped shared range as applied`, () => {
+for (const target of ['mihomo', 'shadowrocket', 'egern', 'loon'] as ClientType[]) test(`${target}: adoption in one range does not mark a skipped shared range as applied`, () => {
   const sources = [makeSource('a', ['own.airport.example', 'shared.airport.example'], [urls[0]]), makeSource('b', ['shared.airport.example'], [urls[1]])];
   sources[1].doh!.format = 'singbox';
   sources[1].doh!.services[0].raw = { type: 'https', server: '192.0.2.11', path: '/dns-query', headers: { 'X-Source': 'b' } };
@@ -89,11 +97,49 @@ for (const target of ['mihomo', 'quantumultx', 'shadowrocket', 'egern', 'loon'] 
   assert.deepEqual(result.generation.bindings[1].effectiveServices, []);
 });
 
-test('sing-box reports first-only per range even when both services are used by other nodes', () => {
+for (const target of ['singbox', 'quantumultx'] as const) test(`${target} reports first-only per range even when both services are used by other nodes`, () => {
   const sources = [makeSource('a', ['a.airport.example', 'shared.airport.example'], [urls[0]]), makeSource('b', ['b.airport.example', 'shared.airport.example'], [urls[1]])];
-  const result = render(makePlan('singbox', sources));
+  const result = render(makePlan(target, sources));
   assert.ok(result.generation.bindings.every(binding => binding.status === 'degraded'));
   assert.ok(result.generation.bindings.every(binding => binding.diagnostics.some(entry => entry.code === 'source-doh-first-only')));
+});
+
+test('Quantumult X keeps the first DoH when an unused later service cannot be converted', () => {
+  const source = makeSource('a', ['one.airport.example', 'two.airport.example'], urls.slice(0, 2));
+  source.doh!.services[1].raw = { options: ['unsupported-option'] };
+  const result = render(makePlan('quantumultx', [source]));
+  const binding = result.generation.bindings[0];
+  assert.match(result.output, /^doh-server = \/\*\.airport\.example\/https:\/\/192\.0\.2\.10\/dns-query$/m);
+  assert.equal(binding.status, 'degraded');
+  assert.deepEqual(binding.effectiveServices?.map(service => service.url), [urls[0]]);
+  assert.deepEqual(binding.diagnostics.map(entry => entry.code), ['source-doh-first-only']);
+});
+
+test('Quantumult X does not substitute a later DoH when the first service cannot be converted', () => {
+  const source = makeSource('a', ['one.airport.example', 'two.airport.example'], urls.slice(0, 2));
+  source.doh!.services[0].raw = { options: ['unsupported-option'] };
+  const result = render(makePlan('quantumultx', [source]));
+  const binding = result.generation.bindings[0];
+  assert.doesNotMatch(result.output, /doh-server/);
+  assert.match(result.output, /^server=192\.0\.2\.53$/m);
+  assert.equal(binding.status, 'unapplied');
+  assert.deepEqual(binding.appliedServiceIds, []);
+  assert.ok(binding.diagnostics.some(entry => entry.code === 'source-doh-options-unapplied'));
+});
+
+test('Quantumult X records an unapplied shared range separately from an adopted private range', () => {
+  const a = makeSource('a', ['own.airport.example', 'shared.airport.example'], [urls[0]]);
+  const b = makeSource('b', ['shared.airport.example'], [urls[1]]);
+  b.doh!.services[0].raw = { options: ['unsupported-option'] };
+  const result = render(makePlan('quantumultx', [b, a]));
+  const own = result.generation.bindings.find(binding => binding.sourceId === a.id)!;
+  const shared = result.generation.bindings.find(binding => binding.sourceId === b.id)!;
+  assert.equal(own.status, 'degraded');
+  assert.deepEqual(own.domainRanges, ['own.airport.example']);
+  assert.ok(!own.diagnostics.some(entry => entry.code === 'source-doh-first-only'));
+  assert.equal(shared.status, 'unapplied');
+  assert.deepEqual(shared.domainRanges, []);
+  assert.deepEqual(shared.effectiveServices, []);
 });
 
 test('range inference respects public/private suffixes and known competing resolution intents', () => {

@@ -4,13 +4,14 @@ import { splitQuanxDnsValues } from '../../core/parser/source-doh';
 import { portableDohBootstrapIssue, portableDohUrl, rangePattern, recordDomainDns, resolveNodeDns, templateHostConflict, type NodeDomainRange } from './node-domain-ranges';
 import type { GenerationPlan } from './types';
 
-function portableRanges(plan: GenerationPlan, candidates: NodeDomainRange[]): { ranges: NodeDomainRange[]; urls: Map<NodeDomainRange, string[]> } {
+function portableRanges(plan: GenerationPlan, candidates: NodeDomainRange[], firstOnly = false): { ranges: NodeDomainRange[]; urls: Map<NodeDomainRange, string[]> } {
   const ranges: NodeDomainRange[] = [], urls = new Map<NodeDomainRange, string[]>();
   for (const range of candidates) {
-    const values = range.services.map(portableDohUrl);
+    const services = firstOnly ? range.services.slice(0, 1) : range.services;
+    const values = services.map(portableDohUrl);
     if (values.some(value => !value)) {
       for (const binding of plan.bindings.filter(binding => range.nodeIds.some(id => binding.nodeIds.includes(id)))) {
-        for (const entry of range.services.filter(entry => !portableDohUrl(entry))) {
+        for (const entry of services.filter(entry => !portableDohUrl(entry))) {
           const issue = portableDohBootstrapIssue(entry) ?? { code: 'source-doh-options-unapplied', message: 'DoH 连接参数无法完整转换，保留模板 DNS' };
           binding.diagnostics.push({ ...issue, severity: 'warning', sourceId: binding.sourceId, serviceId: entry.service.id,
             message: `${rangePattern(range)}：${issue.message}` });
@@ -40,7 +41,8 @@ export function prependIniSection(content: string, name: string, additions: stri
 
 export function renderIniDomainDns(content: string, plan: GenerationPlan, target: 'quantumultx' | 'shadowrocket'): string {
   const all = resolveNodeDns(plan, true);
-  const { ranges, urls } = portableRanges(plan, all.ranges);
+  const firstOnly = target === 'quantumultx';
+  const { ranges, urls } = portableRanges(plan, all.ranges, firstOnly);
   const patterns = new Set(ranges.map(rangePattern));
   const aliases = [...all.aliases].filter(([domain]) => ranges.some(range => range.domains.includes(domain)));
   const lines = ranges.map(range => target === 'quantumultx'
@@ -75,7 +77,14 @@ export function renderIniDomainDns(content: string, plan: GenerationPlan, target
       return line;
     });
   }
-  recordDomainDns(plan, all.ranges, `${target}-domain-doh`, new Map(ranges.map(range => [range, new Set(range.services.map(({ service }) => service.id))])));
+  recordDomainDns(plan, all.ranges, `${target}-domain-doh`, new Map(ranges.map(range => [range,
+    new Set((firstOnly ? range.services.slice(0, 1) : range.services).map(({ service }) => service.id))])));
+  if (firstOnly) for (const binding of plan.bindings) {
+    if (ranges.some(range => range.services.length > 1 && range.nodeIds.some(id => binding.nodeIds.includes(id)))) {
+      binding.diagnostics.push({ code: 'source-doh-first-only', severity: 'warning', sourceId: binding.sourceId,
+        message: 'Quantumult X 节点解析每个域名范围仅采用首项 DoH，其余服务未采用' });
+    }
+  }
   return content;
 }
 
