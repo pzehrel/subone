@@ -4,10 +4,10 @@ import { splitQuanxDnsValues } from '../../core/parser/source-doh';
 import { portableDohBootstrapIssue, portableDohUrl, rangePattern, recordDomainDns, resolveNodeDns, templateHostConflict, type NodeDomainRange } from './node-domain-ranges';
 import type { GenerationPlan } from './types';
 
-function portableRanges(plan: GenerationPlan, candidates: NodeDomainRange[], firstOnly = false): { ranges: NodeDomainRange[]; urls: Map<NodeDomainRange, string[]> } {
+function portableRanges(plan: GenerationPlan, candidates: NodeDomainRange[]): { ranges: NodeDomainRange[]; urls: Map<NodeDomainRange, string[]> } {
   const ranges: NodeDomainRange[] = [], urls = new Map<NodeDomainRange, string[]>();
   for (const range of candidates) {
-    const services = firstOnly ? range.services.slice(0, 1) : range.services;
+    const services = range.services;
     const values = services.map(portableDohUrl);
     if (values.some(value => !value)) {
       for (const binding of plan.bindings.filter(binding => range.nodeIds.some(id => binding.nodeIds.includes(id)))) {
@@ -41,14 +41,16 @@ export function prependIniSection(content: string, name: string, additions: stri
 
 export function renderIniDomainDns(content: string, plan: GenerationPlan, target: 'quantumultx' | 'shadowrocket'): string {
   const all = resolveNodeDns(plan, true);
-  const firstOnly = target === 'quantumultx';
-  const { ranges, urls } = portableRanges(plan, all.ranges, firstOnly);
+  const { ranges, urls } = portableRanges(plan, all.ranges);
   const patterns = new Set(ranges.map(rangePattern));
   const aliases = [...all.aliases].filter(([domain]) => ranges.some(range => range.domains.includes(domain)));
-  const lines = ranges.map(range => target === 'quantumultx'
-    ? `doh-server = ${urls.get(range)!.map(url => `/${rangePattern(range)}/${url}`).join(', ')}`
-    : `${rangePattern(range)} = server:${urls.get(range)!.join(',')}`);
+  const lines = ranges.flatMap(range => target === 'quantumultx'
+    ? urls.get(range)!.map(url => `doh-server = /${rangePattern(range)}/${url}`)
+    : [`${rangePattern(range)} = server:${urls.get(range)!.join(',')}`]);
   if (target === 'quantumultx') {
+    if (ranges.some(range => urls.get(range)!.length > 1)) {
+      lines.unshift('# 同域多条 DoH：Quantumult X 1.8.0 仅使用首条，支持叠加的版本可使用多条。');
+    }
     lines.unshift(...aliases.map(([from, to]) => `alias = /${from}/${to}`));
     content = prependIniSection(content, 'dns', lines, line => {
       const match = /^(\s*(doh-server|server|address|alias)\s*=\s*)(.*)$/i.exec(line);
@@ -78,13 +80,7 @@ export function renderIniDomainDns(content: string, plan: GenerationPlan, target
     });
   }
   recordDomainDns(plan, all.ranges, `${target}-domain-doh`, new Map(ranges.map(range => [range,
-    new Set((firstOnly ? range.services.slice(0, 1) : range.services).map(({ service }) => service.id))])));
-  if (firstOnly) for (const binding of plan.bindings) {
-    if (ranges.some(range => range.services.length > 1 && range.nodeIds.some(id => binding.nodeIds.includes(id)))) {
-      binding.diagnostics.push({ code: 'source-doh-first-only', severity: 'warning', sourceId: binding.sourceId,
-        message: 'Quantumult X 节点解析每个域名范围仅采用首项 DoH，其余服务未采用' });
-    }
-  }
+    new Set(range.services.map(({ service }) => service.id))])));
   return content;
 }
 

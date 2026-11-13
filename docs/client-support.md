@@ -29,9 +29,24 @@ Base64 原文保留编码与内层格式信息；查看、复制和下载均使�
 | [sing-box 1.14.4](https://github.com/SagerNet/sing-box/releases/tag/v1.14.4) | 程序按域名范围为节点分配 `domain_resolver`，引用同域合并后的首项 DoH，并明确报告其余未采用项。使用 typed HTTPS DNS，保留已有出站、引导和连接选项处理。DNS 规则使用域名、后缀或正则字段，没有直接填写 glob 的字段。[节点解析](https://sing-box.sagernet.org/configuration/shared/dial/#domain_resolver)、[DNS 规则](https://sing-box.sagernet.org/configuration/dns/rule/) |
 | [Mihomo 1.19.33](https://github.com/MetaCubeX/mihomo/releases/tag/v1.19.33) | 将范围及完整 DoH 列表写入 `dns.proxy-server-nameserver-policy`。`*.example.com` 匹配单级子域；父域及多级子域另有原生语法。模板需提供有效的基础 DNS 和引导配置。合并后的规则参与必要连接及循环检查。[DNS](https://wiki.metacubex.one/config/dns/)、[通配语法](https://wiki.metacubex.one/en/handbook/syntax/#domain-wildcards) |
 | [Loon 3.5.3](https://apps.apple.com/hk/app/loon/id1373567447) | 节点通过 `server-dns="https://a/dns-query,https://b/dns-query"` 使用完整 DoH 列表；3.5.2 (996)+ 支持并发查询并采用首个有效结果。Host Map 支持 `*`、`?`。[节点 DNS](https://nsloon.app/en/docs/Node/#node-dns)、[Host 通配](https://nsloon.app/en/docs/Node/subscription/#host) |
-| [Quantumult X](https://apps.apple.com/us/app/quantumult-x/id1443988620)，实测 1.8.0 build946（macOS） | 在 `[dns]` 为每个域名范围输出一项 `doh-server = /范围/URL`，采用同域合并后的首项 DoH，其余明确报告降级；保留未被接管的模板 DNS。单项绑定、glob 和别名已实测。同行多个域名限定 URL 的对照失败，同域分成多行的对照跟随首条匹配项，不能作为多服务故障切换输出。[官方样例](https://raw.githubusercontent.com/crossutility/Quantumult-X/master/sample.conf) |
+| [Quantumult X](https://apps.apple.com/us/app/quantumult-x/id1443988620)，实测 1.8.0 build946（macOS） | 在 `[dns]` 保留同域合并后的全部 DoH，按来源及服务顺序，每项独立输出一行 `doh-server = /范围/URL`；保留未被接管的模板 DNS。配置注释说明 1.8.0 同域仅首条生效，支持叠加的新版可使用多条。单项绑定、glob、别名及同域拆行已实测；同行多 URL 的绑定对照失败，不采用该写法。[官方样例](https://raw.githubusercontent.com/crossutility/Quantumult-X/master/sample.conf) |
 | [Egern 2.21.0](https://apps.apple.com/us/app/egern/id1616105820) | `forward` 的精确域名或 `domain_wildcard` 指向 `upstreams` 多 DoH 组。配置 `proxy_nameservers` 会绕过这些规则，因此要求先修复模板；不擅自修改其他域名的解析路径。代理 DNS 的原生上游连接为直连。[DNS](https://egernapp.com/docs/configuration/dns/) |
 | [Shadowrocket 2.2.93](https://apps.apple.com/us/app/shadowrocket/id932747118) | 在 `[Host]` 输出 `*.example.com = server:https://a/dns-query,https://b/dns-query`：一个 `server:` 前缀，URL 用逗号连接，无引号。官方 2.2.92 确认 Host 多服务器；具体写法由配置作者发布的完整原始配置交叉核对，后者属于社区资料。[官方公告](https://t.me/s/ShadowrocketNews?before=1650)、[原始配置第 308 行](https://github.com/budaobu/rules/blob/b97b9f322c23be5ad0dad096d9bafc9b3e124304/conf/lazy_rocket.conf#L308) |
+
+Quantumult X 的上述多行输出兼容已验证的 macOS 1.8.0 build946，旧版运行时只使用首条不要求从配置删除后续行。[1.8.1 build950 的 iOS TestFlight 公告](https://t.me/QuanXNews/431)已明确新增同一域名范围多条 DNS 规则叠加并发查询，示例为同一范围分别写多行 `doh-server`，并说明旧行为仅首条生效。截至 2026-11-13，[iOS 商店页面](https://apps.apple.com/us/app/quantumult-x/id1443988620)显示 1.8.1 于 10 月 7 日发布，[macOS 商店页面](https://apps.apple.com/us/app/quantumult-x/id1443988620?platform=mac)仍为 1.8.0；后续 [1.9.0 build952 公告](https://t.me/QuanXNews/434)已将该 DNS 能力列入 iOS、tvOS 和 macOS 的测试范围。本项目尚未实机验证这些新版，不将 iOS 测试能力作为 macOS 1.8.0 的能力依据。全局多个 DoH 的逗号列表是另一种已在[官方样例](https://github.com/crossutility/Quantumult-X/blob/master/sample.conf#L54-L56)中明确支持的配置，不能把本轮域名绑定对照概括为 Quantumult X 整体不支持多个 DoH。
+
+预览及下载头中的 DoH 采用结果表示生成配置实际写入的服务。完整多行输出记录全部已写入项，不把后续项报告为生成器未采用；客户端是否使用这些行取决于其版本能力，采用结果不代表在线连通检测。
+
+2026-11-12 的 Quantumult X 1.8.0 build946 域名绑定对照，已按当时的生成参数及原生任务回传复核。核心绑定结构共四种；下表的 `D` 表示同一节点服务器域名，`A`、`B` 表示完整 DoH URL。
+
+| 绑定结构 | `doh-server` 右侧示意 | 实测结果 |
+| --- | --- | --- |
+| 单域单项 | `/D/A` | 健康服务成功，故意失效服务失败，绑定生效。 |
+| 逗号连接，每项重复域名前缀 | `/D/A, /D/B` | 失败；调整服务顺序后仍失败。 |
+| 逗号连接，仅首项带域名前缀 | `/D/A, B` | 失败，回传为 `No DNS results`。 |
+| 同域服务分别写独立行 | 一行 `/D/A`，另一行 `/D/B` | 健康服务排首成功，失效服务排首失败；交换顺序后复核首条生效。 |
+
+两种同行逗号结构还分别测试了重复同一健康 DoH：单项参照成功，重复列表均为 `No DNS results`。按服务组合细分，共六类绑定用例；不同服务与重复健康服务是同一语法的参数对照。仅首项带域名前缀的用例标识为 `scope-prefix-once`，其 `Scope-Reference` 成功、`Scope-Duplicate` 和 `Scope-Distinct` 失败，配对 IP、范围外及普通上网检查成功。全局多个 DoH 的逗号列表和 glob 单项另外验证通过，分别属于非绑定对照与单项匹配范围变体。以上结论限定于当时的 macOS 1.8.0 build946。
 
 官方文档及配置样例作为能力依据，真实客户端加载单独记录。各客户端通配符的层级、父域匹配及字段不同，不将同一个 glob 字符串直接复制为所有目标的配置。与来源范围完全对应的模板 Host 映射由来源 DNS 接管；更宽的 Host 覆盖无法保留其他域名行为时明确要求修复。
 
@@ -75,4 +90,6 @@ Shadowrocket 完整输出支持 `load-balance` 分组，包含成员、测试 UR
 
 原生校验和短时启动只证明所测配置的解析、引用及初始化；没有验证外部 DNS 应答、代理握手或生产网络连通。不会把生成成功写成实机可用。
 
-2026-11-13 Quantumult X 对照还区分了输出能力与服务连通性：某上游首项 DoH 在原生绑定中间歇失败，macOS 日志显示 TCP RST 发生在 TLS 握手期间、HTTP/DNS 请求发送前；同一客户端也记录到成功连接。当前证据无法确认 RST 的发送方。临时采用后续服务的配置通过，不代表生成器可以自动改变上游顺序；正式输出仍遵循 ADR 0001 的首项与降级规则，也不替换为全局 DoH。
+2026-11-13 Quantumult X 对照还区分了输出能力与服务连通性：某上游首项 DoH 在原生绑定中间歇失败，macOS 日志显示 TCP RST 发生在 TLS 握手期间、HTTP/DNS 请求发送前；同一客户端也记录到成功连接。当前证据无法确认 RST 的发送方。临时采用后续服务的配置通过，不代表生成器可以自动改变上游顺序；正式输出按 ADR 0001 保留全部服务并逐项分行，1.8.0 仍只使用首条，不替换为全局 DoH。
+
+2026-11-13 多行输出修订后，51 项相关回归全部通过，覆盖同域完整列表、来源顺序、去重、整范围转换、预览/下载/重启一致性及来源保存。`pnpm check` 与 `pnpm build` 通过：服务端 364 项、前端 3 项通过，4 项可选 sing-box 原生检查因缺少二进制跳过；已启用本机 Mihomo 检查。真实 169 节点配置的生成对照中，4 个域名范围由 4 条首项记录变为 12 条完整记录（每范围分别 4、2、4、2 项），各范围首条保持一致，其他配置及 6 个 AUTO 延迟优选组一致；本次新生成文件尚未再次实机导入，新版并发行为仍未实测。
