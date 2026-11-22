@@ -59,33 +59,59 @@ function sourceAliases(source: SubscriptionSource): Map<string, string> {
   return aliases;
 }
 
-/** Recompute from the current output, including newly completed connection dependencies. */
-export function resolveNodeDns(plan: GenerationPlan, validateAliases = false): { ranges: NodeDomainRange[]; forNode: Map<string, DomainDohService[]>; aliases: Map<string, string> } {
-  if (plan.target.mode === 'nodes') return { ranges: [], forNode: new Map(), aliases: new Map() };
-  const records = new Map<string, { nodeIds: string[]; services: DomainDohService[] }>();
+function collectNodeAliases(plan: GenerationPlan, visit?: (domain: string, source: SubscriptionSource, nodeId?: string) => void) {
   const aliases = new Map<string, string>();
   const conflictingAliases = new Set<string>();
   const sources = new Map(plan.inventory.sources.map(source => [source.id, source]));
-  const ownAliases = new Map(plan.inventory.sources.map(source => [source.id, sourceAliases(source)]));
-  const add = (domain: string, nodeId: string | undefined, services: DomainDohService[]) => {
-    const entry = records.get(domain) || { nodeIds: [], services: [] };
-    if (nodeId && !entry.nodeIds.includes(nodeId)) entry.nodeIds.push(nodeId);
-    entry.services.push(...services); records.set(domain, entry);
-  };
+  const ownAliases = new Map<string, Map<string, string>>();
   for (const node of [...plan.ordinaryNodes, ...plan.dependencyNodes]) {
     const domain = normalizeNodeDomain(node.server), source = sources.get(node.sourceId || '');
     if (!domain || !source) continue;
-    const services = (source.doh?.services || []).map(service => ({ source, service }));
-    add(domain, node.id, services);
+    if (!ownAliases.has(source.id)) ownAliases.set(source.id, sourceAliases(source));
+    visit?.(domain, source, node.id);
     const visited = new Set([domain]); let current = domain;
     while (ownAliases.get(source.id)?.has(current)) {
       const next = ownAliases.get(source.id)!.get(current)!;
       if (aliases.has(current) && aliases.get(current) !== next) conflictingAliases.add(current);
       else aliases.set(current, next);
       if (visited.has(next)) break;
-      visited.add(next); add(next, undefined, services); current = next;
+      visited.add(next); visit?.(next, source); current = next;
     }
   }
+  return { aliases, conflictingAliases };
+}
+
+function validateNodeAliases(plan: GenerationPlan, { aliases, conflictingAliases }: ReturnType<typeof collectNodeAliases>, active?: (domain: string) => boolean) {
+  for (const [from] of aliases) {
+    if (active && !active(from)) continue;
+    const visited = new Set<string>(); let current: string | undefined = from;
+    while (current && !visited.has(current)) { visited.add(current); current = aliases.get(current); }
+    const cycle = !!current;
+    if (!cycle && !conflictingAliases.has(from)) continue;
+    const generation = generationMetadata(plan);
+    generation.diagnostics.push({ code: cycle ? 'source-doh-cycle' : 'source-doh-alias-conflict', severity: 'error',
+      message: cycle ? `节点域名别名循环：${[...visited, current].join(' → ')}` : `节点域名存在不同的别名目标：${from}` });
+    throw new GenerationError('节点域名别名需修复', generation);
+  }
+}
+
+export function resolveNodeAliases(plan: GenerationPlan): Map<string, string> {
+  const result = collectNodeAliases(plan);
+  validateNodeAliases(plan, result);
+  return result.aliases;
+}
+
+/** Recompute from the current output, including newly completed connection dependencies. */
+export function resolveNodeDns(plan: GenerationPlan, validateAliases = false): { ranges: NodeDomainRange[]; forNode: Map<string, DomainDohService[]>; aliases: Map<string, string> } {
+  if (plan.target.mode === 'nodes') return { ranges: [], forNode: new Map(), aliases: new Map() };
+  const records = new Map<string, { nodeIds: string[]; services: DomainDohService[] }>();
+  const collected = collectNodeAliases(plan, (domain, source, nodeId) => {
+    const services = (source.doh?.services || []).map(service => ({ source, service }));
+    const entry = records.get(domain) || { nodeIds: [], services: [] };
+    if (nodeId && !entry.nodeIds.includes(nodeId)) entry.nodeIds.push(nodeId);
+    entry.services.push(...services); records.set(domain, entry);
+  });
+  const { aliases } = collected;
   // An alias inherits the final shared resolver set, including DoH borrowed from another source.
   for (let round = 0; round < aliases.size; round++) {
     let changed = false;
@@ -99,17 +125,7 @@ export function resolveNodeDns(plan: GenerationPlan, validateAliases = false): {
     }
     if (!changed) break;
   }
-  for (const [from] of aliases) {
-    if (!records.get(from)?.services.length) continue;
-    const visited = new Set<string>(); let current: string | undefined = from;
-    while (current && !visited.has(current)) { visited.add(current); current = aliases.get(current); }
-    const cycle = !!current;
-    if (!validateAliases || !cycle && !conflictingAliases.has(from)) continue;
-    const generation = generationMetadata(plan);
-    generation.diagnostics.push({ code: cycle ? 'source-doh-cycle' : 'source-doh-alias-conflict', severity: 'error',
-      message: cycle ? `节点域名别名循环：${[...visited, current].join(' → ')}` : `节点域名存在不同的别名目标：${from}` });
-    throw new GenerationError('节点域名别名需修复', generation);
-  }
+  if (validateAliases) validateNodeAliases(plan, collected, domain => !!records.get(domain)?.services.length);
   const sourceOrder = new Map(plan.inventory.sources.map((source, i) => [source.id, i]));
   for (const entry of records.values()) {
     entry.services.sort((a, b) => (sourceOrder.get(a.source.id)! - sourceOrder.get(b.source.id)!) || a.source.doh!.services.indexOf(a.service) - b.source.doh!.services.indexOf(b.service));
