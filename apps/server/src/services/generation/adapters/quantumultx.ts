@@ -3,9 +3,8 @@ import { generateQuantumultXConfig, nodeToQuantumultXProxy, isSupportedByQuantum
 import { quantumultXReferences, quantumultXOwnedNames, quantumultXEntries, quantumultXDefinitionNames } from '../../../core/quantumultx-config';
 import { registerRuntimeDependencyCollector } from '../runtime-dependencies';
 import { GenerationError, generationMetadata, type GenerationPlan, type GenerationDiagnostic } from '../types';
-import { renderIniDomainDns } from '../native-domain-dns';
+import { renderQuantumultXDns } from '../quantumultx-dns';
 
-/** Source server domains use native scoped DoH entries. */
 export function renderQuantumultX(plan: GenerationPlan): string {
   validateQuantumultXNodeChains(plan);
   if (plan.dependencyNodes.length) {
@@ -22,7 +21,7 @@ export function renderQuantumultX(plan: GenerationPlan): string {
     { expandNodes: plan.expandNodes, baseUrl: plan.baseUrl, subToken: plan.subToken, ordinaryNodeIds: new Set(plan.ordinaryNodes.map(node => node.id)), dependencyGroupIds: new Set(plan.dependencyGroupIds), runtimeSources: plan.inventory.sources,
       nodeResource: plan.baseUrl && plan.subToken ? { name: plan.subscriptionName || 'SubOne', url: `${plan.baseUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(plan.subToken)}/nodes/qx` } : undefined });
   validateQuantumultXReferences(output, plan);
-  return renderIniDomainDns(output, plan, 'quantumultx');
+  return renderQuantumultXDns(output, plan);
 }
 
 function validateQuantumultXReferences(output: string, plan: GenerationPlan): void {

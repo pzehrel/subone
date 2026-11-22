@@ -40,13 +40,13 @@ export function makePlan(target: ClientType, sources: SubscriptionSource[]): Gen
   };
 }
 
-test('Quantumult X emits every scoped DoH on its own line in upstream order', () => {
+test('Quantumult X emits a single global DoH pool in upstream order', () => {
   const urls = ['https://192.0.2.10/dns-query', 'https://192.0.2.11/dns-query', 'https://192.0.2.12/dns-query'];
   const source = makeSource('airport', ['one.airport.example', 'two.airport.example'], urls);
   const result = render(makePlan('quantumultx', [source]));
   assert.deepEqual(result.output.split('\n').filter(line => line.startsWith('doh-server')),
-    urls.map(url => `doh-server = /*.airport.example/${url}`));
-  assert.match(result.output, /^#.*Quantumult X 1\.8\.0.*首条/m);
+    [`doh-server = ${urls.join(', ')}`]);
+  assert.doesNotMatch(result.output, /仅使用首条/);
   const binding = result.generation.bindings[0];
   assert.equal(binding.status, 'applied');
   assert.deepEqual(binding.appliedServiceIds, source.doh!.services.map(service => service.id));
@@ -67,28 +67,52 @@ for (const target of Object.keys(templates) as ClientType[]) test(`${target}: sa
   if (!firstOnly) for (const url of urls) assert.ok(result.output.includes(url), url);
   for (const binding of result.generation.bindings) {
     assert.equal(binding.status, firstOnly ? 'degraded' : 'applied', JSON.stringify(binding));
-    assert.deepEqual(binding.domainRanges, ['*.airport.example']);
+    assert.deepEqual(binding.domainRanges, target === 'quantumultx' ? undefined : ['*.airport.example']);
     assert.equal(binding.effectiveServices?.length, firstOnly ? 1 : 3);
   }
   assert.equal(result.generation.bindings[2].services.length, 0, 'borrowed DoH must not rewrite source intent');
   assert.equal(JSON.stringify(plan), snapshot, 'render must not mutate the saved/input plan');
   if (target === 'shadowrocket') assert.match(result.output, /\*\.airport\.example = server:https:\/\/192\.0\.2\.10\/dns-query,https:\/\/192\.0\.2\.11\/dns-query,https:\/\/192\.0\.2\.12\/dns-query/);
   if (target === 'quantumultx') assert.deepEqual(result.output.split('\n').filter(line => line.startsWith('doh-server')),
-    urls.map(url => `doh-server = /*.airport.example/${url}`));
+    [`doh-server = ${urls.join(', ')}`]);
 });
 
-test('Quantumult X preserves source precedence while deduplicating a shared domain DoH list', () => {
-  const a = makeSource('a', ['shared.airport.example'], [urls[2], urls[0]]);
+test('Quantumult X deduplicates the global pool by full URL in source order, including IP-only sources', () => {
+  const a = makeSource('a', ['192.0.2.7'], [urls[2], urls[0]]);
   const b = makeSource('b', ['shared.airport.example'], [urls[1], urls[2]]);
   for (const [sources, expected] of [[[a, b], [urls[2], urls[0], urls[1]]], [[b, a], [urls[1], urls[2], urls[0]]]] as const) {
     const plan = makePlan('quantumultx', [...sources]);
     const snapshot = JSON.stringify(plan);
     const result = render(plan);
     assert.deepEqual(result.output.split('\n').filter(line => line.startsWith('doh-server')),
-      expected.map(url => `doh-server = /shared.airport.example/${url}`));
+      [`doh-server = ${expected.join(', ')}`]);
     assert.ok(result.generation.bindings.every(binding => binding.status === 'applied'));
     assert.equal(JSON.stringify(plan), snapshot);
   }
+});
+
+test('Quantumult X adds a missing DNS section and merges only unconditional template DoH', () => {
+  const plan = makePlan('quantumultx', [makeSource('airport', ['192.0.2.7'], [urls[1]])]);
+  plan.templateContent = '[policy]\n';
+  assert.deepEqual(render(plan).output.match(/^\[dns\]\n.*$/gm), [`[dns]\ndoh-server = ${urls[1]}`]);
+  const conditional = `doh-server = ${urls[0]}, included_ssids="Office, Guest"`;
+  const scoped = 'doh-server = /kept.example/https://private.example/dns-query';
+  const comment = ';doh-server = https://comment.example/dns-query';
+  plan.templateContent = `[dns]\n${comment}\n${conditional}\n${scoped}\ndoh-server = ${urls[2]}\nDOH-SERVER = ${urls[1]}, ${urls[2]}\n[policy]\n`;
+  const result = render(plan).output;
+  assert.ok(result.includes([comment, conditional, scoped, `doh-server = ${urls[1]}, ${urls[2]}`].join('\n')));
+  assert.equal(result.match(/^doh-server\s*=/gim)?.length, 3);
+});
+
+test('Quantumult X retains reachable aliases even when the source has no DoH', () => {
+  const source = makeSource('airport', ['entry.node.example'], []);
+  source.doh!.domainAliases = { 'entry.node.example': 'real.node.example', 'unused.example': 'other.example' };
+  const plan = makePlan('quantumultx', [source]);
+  plan.templateContent = plan.templateContent.replace('[dns]', '[dns]\naddress = /entry.node.example/192.0.2.1, /keep.example/192.0.2.2');
+  const result = render(plan).output;
+  assert.match(result, /^alias = \/entry\.node\.example\/real\.node\.example$/m);
+  assert.match(result, /^address = \/keep\.example\/192\.0\.2\.2$/m);
+  assert.doesNotMatch(result, /doh-server|unused\.example|192\.0\.2\.1(?:\D|$)/);
 });
 
 test('different same-domain DoH sets are merged rather than treated as a conflict', () => {
@@ -100,7 +124,7 @@ test('different same-domain DoH sets are merged rather than treated as a conflic
   assert.ok(result.generation.bindings.every(binding => binding.status === 'applied'));
 });
 
-for (const target of ['mihomo', 'shadowrocket', 'egern', 'loon', 'quantumultx'] as ClientType[]) test(`${target}: adoption in one range does not mark a skipped shared range as applied`, () => {
+for (const target of ['mihomo', 'shadowrocket', 'egern', 'loon'] as ClientType[]) test(`${target}: adoption in one range does not mark a skipped shared range as applied`, () => {
   const sources = [makeSource('a', ['own.airport.example', 'shared.airport.example'], [urls[0]]), makeSource('b', ['shared.airport.example'], [urls[1]])];
   sources[1].doh!.format = 'singbox';
   sources[1].doh!.services[0].raw = { type: 'https', server: '192.0.2.11', path: '/dns-query', headers: { 'X-Source': 'b' } };
@@ -146,19 +170,20 @@ test('Quantumult X does not substitute a later DoH when the first service cannot
   assert.ok(binding.diagnostics.some(entry => entry.code === 'source-doh-options-unapplied'));
 });
 
-test('Quantumult X records an unapplied shared range separately from an adopted private range', () => {
+test('Quantumult X reports unconvertible connection options separately from the shared global pool', () => {
   const a = makeSource('a', ['own.airport.example', 'shared.airport.example'], [urls[0]]);
   const b = makeSource('b', ['shared.airport.example'], [urls[1]]);
   b.doh!.services[0].raw = { options: ['unsupported-option'] };
   const result = render(makePlan('quantumultx', [b, a]));
   const own = result.generation.bindings.find(binding => binding.sourceId === a.id)!;
   const shared = result.generation.bindings.find(binding => binding.sourceId === b.id)!;
-  assert.equal(own.status, 'degraded');
-  assert.deepEqual(own.domainRanges, ['own.airport.example']);
-  assert.ok(!own.diagnostics.some(entry => entry.code === 'source-doh-first-only'));
+  assert.equal(own.status, 'applied');
   assert.equal(shared.status, 'unapplied');
-  assert.deepEqual(shared.domainRanges, []);
-  assert.deepEqual(shared.effectiveServices, []);
+  assert.deepEqual(shared.appliedServiceIds, []);
+  assert.equal(shared.method, 'quantumultx-global-doh');
+  assert.deepEqual(shared.effectiveServices, own.effectiveServices);
+  assert.deepEqual(own.effectiveServices?.map(service => service.url), [urls[0]]);
+  assert.deepEqual(result.output.match(/^doh-server.*$/gm), [`doh-server = ${urls[0]}`]);
 });
 
 test('range inference respects public/private suffixes and known competing resolution intents', () => {
@@ -226,13 +251,11 @@ test('reachable alias cycles and contradictory targets cannot be silently emitte
 });
 
 test('a broader template Host override cannot silently bypass a source DNS range', () => {
-  for (const target of ['egern', 'loon', 'shadowrocket', 'quantumultx'] as ClientType[]) {
+  for (const target of ['egern', 'loon', 'shadowrocket'] as ClientType[]) {
     const plan = makePlan(target, [makeSource('a', ['one.zone.example', 'two.zone.example'], urls)]);
     plan.templateContent = target === 'egern'
       ? plan.templateContent.replace('  bootstrap:', '  hosts: {"*.example": 192.0.2.99}\n  bootstrap:')
-      : target === 'quantumultx'
-        ? plan.templateContent.replace('[dns]', '[dns]\naddress=/*.example/192.0.2.99')
-        : plan.templateContent.replace('[Host]', '[Host]\n*.example = 192.0.2.99');
+      : plan.templateContent.replace('[Host]', '[Host]\n*.example = 192.0.2.99');
     assert.throws(() => render(plan), (error: any) => error.generation?.diagnostics.some((entry: any) => entry.code === 'source-doh-host-override'), target);
   }
 });

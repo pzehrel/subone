@@ -49,31 +49,40 @@ async function profileFor(sources: any[], content = template, filter?: any, grou
 }
 const preview = (profile: any, expandNodes = true) => api('/generate/preview', 'POST', { profileId: profile.id, customType: 'quantumultx', expandNodes });
 
-test('QuanX multiline scoped DoH agrees across preview, download and reload without rewriting the source list', async () => {
+const templateGlobals = ['https://template.example/dns-query', 'https://second.example/dns-query'];
+function assertGlobalDns(content: string, sourceUrls: string[], original = dns) {
+  const globalLines = content.split('\n').filter(line => /^doh-server\s*=\s*https:/i.test(line) && !/ssids\s*=/i.test(line));
+  const expected = [...new Set([...sourceUrls, ...templateGlobals])];
+  assert.deepEqual(globalLines, [`doh-server = ${expected.join(', ')}`]);
+  assert.equal(dnsSection(content).replace(globalLines[0] + '\n', ''), original.replace('doh-server = ' + templateGlobals.join(', ') + '\n', ''));
+}
+
+test('QuanX preview and downloads merge only selected sources and template globals across reload', async () => {
   const services = ['https://192.0.2.10/dns-query', 'https://192.0.2.11/dns-query'];
-  const source = await add('/qx-multiline', services, { proxies: [
-    { name: 'First', type: 'socks5', server: 'one.multiline.example', port: 1080 },
-    { name: 'Second', type: 'socks5', server: 'two.multiline.example', port: 1080 },
-  ] });
-  const { profile } = await profileFor([source]);
+  const source = await add('/global-first', services);
+  const other = await add('/global-second', [services[0], 'https://192.0.2.11/alternate', templateGlobals[0]]);
+  await add('/global-excluded', ['https://excluded.example/dns-query']);
+  const { profile } = await profileFor([source, other]);
   const expected = await preview(profile);
   assert.equal(expected.success, true, JSON.stringify(expected));
   assert.equal(expected.generation.target.version, '1.8.0');
-  assert.deepEqual(expected.data.split('\n').filter((line: string) => /^doh-server\s*=\s*\//.test(line)),
-    services.map(url => `doh-server = /*.multiline.example/${url}`));
-  assert.match(expected.data, /^#.*Quantumult X 1\.8\.0.*首条/m);
-  assert.equal(dnsSection(expected.data).replace(/^doh-server\s*=\s*\/.*\n/gm, '').replace(/^# 同域多条 DoH：.*\n/gm, ''), dns);
-  const binding = expected.generation.bindings[0];
-  assert.equal(binding.status, 'applied');
-  assert.deepEqual(binding.appliedServiceIds, source.doh.services.map((service: any) => service.id));
-  assert.deepEqual(binding.effectiveServices.map((service: any) => service.url), services);
-  assert.deepEqual(binding.diagnostics, []);
+  const urls = [...services, 'https://192.0.2.11/alternate', templateGlobals[0]];
+  assertGlobalDns(expected.data, urls);
+  assert.doesNotMatch(dnsSection(expected.data), /excluded\.example|doh-server\s*=\s*\//);
+  for (const selected of [source, other]) {
+    const binding = expected.generation.bindings.find((entry: any) => entry.sourceId === selected.id);
+    assert.equal(binding.status, 'applied');
+    assert.equal(binding.method, 'quantumultx-global-doh');
+    assert.deepEqual(binding.appliedServiceIds, selected.doh.services.map((service: any) => service.id));
+    assert.deepEqual(binding.effectiveServices.map((service: any) => service.url), urls);
+    assert.deepEqual(binding.diagnostics, []);
+  }
   for (const reloaded of [false, true]) {
     if (reloaded) { await stopApp(); await startApp(); }
     for (const path of ['qx', 'quantumultx?expand=false']) {
       const response = await fetch(`${origin}/s/${profile.token}/${path}`);
       assert.equal(response.status, 200);
-      assert.equal(response.headers.get('X-SubOne-DoH'), 'applied');
+      assert.equal(response.headers.get('X-SubOne-DoH'), 'applied,applied');
       assert.equal(response.headers.get('X-SubOne-Diagnostics'), '');
       assert.equal(await response.text(), expected.data);
     }
@@ -113,7 +122,8 @@ async function addAliasedSource(path: string) {
 }
 function assertAliasDns(content: string) {
   assert.match(content, /^alias = \/entry\.source\.example\/real\.backend\.test$/m);
-  for (const domain of ['entry.source.example', 'real.backend.test']) assert.ok(content.includes(`doh-server = /${domain}/https://192.0.2.10/dns-query`), content);
+  assert.match(content, /^doh-server = https:\/\/192\.0\.2\.10\/dns-query,/m);
+  assert.doesNotMatch(content, /^doh-server = \//m);
   assert.doesNotMatch(dnsSection(content), /unused\.|wildcard\.|ip\.source|192\.0\.2\.42/);
 }
 
@@ -295,7 +305,7 @@ test('VMess TCP TLS uses native obfs fields in full downloads and both node reso
   }
 });
 
-test('scoped DNS takeover preserves other entries and SSID options regardless of their position on the line', async () => {
+test('global DNS preserves explicit template scopes and SSID options', async () => {
   const source = await add('/qx-scoped-takeover', ['https://192.0.2.10/dns-query']);
   const owned = `/${source.nodes[0].server}/https://192.0.2.20/dns-query`;
   const retained = '/unrelated.example/https://192.0.2.21/dns-query';
@@ -304,9 +314,8 @@ test('scoped DNS takeover preserves other entries and SSID options regardless of
     const { profile, tpl } = await profileFor([source], content);
     const result = await preview(profile);
     assert.equal(result.success, true, JSON.stringify(result));
-    assert.ok(result.data.includes(`doh-server = ${retained}, excluded_ssids=SSID1, SSID2`));
-    assert.ok(result.data.includes(`/${source.nodes[0].server}/https://192.0.2.10/dns-query`));
-    assert.doesNotMatch(result.data, /192\.0\.2\.20/);
+    assert.ok(result.data.includes(`doh-server = ${entries.join(', ')}, excluded_ssids=SSID1, SSID2`));
+    assert.match(result.data, /^doh-server = https:\/\/192\.0\.2\.10\/dns-query,/m);
     assert.equal(await fetch(`${origin}/s/${profile.token}/quantumultx?expand=true`).then(response => response.text()), result.data);
     assert.equal((await api('/templates')).data.find((entry: any) => entry.id === tpl.id).content, content);
   }
@@ -318,11 +327,11 @@ test('Quantumult X adopts supported source DNS while retaining unsupported conne
   const { profile } = await profileFor([a, b, c]);
   const result = await preview(profile); assert.equal(result.success, true, JSON.stringify(result));
   assert.equal(result.generation.target.version, '1.8.0');
-  assert.equal(dnsSection(result.data).replace(/^doh-server\s*=\s*\/.*\n/gm, ''), dns);
+  assertGlobalDns(result.data, ['https://different.source.example/dns-query']);
   assert.equal(result.generation.bindings.length, 3);
   for (const source of [a, b, c]) {
     const binding = result.generation.bindings.find((value: any) => value.sourceId === source.id);
-    assert.equal(binding.status, source.id === c.id ? 'applied' : 'unapplied'); assert.equal(binding.method, source.id === c.id ? 'quantumultx-domain-doh' : 'template-dns'); assert.equal(binding.batchId, source.doh.batchId);
+    assert.equal(binding.status, source.id === c.id ? 'applied' : 'unapplied'); assert.equal(binding.method, 'quantumultx-global-doh'); assert.equal(binding.batchId, source.doh.batchId);
     assert.deepEqual(binding.appliedServiceIds, source.id === c.id ? [source.doh.services[0].id] : []); assert.deepEqual(binding.services.map((entry: any) => entry.url), source.doh.services.map((entry: any) => entry.url));
     if (source.id !== c.id) assert.deepEqual(binding.diagnostics.map((entry: any) => entry.code), ['source-doh-options-unapplied']);
     else assert.equal(binding.diagnostics.length, 0);
@@ -353,7 +362,7 @@ test('native template nodes, policies and single final survive managed renames a
   assert.match(result.data, /^host, managed\.example, Native \(2\), no-resolve$/m);
   assert.match(result.data, /rules\.example\/retained\.list, tag=kept, force-policy=Choice \(2\)/);
   assert.deepEqual(result.data.match(/^final, .+$/gm), ['final, Choice']);
-  assert.equal(dnsSection(result.data).replace(/^doh-server\s*=\s*\/.*\n/gm, ''), dns);
+  assertGlobalDns(result.data, ['https://unused.example/dns-query']);
   assert.equal((await api('/templates')).data.find((value: any) => value.id === tpl.id).content, content);
   assert.equal(await fetch(`${origin}/s/${profile.token}/quantumultx?expand=true`).then(response => response.text()), result.data);
   const provider = await fetch(`${origin}/s/${profile.token}/source/${source.id}?target=quantumultx`).then(response => response.text());

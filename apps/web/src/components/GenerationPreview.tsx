@@ -22,7 +22,7 @@ const methodNames: Record<string, string> = {
   'singbox-native-domain-resolver': '节点 domain_resolver',
   'mihomo-server-domain-policy': '节点域名 DNS 策略',
   'loon-server-dns': '节点 server-dns',
-  'quantumultx-domain-doh': '域名 DoH',
+  'quantumultx-global-doh': '全局 DoH',
   'shadowrocket-domain-doh': '域名 DoH',
   'egern-domain-doh': '域名 DoH',
   'template-host-map': '模板 Host 映射',

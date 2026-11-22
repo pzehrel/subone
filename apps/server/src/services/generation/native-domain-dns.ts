@@ -1,6 +1,5 @@
 import yaml from 'js-yaml';
 import { createHash } from 'node:crypto';
-import { splitQuanxDnsValues } from '../../core/parser/source-doh';
 import { portableDohBootstrapIssue, portableDohUrl, rangePattern, recordDomainDns, resolveNodeDns, templateHostConflict, type NodeDomainRange } from './node-domain-ranges';
 import type { GenerationPlan } from './types';
 
@@ -39,47 +38,21 @@ export function prependIniSection(content: string, name: string, additions: stri
   return retained.join('\n');
 }
 
-export function renderIniDomainDns(content: string, plan: GenerationPlan, target: 'quantumultx' | 'shadowrocket'): string {
+export function renderShadowrocketDomainDns(content: string, plan: GenerationPlan): string {
   const all = resolveNodeDns(plan, true);
   const { ranges, urls } = portableRanges(plan, all.ranges);
   const patterns = new Set(ranges.map(rangePattern));
   const aliases = [...all.aliases].filter(([domain]) => ranges.some(range => range.domains.includes(domain)));
-  const lines = ranges.flatMap(range => target === 'quantumultx'
-    ? urls.get(range)!.map(url => `doh-server = /${rangePattern(range)}/${url}`)
-    : [`${rangePattern(range)} = server:${urls.get(range)!.join(',')}`]);
-  if (target === 'quantumultx') {
-    if (ranges.some(range => urls.get(range)!.length > 1)) {
-      lines.unshift('# 同域多条 DoH：Quantumult X 1.8.0 仅使用首条，支持叠加的版本可使用多条。');
-    }
-    lines.unshift(...aliases.map(([from, to]) => `alias = /${from}/${to}`));
-    content = prependIniSection(content, 'dns', lines, line => {
-      const match = /^(\s*(doh-server|server|address|alias)\s*=\s*)(.*)$/i.exec(line);
-      if (!match || !ranges.length || !/(?:^|,)\s*\/[^/]+\//.test(match[3])) return line;
-      const values = splitQuanxDnsValues(match[3]);
-      const optionIndex = values.findIndex(value => /^(?:included_ssids|excluded_ssids)\s*=/i.test(value));
-      const targets = optionIndex < 0 ? values : values.slice(0, optionIndex);
-      const retained = targets.filter(value => {
-        const scope = /^\/([^/]+)\//.exec(value)?.[1];
-        if (!scope) return true;
-        if (patterns.has(scope.toLowerCase()) || ranges.some(range => range.domains.includes(scope.toLowerCase()))) return false;
-        if (/^(address|alias)$/i.test(match[2])) templateHostConflict(plan, scope, ranges);
-        return true;
-      });
-      if (retained.length === targets.length) return line;
-      if (!retained.length) return;
-      return match[1] + [...retained, ...(optionIndex < 0 ? [] : values.slice(optionIndex))].join(', ');
-    });
-  } else {
-    lines.push(...aliases.map(([from, to]) => `${from} = ${to}`));
-    content = prependIniSection(content, 'Host', lines, line => {
-      const key = /^\s*([^#;][^=]+?)\s*=/.exec(line)?.[1].trim().toLowerCase();
-      if (!key) return line;
-      if (patterns.has(key) || ranges.some(range => range.domains.includes(key))) return;
-      templateHostConflict(plan, key, ranges);
-      return line;
-    });
-  }
-  recordDomainDns(plan, all.ranges, `${target}-domain-doh`, new Map(ranges.map(range => [range,
+  const lines = ranges.map(range => `${rangePattern(range)} = server:${urls.get(range)!.join(',')}`);
+  lines.push(...aliases.map(([from, to]) => `${from} = ${to}`));
+  content = prependIniSection(content, 'Host', lines, line => {
+    const key = /^\s*([^#;][^=]+?)\s*=/.exec(line)?.[1].trim().toLowerCase();
+    if (!key) return line;
+    if (patterns.has(key) || ranges.some(range => range.domains.includes(key))) return;
+    templateHostConflict(plan, key, ranges);
+    return line;
+  });
+  recordDomainDns(plan, all.ranges, 'shadowrocket-domain-doh', new Map(ranges.map(range => [range,
     new Set(range.services.map(({ service }) => service.id))])));
   return content;
 }

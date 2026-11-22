@@ -18,7 +18,7 @@ import { adaptShadowrocketDns, diagnosePureNodes, validateShadowrocketRuntime } 
 import { renderQuantumultX, renderQuantumultXSource, validateQuantumultXNodeChains } from './generation/adapters/quantumultx';
 import type { ProxyNode } from '../types';
 import { isSupportedByQuantumultX } from '../core/generators/quantumultx-generator';
-import { renderIniDomainDns } from './generation/native-domain-dns';
+import { renderShadowrocketDomainDns } from './generation/native-domain-dns';
 import { GenerationError, generationMetadata, type GenerationMetadata, type GenerationOptions, type GenerationPlan } from './generation/types';
 export { GenerationError } from './generation/types';
 export { renderQuantumultXNodes } from './generation/adapters/quantumultx';
@@ -141,7 +141,7 @@ export function renderGeneration(input: GenerationPlan) {
   } else {
     adaptShadowrocketDns(plan);
     output = generateShadowrocketConfig(templateContent, nodes, groups, rules, sources, { ...options, runtimeSources: plan.inventory.sources });
-    output = renderIniDomainDns(output, plan, 'shadowrocket');
+    output = renderShadowrocketDomainDns(output, plan);
     validateShadowrocketRuntime(output, plan);
   }
   const generation = generationMetadata(plan);
