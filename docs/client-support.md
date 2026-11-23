@@ -20,18 +20,20 @@ Base64 原文保留编码与内层格式信息；查看、复制和下载均使�
 
 ## 完整输出与来源 DoH
 
-来源 DoH 属于一次成功更新的结果，自动绑定该来源全部解析节点，全部服务按输入顺序保存。Quantumult X 将所用来源的 DoH 合并成全局列表。其他五种完整输出按节点服务器域名汇总、去重合并上游 DoH，同域名节点共享，包括自身来源无 DoH 的节点。该域名没有任何上游 DoH 时沿用模板 DNS。决定见 [ADR 0001](adr/0001-source-doh-bindings.md)。
+来源 DoH 属于一次成功更新的结果，自动绑定该来源全部解析节点，全部服务按输入顺序保存。Mihomo 和 Quantumult X 将所用来源的 DoH 合并为全局默认值。其他四种完整输出按节点服务器域名汇总、去重合并上游 DoH，同域名节点共享，包括自身来源无 DoH 的节点。该域名没有任何上游 DoH 时沿用模板 DNS。决定见 [ADR 0001](adr/0001-source-doh-bindings.md)。
 
 节点域名范围由程序自动生成：按 DNS 标签归并使用相同 DoH 组合的同层子域，公共后缀及私有后缀作为边界，检查已知的其他解析意图、DoH 服务和引导域名。父域本身单独处理，无法归并时保留完整域名。范围不会改写保存的来源绑定。决定见 [ADR 0002](adr/0002-node-domain-ranges.md)。
 
 | 目标与核验版本 | 配置能力与输出方式 |
 | --- | --- |
 | [sing-box 1.14.4](https://github.com/SagerNet/sing-box/releases/tag/v1.14.4) | 程序按域名范围为节点分配 `domain_resolver`，引用同域合并后的首项 DoH，并明确报告其余未采用项。使用 typed HTTPS DNS，保留已有出站、引导和连接选项处理。DNS 规则使用域名、后缀或正则字段，没有直接填写 glob 的字段。[节点解析](https://sing-box.sagernet.org/configuration/shared/dial/#domain_resolver)、[DNS 规则](https://sing-box.sagernet.org/configuration/dns/rule/) |
-| [Mihomo 1.19.33](https://github.com/MetaCubeX/mihomo/releases/tag/v1.19.33) | 将范围及完整 DoH 列表写入 `dns.proxy-server-nameserver-policy`。`*.example.com` 匹配单级子域；父域及多级子域另有原生语法。模板需提供有效的基础 DNS 和引导配置。合并后的规则参与必要连接及循环检查。[DNS](https://wiki.metacubex.one/config/dns/)、[通配语法](https://wiki.metacubex.one/en/handbook/syntax/#domain-wildcards) |
+| [Mihomo 1.19.33](https://github.com/MetaCubeX/mihomo/releases/tag/v1.19.33) | 普通域名默认使用 `dns.nameserver` 中的全局 DoH。节点域名继承普通 DNS 时也使用这组服务；模板单独配置节点 DNS 或启用 `respect-rules` 时，同一组上游 DoH 也写入 `dns.proxy-server-nameserver`。模板域名规则、引导、直连及回退设置继续生效。[官方 DNS 配置](https://wiki.metacubex.one/config/dns/) |
 | [Loon 3.5.3](https://apps.apple.com/hk/app/loon/id1373567447) | 节点通过 `server-dns="https://a/dns-query,https://b/dns-query"` 使用完整 DoH 列表；3.5.2 (996)+ 支持并发查询并采用首个有效结果。Host Map 支持 `*`、`?`。[节点 DNS](https://nsloon.app/en/docs/Node/#node-dns)、[Host 通配](https://nsloon.app/en/docs/Node/subscription/#host) |
 | [Quantumult X](https://apps.apple.com/us/app/quantumult-x/id1443988620)，实测 1.8.0 build946（macOS） | 在 `[dns]` 的一条全局 `doh-server` 中列出全部可采用来源的 DoH，URL 以逗号分隔，由客户端并发查询。普通域名和节点域名共享全局 DoH，模板中明确限定域名的 DNS 规则仍然适用。[官方样例](https://github.com/crossutility/Quantumult-X/blob/master/sample.conf#L52-L85) |
 | [Egern 2.21.0](https://apps.apple.com/us/app/egern/id1616105820) | `forward` 的精确域名或 `domain_wildcard` 指向 `upstreams` 多 DoH 组。配置 `proxy_nameservers` 会绕过这些规则，因此要求先修复模板；不擅自修改其他域名的解析路径。代理 DNS 的原生上游连接为直连。[DNS](https://egernapp.com/docs/configuration/dns/) |
 | [Shadowrocket 2.2.93](https://apps.apple.com/us/app/shadowrocket/id932747118) | 在 `[Host]` 输出 `*.example.com = server:https://a/dns-query,https://b/dns-query`：一个 `server:` 前缀，URL 用逗号连接，无引号。官方 2.2.92 确认 Host 多服务器；具体写法由配置作者发布的完整原始配置交叉核对，后者属于社区资料。[官方公告](https://t.me/s/ShadowrocketNews?before=1650)、[原始配置第 308 行](https://github.com/budaobu/rules/blob/b97b9f322c23be5ad0dad096d9bafc9b3e124304/conf/lazy_rocket.conf#L308) |
+
+Mihomo 按来源和服务顺序收集实际输出节点所属来源的 DoH，包括 IP 节点和必要依赖节点。普通和节点默认列表分别追加各自模板字段中的 HTTPS DNS，按完整地址、连接参数和出站去重。来源的连接方式无法完整保留时，预览会标明跳过的来源。没有可采用的来源时沿用模板 DNS。
 
 Quantumult X 只采用本次实际输出节点所属来源的 DoH，包括 IP 节点及必要依赖节点的来源。按来源列表和各来源内部的顺序收集完整 URL，追加模板原有的无条件全局 DoH，重复 URL 只写一次。模板中的域名规则、SSID 条件和节点别名保留。某一来源有无法转换的连接参数时，整组跳过并在预览中说明。没有可采用的上游 DoH 时沿用模板 DNS。
 
@@ -93,3 +95,5 @@ Shadowrocket 完整输出支持 `load-balance` 分组，包含成员、测试 UR
 2026-11-13 Quantumult X 对照还区分了输出能力与服务连通性：某上游首项 DoH 在原生绑定中间歇失败，macOS 日志显示 TCP RST 发生在 TLS 握手期间、HTTP/DNS 请求发送前；同一客户端也记录到成功连接。当前证据无法确认 RST 的发送方。临时采用后续服务的配置通过，不代表生成器可以自动改变上游顺序；当时的输出按 ADR 0001 逐项分行，1.8.0 只使用首条。2026-11-22 起完整输出改用全局列表。
 
 2026-11-13 多行输出修订后，51 项相关回归全部通过，覆盖同域完整列表、来源顺序、去重、整范围转换、预览/下载/重启一致性及来源保存。`pnpm check` 与 `pnpm build` 通过：服务端 364 项、前端 3 项通过，4 项可选 sing-box 原生检查因缺少二进制跳过；已启用本机 Mihomo 检查。真实 169 节点配置的生成对照中，4 个域名范围由 4 条首项记录变为 12 条完整记录（每范围分别 4、2、4、2 项），各范围首条保持一致，其他配置及 6 个 AUTO 延迟优选组一致；本次新生成文件尚未再次实机导入，新版并发行为仍未实测。
+
+2026-11-23 在本机隔离运行 Mihomo 1.19.33，载入 SubOne 生成的完整配置。分别发起普通域名查询和 HTTP 代理节点延迟测试，本地 HTTPS DNS 服务收到网站域名及节点服务器域名的查询，经过该节点的 HTTP 请求成功。

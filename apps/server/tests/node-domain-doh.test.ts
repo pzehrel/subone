@@ -67,7 +67,7 @@ for (const target of Object.keys(templates) as ClientType[]) test(`${target}: sa
   if (!firstOnly) for (const url of urls) assert.ok(result.output.includes(url), url);
   for (const binding of result.generation.bindings) {
     assert.equal(binding.status, firstOnly ? 'degraded' : 'applied', JSON.stringify(binding));
-    assert.deepEqual(binding.domainRanges, target === 'quantumultx' ? undefined : ['*.airport.example']);
+    assert.deepEqual(binding.domainRanges, target === 'quantumultx' || target === 'mihomo' ? undefined : ['*.airport.example']);
     assert.equal(binding.effectiveServices?.length, firstOnly ? 1 : 3);
   }
   assert.equal(result.generation.bindings[2].services.length, 0, 'borrowed DoH must not rewrite source intent');
@@ -117,14 +117,14 @@ test('Quantumult X retains reachable aliases even when the source has no DoH', (
 
 test('different same-domain DoH sets are merged rather than treated as a conflict', () => {
   const sources = [makeSource('a', ['one.airport.example'], [urls[0]]), makeSource('b', ['one.airport.example'], [urls[1]])];
-  const resolved = resolveNodeDns(makePlan('mihomo', sources));
+  const resolved = resolveNodeDns(makePlan('shadowrocket', sources));
   assert.deepEqual(resolved.ranges[0].services.map(entry => entry.service.url), urls.slice(0, 2));
   const result = render(makePlan('mihomo', sources));
   assert.ok(result.output.includes(urls[0]) && result.output.includes(urls[1]));
   assert.ok(result.generation.bindings.every(binding => binding.status === 'applied'));
 });
 
-for (const target of ['mihomo', 'shadowrocket', 'egern', 'loon'] as ClientType[]) test(`${target}: adoption in one range does not mark a skipped shared range as applied`, () => {
+for (const target of ['shadowrocket', 'egern', 'loon'] as ClientType[]) test(`${target}: adoption in one range does not mark a skipped shared range as applied`, () => {
   const sources = [makeSource('a', ['own.airport.example', 'shared.airport.example'], [urls[0]]), makeSource('b', ['shared.airport.example'], [urls[1]])];
   sources[1].doh!.format = 'singbox';
   sources[1].doh!.services[0].raw = { type: 'https', server: '192.0.2.11', path: '/dns-query', headers: { 'X-Source': 'b' } };
@@ -135,6 +135,22 @@ for (const target of ['mihomo', 'shadowrocket', 'egern', 'loon'] as ClientType[]
   assert.equal(result.generation.bindings[1].status, 'unapplied');
   assert.deepEqual(result.generation.bindings[1].domainRanges, []);
   assert.deepEqual(result.generation.bindings[1].effectiveServices, []);
+});
+
+test('Mihomo skips an unrepresentable source as a unit and keeps distinct native connection options', () => {
+  const a = makeSource('a', ['one.airport.example'], [urls[0], urls[0]]);
+  a.doh!.format = 'mihomo';
+  a.doh!.services[0].raw = urls[0] + '#h3=true&DIRECT';
+  a.doh!.services[1].raw = urls[0] + '#h3=false&DIRECT';
+  const b = makeSource('b', ['192.0.2.1'], urls.slice(1));
+  b.doh!.services[1].raw = { options: ['unsupported-option'] };
+  const result = render(makePlan('mihomo', [a, b]));
+  assert.match(result.output, /h3=true&DIRECT/);
+  assert.match(result.output, /h3=false&DIRECT/);
+  assert.ok(!result.output.includes(urls[1]) && !result.output.includes(urls[2]));
+  assert.deepEqual(result.generation.bindings.map(binding => binding.status), ['applied', 'unapplied']);
+  assert.deepEqual(result.generation.bindings[1].effectiveServices?.map(service => service.serviceId), a.doh!.services.map(service => service.id));
+  assert.deepEqual(result.generation.bindings[1].appliedServiceIds, []);
 });
 
 test('singbox reports first-only per range even when both services are used by other nodes', () => {
@@ -218,12 +234,19 @@ test('different connection parameters are not deduplicated merely because the UR
   assert.equal(resolveNodeDns(makePlan('singbox', sources)).ranges[0].services.length, 2);
 });
 
-test('generated Mihomo wildcard policies participate in concrete DNS cycle validation', () => {
+test('Mihomo rejects a global DoH exit that depends on its own resolver', () => {
   const source = makeSource('a', ['one.zone.example', 'two.zone.example'], [urls[0]]);
   source.doh!.format = 'mihomo';
   source.doh!.services[0].raw = `${urls[0]}#a-0`;
   source.doh!.services[0].outbound = { kind: 'source-node', name: 'a-0', nodeId: 'a-0' };
   assert.throws(() => render(makePlan('mihomo', [source])), (error: any) => error.generation?.diagnostics.some((entry: any) => entry.code === 'source-doh-cycle'));
+});
+
+test('Mihomo validates global DNS transports even when every node has an IP address', () => {
+  const source = makeSource('a', ['192.0.2.1'], [urls[0]]);
+  const plan = makePlan('mihomo', [source]);
+  plan.templateContent = plan.templateContent.replace('  nameserver: [192.0.2.53]', '  nameserver: ["https://192.0.2.54/query#Missing"]');
+  assert.throws(() => render(plan), (error: any) => error.generation?.diagnostics.some((entry: any) => entry.code === 'source-doh-dependency-missing' && entry.message.includes('Missing')));
 });
 
 test('Egern refuses a template override which would bypass the generated domain rules', () => {
