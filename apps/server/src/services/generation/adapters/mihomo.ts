@@ -1,4 +1,4 @@
-import { GenerationError, generationMetadata, type GenerationPlan } from '../types';
+import { GenerationError, generationMetadata, type GenerationBinding, type GenerationPlan } from '../types';
 import yaml from 'js-yaml';
 import { isIP } from 'node:net';
 import { defaultMihomoDohEgress } from '../../../core/parser/source-doh';
@@ -7,7 +7,7 @@ import { generateMihomoConfig, nodeToMihomoProxy } from '../../../core/generator
 import type { SourceDohReference, SourceDohService, SubscriptionSource } from '../../../types';
 import { needsHostnameLookup, registerRuntimeDependencyCollector, type RuntimeDependencyCollection, type RuntimePathEntry } from '../runtime-dependencies';
 
-import { portableDohUrl, rangePattern, recordDomainDns, resolveNodeDns, type NodeDomainRange } from '../node-domain-ranges';
+import { portableDohBootstrapIssue, portableDohUrl } from '../node-domain-ranges';
 
 type Document = Record<string, any>;
 class ConnectionIssue extends Error {
@@ -19,9 +19,32 @@ function dnsHost(value: string): string {
   try { return new URL(value.includes('://') ? value : isIP(value) === 6 ? `udp://[${value}]` : `udp://${value}`).hostname.replace(/^\[|\]$/g, ''); } catch { return ''; }
 }
 const dnsArray = (value: unknown): string[] => Array.isArray(value) ? value.filter((value): value is string => typeof value === 'string') : typeof value === 'string' ? [value] : [];
-function policyServices(dns: Document, host: string): string[] {
+function hasSeparateNodeDns(dns: Document): boolean {
+  return dnsArray(dns['proxy-server-nameserver']).length > 0 || Object.keys(dns['proxy-server-nameserver-policy'] || {}).length > 0 || dns['respect-rules'] === true;
+}
+
+function globalDefaults(dns: Document, upstream: string[]): Document {
+  const defaults = { ...dns };
+  const fields = hasSeparateNodeDns(dns) ? ['nameserver', 'proxy-server-nameserver'] : ['nameserver'];
+  for (const field of fields) {
+    const entries = new Map(upstream.map(value => [value, value]));
+    const defaultRoute = field === 'nameserver' && dns['respect-rules'] === true ? 'RULES' : 'DIRECT';
+    for (const value of dnsArray(dns[field]).filter(value => /^https:\/\//i.test(value))) {
+      const key = withMihomoDnsRoute(value, mihomoDnsFragment(value).route || defaultRoute);
+      if (!entries.has(key)) entries.set(key, value);
+    }
+    defaults[field] = [...entries.values()];
+  }
+  return defaults;
+}
+
+function routedDns(values: string[], respectRules: boolean): string[] {
+  return respectRules ? values.map(value => mihomoDnsFragment(value).route ? value : withMihomoDnsRoute(value, 'RULES')) : values;
+}
+
+function policyServices(dns: Document, host: string, dedicated = dnsArray(dns['proxy-server-nameserver']).length > 0): string[] {
   const shared = dnsArray(dns['proxy-server-nameserver']);
-  const policy = shared.length ? dns['proxy-server-nameserver-policy'] : dns['nameserver-policy'];
+  const policy = dedicated ? dns['proxy-server-nameserver-policy'] : dns['nameserver-policy'];
   const policies = policy || {};
   const exact = Object.keys(policies).find(key => domain(key) === domain(host));
   const matches = Object.keys(policies).filter(key => {
@@ -32,8 +55,8 @@ function policyServices(dns: Document, host: string): string[] {
     return new RegExp(`^${pattern}$`, 'i').test(domain(host));
   });
   const selected = exact || matches.sort((a, b) => b.length - a.length)[0];
-  const services = selected ? dnsArray(policies[selected]) : shared.length ? shared : [...dnsArray(dns.nameserver), ...dnsArray(dns.fallback), ...Object.keys(policies).filter(key => key.startsWith('geosite:') || key.startsWith('rule-set:')).flatMap(key => dnsArray(policies[key]))];
-  return !shared.length && dns['respect-rules'] === true ? services.map(value => mihomoDnsFragment(value).route ? value : withMihomoDnsRoute(value, 'RULES')) : services;
+  const services = selected ? dnsArray(policies[selected]) : dedicated ? shared : [...dnsArray(dns.nameserver), ...dnsArray(dns.fallback), ...Object.keys(policies).filter(key => key.startsWith('geosite:') || key.startsWith('rule-set:')).flatMap(key => dnsArray(policies[key]))];
+  return routedDns(services, !dedicated && dns['respect-rules'] === true);
 }
 function routingTargets(doc: Document): string[] {
   const rules = [...(doc.rules || []), ...Object.values(doc['sub-rules'] || {}).flat()];
@@ -45,13 +68,8 @@ function routingTargets(doc: Document): string[] {
   }))];
 }
 
-/** Mihomo 1.19.33 policies resolve proxy SERVER domains, never arbitrary node identities. */
 export function adaptMihomoDns(doc: Document, plan: GenerationPlan): void {
-  const resolved = resolveNodeDns(plan, true);
-  const adoptedServices = new Map<string, string>();
-  const needed = new Set(resolved.ranges.filter(range => range.services.every(({ source, service }) =>
-    !sourceDnsCapacityIssue(source, doc) && !bindingEgressCapacityIssue(source, [service], plan)))
-    .flatMap(range => range.services.map(({ service }) => service.id)));
+  const pool = new Map<string, NonNullable<GenerationBinding['effectiveServices']>[number]>();
   const used = new Set<string>([...(doc.proxies || []), ...(doc['proxy-groups'] || [])].map(value => value.name));
   const allocate = (base: string): string => { let name = base; let suffix = 2; while (used.has(name)) name = `${base}-${suffix++}`; used.add(name); return name; };
   for (const binding of plan.bindings) {
@@ -70,12 +88,12 @@ export function adaptMihomoDns(doc: Document, plan: GenerationPlan): void {
         if (!(doc.proxies || []).some((value: Document) => value.name === node.name)) doc.proxies.push(nodeToMihomoProxy(node));
         return node.name;
       }
-      if (reference.kind !== 'source-group') throw new ConnectionIssue(reference.kind === 'routing' ? 'source-doh-egress-unapplied' : 'source-doh-dependency-missing', `${reference.kind === 'routing' ? '尚不能完整映射来源 DoH 路由出站；保留模板 DNS' : reference.kind === 'ambiguous' ? 'DoH 出站名称不唯一' : 'DoH 出站不存在'}：${reference.name || ''}`, reference.kind === 'routing' ? 'warning' : 'error');
+      if (reference.kind !== 'source-group') throw new ConnectionIssue(reference.kind === 'routing' ? 'source-doh-egress-unapplied' : 'source-doh-dependency-missing', `${reference.kind === 'routing' ? '尚不能完整映射来源 DoH 路由出站，该来源的 DoH 未加入全局列表' : reference.kind === 'ambiguous' ? 'DoH 出站名称不唯一' : 'DoH 出站不存在'}：${reference.name || ''}`, reference.kind === 'routing' ? 'warning' : 'error');
       if (mapped.has(reference.outboundId!)) return mapped.get(reference.outboundId!)!;
       const group = source.doh?.outbounds.find(group => group.id === reference.outboundId);
       if (!group) throw new ConnectionIssue('source-doh-dependency-missing', `DoH 出站组不存在：${reference.name}`);
       const raw = group.raw as Document;
-      if (mihomoStrategyIssue(source.doh?.format, raw)) throw new ConnectionIssue('source-doh-strategy-unapplied', `DoH 出站组 ${group.name} 的策略或参数尚不能完整映射到 Mihomo；保留模板 DNS`, 'warning');
+      if (mihomoStrategyIssue(source.doh?.format, raw)) throw new ConnectionIssue('source-doh-strategy-unapplied', `DoH 出站组 ${group.name} 的策略或参数尚不能完整映射到 Mihomo，该来源的 DoH 未加入全局列表`, 'warning');
       if (source.doh?.format === 'singbox' && raw.type === 'direct') return 'DIRECT';
       const name = allocate(`subone-egress-${source.id}-${group.name.replace(/[&=\u0000-\u001f\u007f]/g, '_')}`); mapped.set(group.id, name);
       const copy = source.doh?.format === 'mihomo' ? structuredClone(raw) : { type: raw.type === 'selector' ? 'select' : 'url-test', ...(raw.url ? { url: raw.url } : {}), ...(raw.interval ? { interval: Number(String(raw.interval).replace(/s$/, '')) } : {}), ...(raw.tolerance !== undefined ? { tolerance: raw.tolerance } : {}) };
@@ -101,33 +119,26 @@ export function adaptMihomoDns(doc: Document, plan: GenerationPlan): void {
       }
       doc['proxy-groups'].push(...imports); imports.length = 0;
       committedProxyCount = doc.proxies.length;
-      if (!binding.services.length) continue;
-      const nodes = [...plan.ordinaryNodes, ...plan.dependencyNodes].filter(node => binding.nodeIds.includes(node.id) && needsHostnameLookup(node.server));
-      if (!nodes.length) { binding.status = 'ignored'; binding.method = 'ip-node-no-dns'; continue; }
-      const capacity = sourceDnsCapacityIssue(source, doc);
+      if (!binding.nodeIds.length || !binding.services.length) continue;
+      const capacity = sourceDnsCapacityIssue(source, doc) || bindingEgressCapacityIssue(source, binding.services, plan);
       if (capacity) throw new ConnectionIssue(capacity.code, capacity.message, 'warning');
-      const egressCapacity = bindingEgressCapacityIssue(source, binding.services, plan);
-      if (egressCapacity) throw new ConnectionIssue(egressCapacity.code, egressCapacity.message, 'warning');
-      const missing = ['proxy-server-nameserver', 'default-nameserver', 'nameserver'].find(key => !Array.isArray(doc.dns?.[key]) || !doc.dns[key].length);
-      const badBootstrap = (doc.dns?.['default-nameserver'] || []).some((value: unknown) => typeof value !== 'string' || value !== 'system' && !isIP(dnsHost(value)));
-      if (missing || badBootstrap || doc.dns?.enable !== true) {
-        binding.status = 'unapplied'; binding.method = 'template-dns';
-        binding.diagnostics.push({ code: 'source-doh-bootstrap-missing', severity: 'error', sourceId: binding.sourceId, message: `绑定需修复：模板须明确提供 ${missing || (badBootstrap ? 'default-nameserver 的独立 IP 引导解析器' : 'dns.enable')}` });
-        continue;
+      const bootstrap = doc.dns?.['default-nameserver'];
+      if (doc.dns?.enable !== true) throw new ConnectionIssue('source-doh-bootstrap-missing', '绑定需修复：请在模板中开启 dns.enable');
+      if (!Array.isArray(bootstrap) || !bootstrap.length || bootstrap.some(value => typeof value !== 'string' || value !== 'system' && !isIP(dnsHost(value)))) {
+        throw new ConnectionIssue('source-doh-bootstrap-missing', '绑定需修复：请在模板的 default-nameserver 中提供独立引导解析器');
       }
-      if (!binding.services.some(service => needed.has(service.id))) continue;
       const services = binding.services.map(service => {
-        if (!mihomoServiceSupported(service) && !portableDohUrl({ source, service })) throw new ConnectionIssue('source-doh-options-unapplied', '来源 DoH 连接参数尚不能完整映射到 Mihomo；保留模板 DNS', 'warning');
-        const egress = service.outbound ?? (source.doh?.format === 'mihomo' ? defaultMihomoDohEgress(service.path, source.parsedConfig || {}) : source.doh?.format === 'quantumultx' ? { kind: 'direct' as const } : undefined);
-        if (!egress) throw new ConnectionIssue('source-doh-egress-unapplied', '来源 DoH 默认出站尚不能映射；保留模板 DNS', 'warning');
+        const egress = serviceEgress(source, service);
+        if (!egress) throw new ConnectionIssue('source-doh-egress-unapplied', '来源 DoH 默认出站尚不能映射，该来源的 DoH 未加入全局列表', 'warning');
         const route = materialize(egress);
         if (!safeMihomoDnsRoute(route)) throw new ConnectionIssue('source-doh-egress-unapplied', `Mihomo DNS 片段不能安全表达出站名称：${route}`, 'warning');
         return withMihomoDnsRoute(typeof service.raw === 'string' ? service.raw : service.url, route);
       });
-      doc.dns['proxy-server-nameserver-policy'] ||= {};
       doc['proxy-groups'].push(...imports);
-      binding.services.forEach((service, index) => adoptedServices.set(service.id, services[index]));
-      binding.status = 'applied'; binding.method = 'mihomo-server-domain-policy';
+      binding.services.forEach((service, index) => {
+        const endpoint = services[index];
+        if (!pool.has(endpoint)) pool.set(endpoint, { sourceId: source.id, serviceId: service.id, url: service.url });
+      });
       binding.appliedServiceIds = binding.services.map(service => service.id);
     } catch (error) {
       if (!(error instanceof ConnectionIssue)) throw error;
@@ -136,15 +147,15 @@ export function adaptMihomoDns(doc: Document, plan: GenerationPlan): void {
       binding.diagnostics.push({ code: error.code, severity: error.severity, sourceId: binding.sourceId, message: error.message, ...(error.dependencyState ? { dependencyState: error.dependencyState } : {}) });
     }
   }
-  const applied = new Map<NodeDomainRange, Set<string>>();
-  for (const range of resolved.ranges) {
-    if (range.services.some(({ service }) => !adoptedServices.has(service.id))) continue;
-    const policy = doc.dns['proxy-server-nameserver-policy'] ||= {};
-    for (const key of Object.keys(policy)) if (range.domains.includes(domain(key)) || domain(key) === rangePattern(range)) delete policy[key];
-    policy[rangePattern(range)] = [...new Set(range.services.map(({ service }) => adoptedServices.get(service.id)!))];
-    applied.set(range, new Set(range.services.map(({ service }) => service.id)));
+  if (pool.size) {
+    doc.dns = globalDefaults(doc.dns, [...pool.keys()]);
+    const shared = [...pool.values()];
+    for (const binding of plan.bindings) {
+      binding.method = 'mihomo-global-doh';
+      binding.effectiveServices = shared;
+      if (binding.status !== 'unapplied') binding.status = 'applied';
+    }
   }
-  recordDomainDns(plan, resolved.ranges, 'mihomo-server-domain-policy', applied);
   isolateMihomoCandidates(doc, plan);
 }
 
@@ -192,9 +203,15 @@ function mihomoStrategyIssue(format: string | undefined, raw: Document): boolean
 function sourceDnsCapacityIssue(source: SubscriptionSource, doc: Document): { code: string; message: string } | undefined {
   if (source.doh?.format !== 'mihomo') return;
   const dns = source.parsedConfig?.dns as Document | undefined;
-  if (Array.isArray(dns?.['default-nameserver']) && dns['default-nameserver'].length && JSON.stringify(dns['default-nameserver']) !== JSON.stringify(doc.dns?.['default-nameserver'])) return { code: 'source-doh-bootstrap-unapplied', message: 'Mihomo 只有共享引导解析器，无法保留此来源不同的 default-nameserver；保留模板 DNS' };
-  if (dns?.['prefer-h3'] !== undefined && dns['prefer-h3'] !== (doc.dns?.['prefer-h3'] ?? false)) return { code: 'source-doh-options-unapplied', message: '此来源 prefer-h3 与共享模板不同，尚不能分别映射；保留模板 DNS' };
+  if (Array.isArray(dns?.['default-nameserver']) && dns['default-nameserver'].length && JSON.stringify(dns['default-nameserver']) !== JSON.stringify(doc.dns?.['default-nameserver'])) return { code: 'source-doh-bootstrap-unapplied', message: 'Mihomo 只有共享引导解析器，无法保留此来源不同的 default-nameserver，该来源的 DoH 未加入全局列表' };
+  if (dns?.['prefer-h3'] !== undefined && dns['prefer-h3'] !== (doc.dns?.['prefer-h3'] ?? false)) return { code: 'source-doh-options-unapplied', message: '此来源 prefer-h3 与共享模板不同，尚不能分别映射，该来源的 DoH 未加入全局列表' };
 }
+function serviceEgress(source: SubscriptionSource, service: SourceDohService): SourceDohReference | undefined {
+  if (service.outbound) return service.outbound;
+  if (source.doh?.format === 'mihomo') return defaultMihomoDohEgress(service.path, source.parsedConfig || {});
+  if (source.doh?.format === 'quantumultx') return { kind: 'direct' };
+}
+
 function bindingEgressCapacityIssue(source: SubscriptionSource, services: SourceDohService[], plan: GenerationPlan): { code: string; message: string } | undefined {
   const visited = new Set<string>();
   const strategyUnsupported = (reference: SourceDohReference): boolean => {
@@ -206,10 +223,12 @@ function bindingEgressCapacityIssue(source: SubscriptionSource, services: Source
     return dnsArray((group.raw as Document).proxies ?? (group.raw as Document).outbounds).some(member => strategyUnsupported(sourceReference(source, member, plan)));
   };
   for (const service of services) {
-    if (!mihomoServiceSupported(service) && !portableDohUrl({ source, service })) return { code: 'source-doh-options-unapplied', message: '来源 DoH 连接参数尚不能完整映射到 Mihomo；保留模板 DNS' };
-    const reference = service.outbound ?? (source.doh?.format === 'mihomo' ? defaultMihomoDohEgress(service.path, source.parsedConfig || {}) : source.doh?.format === 'quantumultx' ? { kind: 'direct' as const } : undefined);
-    if (!reference || reference.kind === 'routing') return { code: 'source-doh-egress-unapplied', message: '来源 DoH 默认或路由出站尚不能完整映射到 Mihomo；保留模板 DNS' };
-    if (strategyUnsupported(reference)) return { code: 'source-doh-strategy-unapplied', message: '来源 DoH 出站组的策略或动态成员尚不能完整映射到 Mihomo；保留模板 DNS' };
+    const bootstrap = portableDohBootstrapIssue({ source, service });
+    if (bootstrap) return { code: bootstrap.code, message: '无法保留来源 DoH 的独立引导解析器，该来源的 DoH 未加入全局列表' };
+    if (!mihomoServiceSupported(service) && !portableDohUrl({ source, service })) return { code: 'source-doh-options-unapplied', message: '来源 DoH 连接参数尚不能完整映射到 Mihomo，该来源的 DoH 未加入全局列表' };
+    const reference = serviceEgress(source, service);
+    if (!reference || reference.kind === 'routing') return { code: 'source-doh-egress-unapplied', message: '来源 DoH 默认或路由出站尚不能完整映射到 Mihomo，该来源的 DoH 未加入全局列表' };
+    if (strategyUnsupported(reference)) return { code: 'source-doh-strategy-unapplied', message: '来源 DoH 出站组的策略或动态成员尚不能完整映射到 Mihomo，该来源的 DoH 未加入全局列表' };
     if (reference.kind === 'source-node') {
       const node = plan.inventory.nodes.find(entry => entry.node.id === reference.nodeId)?.node;
       if (node && !safeMihomoDnsRoute(node.name)) return { code: 'source-doh-egress-unapplied', message: `Mihomo DNS 片段不能安全表达出站名称：${node.name}` };
@@ -281,6 +300,11 @@ export function validateMihomoRuntime(doc: Document, plan: GenerationPlan): void
       const node = nodes.find(node => node.id === id);
       if (node) visit({ kind: 'outbound', id: node.name, label: node.name }, []);
     }
+    if (!binding && plan.bindings.some(binding => binding.method === 'mihomo-global-doh')) {
+      for (const endpoint of routedDns(dnsArray(dns.nameserver), dns['respect-rules'] === true)) {
+        visit({ kind: 'resolver', id: endpoint, label: `DNS ${dnsHost(endpoint)}`, reason: 'global DNS' }, [], endpoint);
+      }
+    }
     if (!binding) for (const target of [...routingTargets(doc), ...(doc['proxy-groups'] || []).map((group: Document) => group.name)]) visit({ kind: 'outbound', id: target, label: target, reason: 'ordinary routing' }, []);
     if (issue) {
       if (binding) binding.diagnostics.push({ ...issue, severity: 'error', sourceId: binding.sourceId, serviceId: binding.appliedServiceIds[0] });
@@ -293,7 +317,14 @@ export function validateMihomoRuntime(doc: Document, plan: GenerationPlan): void
 export function collectMihomoRuntimeDependencies(plan: GenerationPlan): RuntimeDependencyCollection {
   const result: RuntimeDependencyCollection = { nodes: [], groups: [] };
   let doc: Document; try { doc = yaml.load(plan.templateContent) as Document || {}; } catch { return result; }
-  const nodeDns = resolveNodeDns(plan).forNode;
+  const globalSources = plan.target.mode === 'nodes' ? [] : plan.bindings.flatMap(binding => {
+    const source = plan.inventory.sources.find(source => source.id === binding.sourceId);
+    if (!source || !binding.nodeIds.length || !binding.services.length || sourceDnsCapacityIssue(source, doc) || bindingEgressCapacityIssue(source, binding.services, plan)) return [];
+    return [{ source, services: binding.services }];
+  });
+  const template = doc.dns || {};
+  const dns = globalSources.length ? globalDefaults(template, []) : template;
+  const dedicated = globalSources.length ? hasSeparateNodeDns(template) : dnsArray(template['proxy-server-nameserver']).length > 0;
   const included = new Set([...plan.ordinaryNodes, ...plan.dependencyNodes].map(node => node.id));
   const visited = new Set<string>();
   const once = (key: string) => { if (visited.has(key)) return false; visited.add(key); return true; };
@@ -323,7 +354,7 @@ export function collectMihomoRuntimeDependencies(plan: GenerationPlan): RuntimeD
     const value = matches[0];
     if (typeof value['dialer-proxy'] === 'string') templateOutbound(value['dialer-proxy'], owner, [...reason, name]);
     for (const member of array(value.proxies)) templateOutbound(member, owner, [...reason, name], ordinary);
-    if (needsHostnameLookup(value.server)) templateDns(policyServices(doc.dns || {}, value.server), owner, [...reason, name]);
+    if (needsHostnameLookup(value.server)) templateDns(policyServices(dns, value.server, dedicated), owner, [...reason, name]);
   };
   const managed = (id: string, owner: string, reason: string[], ordinary = false): void => {
     if (!once(`${owner}:managed:${id}:${ordinary}`)) return;
@@ -352,18 +383,19 @@ export function collectMihomoRuntimeDependencies(plan: GenerationPlan): RuntimeD
     const original = entry.node;
     const detour = original.raw && typeof original.raw === 'object' ? original.raw.detour ?? original.raw['dialer-proxy'] : undefined;
     if (typeof detour === 'string') privateOutbound(source, sourceReference(source, detour, plan), owner, reason);
-    if (plan.target.mode === 'nodes' || !needsHostnameLookup(original.server)) return;
-    const services = nodeDns.get(id) || (source.doh?.services || []).map(service => ({ source, service }));
-    if (!services.length) return templateDns(policyServices(doc.dns || {}, original.server), owner, reason);
-    if (services.some(entry => sourceDnsCapacityIssue(entry.source, doc) || bindingEgressCapacityIssue(entry.source, [entry.service], plan))) return templateDns(policyServices(doc.dns || {}, original.server), owner, reason);
-    for (const { source: dnsSource, service } of services) {
-      const egress = service.outbound ?? defaultMihomoDohEgress(service.path, dnsSource.parsedConfig || {});
-      privateOutbound(dnsSource, egress, owner, [...reason, service.url]);
-      if (needsHostnameLookup(new URL(service.url).hostname)) templateDns(doc.dns?.['default-nameserver'], owner, [...reason, service.url]);
-    }
+    if (plan.target.mode !== 'nodes' && needsHostnameLookup(original.server)) templateDns(policyServices(dns, original.server, dedicated), owner, reason);
   };
   const ordinaryIds = new Set(plan.ordinaryNodes.map(node => node.id));
   if (plan.target.mode !== 'nodes') {
+    for (const { source, services } of globalSources) {
+      for (const service of services) {
+        const reason = [source.name, service.url];
+        const egress = serviceEgress(source, service);
+        if (egress) privateOutbound(source, egress, source.id, reason);
+        if (needsHostnameLookup(new URL(service.url).hostname)) templateDns(dns['default-nameserver'], source.id, reason);
+      }
+    }
+    if (globalSources.length) templateDns(routedDns(dnsArray(dns.nameserver), dns['respect-rules'] === true), globalSources[0].source.id, ['Mihomo DNS']);
     const ordinaryOwner = plan.bindings[0]?.sourceId || '';
     for (const id of plan.ordinaryGroupIds) managed(id, ordinaryOwner, ['Mihomo policy'], true);
     const routing = { ...doc, rules: (doc.rules || []).filter((rule: unknown) => !(plan.rules.some(rule => rule.enabled && rule.type === 'FINAL') && typeof rule === 'string' && /^(MATCH|FINAL),/i.test(rule))) };

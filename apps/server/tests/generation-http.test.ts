@@ -211,6 +211,7 @@ test('URL-list targets diagnose an inherited source bootstrap instead of silentl
   assert.equal(added.success, true, added.message);
   const source = added.data;
   const templates = {
+    mihomo: 'dns: {enable: true, nameserver: [192.0.2.53], default-nameserver: [192.0.2.53]}\n',
     quantumultx: '[dns]\nserver = 192.0.2.53\n[server_local]\n[policy]\n[filter_local]\nfinal,direct\n',
     shadowrocket: '[General]\ndns-server = 192.0.2.53\n[Host]\n[Proxy]\n[Proxy Group]\n[Rule]\nFINAL,DIRECT\n',
     loon: '[General]\ndns-server = 192.0.2.53\n[Host]\n[Proxy]\n[Proxy Group]\n[Rule]\nFINAL,DIRECT\n',

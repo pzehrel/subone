@@ -48,17 +48,24 @@ async function profileFor(sources: any[], content = template, filter?: any) {
 }
 const preview = (profile: any, expandNodes = true) => api('/generate/preview', 'POST', { profileId: profile.id, customType: 'mihomo', expandNodes });
 
-test('Mihomo applies ordered source DoH by server domain and preserves native template definitions across reload', async () => {
+test('Mihomo uses selected source DoH globally while preserving explicit template policies across reload', async () => {
   const a = await add('/domains-a', 'a.node.example', ['https://a.dns.example/dns-query', 'https://b.dns.example/dns-query#DIRECT']);
-  const b = await add('/domains-b', 'b.node.example', ['https://other.dns.example/dns-query']);
-  const { profile } = await profileFor([a, b]);
+  const b = await add('/domains-b', '192.0.2.12', ['https://other.dns.example/dns-query', 'https://a.dns.example/dns-query']);
+  await add('/domains-unused', 'unused.node.example', ['https://unused.dns.example/dns-query']);
+  const content = structuredClone(template);
+  content.dns.nameserver.push('https://a.dns.example/dns-query', 'https://template.example/query');
+  content.dns['proxy-server-nameserver'].push('https://node-template.example/query');
+  const { profile } = await profileFor([a, b], content);
   const result = await preview(profile); assert.equal(result.success, true, JSON.stringify(result));
   assert.equal(result.generation.target.version, '1.19.33');
   assert.deepEqual(result.generation.bindings.map((binding: any) => binding.status), ['applied', 'applied']);
   const doc: any = yaml.load(result.data);
-  assert.deepEqual(doc.dns['proxy-server-nameserver-policy']['a.node.example'], ['https://a.dns.example/dns-query#DIRECT', 'https://b.dns.example/dns-query#DIRECT']);
-  assert.deepEqual(doc.dns['proxy-server-nameserver-policy']['b.node.example'], ['https://other.dns.example/dns-query#DIRECT']);
-  for (const key of ['nameserver', 'fallback', 'cache-algorithm', 'nameserver-policy', 'default-nameserver', 'proxy-server-nameserver']) assert.deepEqual(doc.dns[key], template.dns[key]);
+  const pool = ['https://a.dns.example/dns-query#DIRECT', 'https://b.dns.example/dns-query#DIRECT', 'https://other.dns.example/dns-query#DIRECT'];
+  assert.deepEqual(doc.dns, { ...content.dns,
+    nameserver: [...pool, 'https://template.example/query'],
+    'proxy-server-nameserver': [...pool, 'https://node-template.example/query'],
+  });
+  assert.deepEqual(result.generation.bindings.map((binding: any) => binding.method), ['mihomo-global-doh', 'mihomo-global-doh']);
   assert.deepEqual(doc.proxies.find((entry: any) => entry.name === 'Template exit'), template.proxies[0]);
   assert.deepEqual(doc['proxy-groups'].find((entry: any) => entry.name === 'Template choice'), template['proxy-groups'][0]);
   assert.ok(doc.rules.includes('DOMAIN,kept.example,Template choice'));
@@ -67,27 +74,33 @@ test('Mihomo applies ordered source DoH by server domain and preserves native te
   assert.deepEqual(await preview(profile), result);
 });
 
-test('same server domain merges both sources and replaces only its template policy', async () => {
+test('a template node policy for a selected domain takes precedence over global DoH', async () => {
   const a = await add('/conflict-a', 'shared.node.example', ['https://a.conflict.example/dns-query']);
   const b = await add('/conflict-b', 'shared.node.example', ['https://b.conflict.example/dns-query']);
   const content = structuredClone(template); content.dns['proxy-server-nameserver-policy']['shared.node.example'] = ['tls://192.0.2.55'];
   const { profile } = await profileFor([a, b], content);
   const result = await preview(profile); assert.equal(result.success, true, JSON.stringify(result));
   const expectedDns = structuredClone(content.dns);
-  expectedDns['proxy-server-nameserver-policy']['shared.node.example'] = ['https://a.conflict.example/dns-query#DIRECT', 'https://b.conflict.example/dns-query#DIRECT'];
+  expectedDns.nameserver = expectedDns['proxy-server-nameserver'] = ['https://a.conflict.example/dns-query#DIRECT', 'https://b.conflict.example/dns-query#DIRECT'];
   assert.deepEqual((yaml.load(result.data) as any).dns, expectedDns);
   assert.equal(result.generation.bindings.length, 2);
   for (const binding of result.generation.bindings) {
-    assert.equal(binding.status, 'applied'); assert.equal(binding.method, 'mihomo-server-domain-policy'); assert.equal(binding.appliedServiceIds.length, 2);
+    assert.equal(binding.status, 'applied'); assert.equal(binding.method, 'mihomo-global-doh'); assert.equal(binding.appliedServiceIds.length, 1);
+    assert.equal(binding.effectiveServices.length, 2);
     assert.equal(binding.diagnostics.length, 0);
   }
   assert.equal(await fetch(`${origin}/s/${profile.token}/mihomo?expand=true`).then(response => response.text()), result.data);
   assert.equal((await api('/sources')).data.find((entry: any) => entry.id === a.id).doh.services[0].url, 'https://a.conflict.example/dns-query');
 });
 
-test('custom templates require explicit native shared resolvers and independent IP bootstrap without invented fallback', async () => {
+test('custom templates can inherit global DoH for nodes and still require DNS and independent bootstrap', async () => {
   const source = await add('/missing-bootstrap', 'node.missing-bootstrap.example', ['https://dns.missing-bootstrap.example/dns-query']);
-  for (const missing of ['proxy-server-nameserver', 'default-nameserver']) {
+  const inherited = structuredClone(template);
+  for (const key of ['nameserver', 'proxy-server-nameserver', 'proxy-server-nameserver-policy']) delete inherited.dns[key];
+  const inheritedResult = await preview((await profileFor([source], inherited)).profile);
+  assert.equal(inheritedResult.success, true, JSON.stringify(inheritedResult));
+  assert.deepEqual((yaml.load(inheritedResult.data) as any).dns, { ...inherited.dns, nameserver: ['https://dns.missing-bootstrap.example/dns-query#DIRECT'] });
+  for (const missing of ['enable', 'default-nameserver']) {
     const content = structuredClone(template); delete content.dns[missing];
     const { profile, tpl } = await profileFor([source], content);
     const result = await preview(profile); assert.equal(result.status, 422, JSON.stringify(result));
@@ -112,7 +125,7 @@ test('explicit native DoH exits and private groups use stable current names with
   await stopApp(); await startApp();
   const result = await preview(profile); assert.equal(result.success, true, JSON.stringify(result));
   const doc: any = yaml.load(result.data);
-  const entry = doc.dns['proxy-server-nameserver-policy']['node.private-egress.example'][0];
+  const entry = doc.dns.nameserver[0];
   assert.match(entry, /h3=false/); assert.doesNotMatch(entry, /#DIRECT$/);
   const route = decodeURIComponent(entry.split('#')[1]).split('&').filter((entry: string) => !entry.includes('=')).at(-1);
   const group = doc['proxy-groups'].find((entry: any) => entry.name === route);
@@ -214,7 +227,7 @@ test('fragment parsing follows native decoding, last bare token and exact case w
   const source = await add('/fragment-native', 'node.fragment.example', ['https://dns.fragment.example/dns-query#Unknown%26DIRECT']);
   const { profile } = await profileFor([source]);
   const result = await preview(profile); assert.equal(result.success, true, JSON.stringify(result));
-  assert.equal((yaml.load(result.data) as any).dns['proxy-server-nameserver-policy']['node.fragment.example'][0], 'https://dns.fragment.example/dns-query#DIRECT');
+  assert.equal((yaml.load(result.data) as any).dns.nameserver[0], 'https://dns.fragment.example/dns-query#DIRECT');
   const broken = await add('/fragment-typo', 'node.fragment-typo.example', ['https://dns.fragment.example/dns-query#direct']);
   const brokenProfile = (await profileFor([broken])).profile;
   const missing = await preview(brokenProfile); assert.equal(missing.status, 422); assert.ok(missing.generation.diagnostics.some((entry: any) => entry.code === 'source-doh-dependency-missing'));
@@ -240,7 +253,7 @@ test('unrepresentable source bootstrap and routing choices retain template DNS w
   assert.deepEqual((yaml.load(routingResult.data) as any).dns, template.dns);
 });
 
-test('source DoH removal and IP-only unused bindings preserve template DNS and disabled nodes stay outside providers', async () => {
+test('source DoH removal restores template DNS and IP-only sources still need valid global DoH exits', async () => {
   const source = await add('/removal', 'node.removal.example', ['https://dns.removal.example/dns-query']);
   const { profile } = await profileFor([source]);
   assert.equal((await preview(profile)).generation.bindings[0].status, 'applied');
@@ -252,7 +265,12 @@ test('source DoH removal and IP-only unused bindings preserve template DNS and d
   const providerDoc: any = yaml.load(await fetch(`${origin}/s/${profile.token}/source/${source.id}?target=mihomo`).then(response => response.text())); assert.deepEqual(providerDoc.proxies, []);
   const ip = await add('/unused-ip', '192.0.2.10', ['https://dns.unused.example/dns-query#Missing-unused']);
   const ipProfile = (await profileFor([ip])).profile;
-  const ipResult = await preview(ipProfile); assert.equal(ipResult.success, true, JSON.stringify(ipResult)); assert.equal(ipResult.generation.bindings[0].method, 'ip-node-no-dns'); assert.deepEqual((yaml.load(ipResult.data) as any).dns, template.dns);
+  const ipResult = await preview(ipProfile);
+  assert.equal(ipResult.status, 422);
+  assert.ok(ipResult.generation.diagnostics.some((entry: any) => entry.code === 'source-doh-dependency-missing'));
+  const ipProvider = await fetch(`${origin}/s/${ipProfile.token}/source/${ip.id}?target=mihomo`);
+  assert.equal(ipProvider.status, 200);
+  assert.deepEqual(Object.keys(yaml.load(await ipProvider.text()) as object), ['proxies']);
 });
 
 test('actual generated Mihomo1.19.33 configuration passes native check and bounded isolated startup', { skip: !process.env.SUBONE_TEST_MIHOMO }, async () => {
@@ -302,7 +320,7 @@ test('omitted necessary exits become static dependencies while ordinary groups, 
 
 test('template bootstrap reaches unselected managed strategies with stable source-local dependencies and checks all members', async () => {
   const source = await add('/managed-bootstrap-a', 'node.managed-bootstrap.example', ['https://dns.managed-bootstrap.example/dns-query']);
-  const exitSource = await add('/managed-bootstrap-b', '192.0.2.41', []);
+  const exitSource = await add('/managed-bootstrap-b', '192.0.2.41', ['https://192.0.2.54/dns-query']);
   const exit = exitSource.nodes[0];
   const managed = (await api('/groups', 'POST', { name: 'Managed bootstrap', type: 'select', sources: [exitSource.id] })).data;
   const content = structuredClone(template); content.dns['default-nameserver'] = ['https://127.0.0.1/dns-query#Managed%20bootstrap'];
@@ -312,6 +330,8 @@ test('template bootstrap reaches unselected managed strategies with stable sourc
   assert.equal(result.generation.dependencyNodes[0].id, exit.id);
   assert.equal((await preview(profile, false)).success, true);
   const doc: any = yaml.load(result.data);
+  assert.deepEqual(doc.dns.nameserver, ['https://dns.managed-bootstrap.example/dns-query#DIRECT', 'https://192.0.2.54/dns-query#DIRECT']);
+  assert.deepEqual(doc.dns['proxy-server-nameserver'], doc.dns.nameserver);
   const actualExit = doc.proxies.find((entry: any) => entry.server === '192.0.2.41');
   assert.deepEqual(doc['proxy-groups'].find((entry: any) => entry.name === 'Managed bootstrap').proxies, [actualExit.name]);
   const global = doc['proxy-groups'].find((entry: any) => entry.name === 'GLOBAL'); assert.equal(global.proxies.includes('Managed bootstrap'), false); assert.equal(global.proxies.includes(actualExit.name), false);
